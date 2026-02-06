@@ -96,10 +96,13 @@ Supported Data Store Types:
 - **GeoPackage** - Connect to GeoPackage files
 - **Web Feature Service (WFS)** - Connect to external WFS services
 
-Supported Coverage Store Types:
+Supported Coverage Store Types (Raster):
 - **GeoTIFF** - Single GeoTIFF raster file
-- **World Image** - PNG/JPEG/GIF with world file
+- **World Image** - PNG/JPEG/GIF with world file (.pgw, .jgw, .gfw)
 - **Image Mosaic** - Directory of images forming a mosaic
+- **Image Pyramid** - Multi-resolution image pyramid
+- **ArcGrid** - ESRI ASCII Grid format (.asc)
+- **GeoPackage (Raster)** - Raster tiles in GeoPackage format
 
 #### Form Editing (vim-style)
 | Key | Action |

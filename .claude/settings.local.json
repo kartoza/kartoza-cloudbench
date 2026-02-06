@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.geoserver.org)",
+      "Bash(nix develop:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

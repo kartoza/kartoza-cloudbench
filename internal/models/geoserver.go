@@ -395,6 +395,9 @@ const (
 	CoverageStoreTypeGeoTIFF CoverageStoreType = iota
 	CoverageStoreTypeWorldImage
 	CoverageStoreTypeImageMosaic
+	CoverageStoreTypeImagePyramid
+	CoverageStoreTypeArcGrid
+	CoverageStoreTypeGeoPackageRaster
 )
 
 // String returns the display name for the coverage store type
@@ -403,9 +406,15 @@ func (c CoverageStoreType) String() string {
 	case CoverageStoreTypeGeoTIFF:
 		return "GeoTIFF"
 	case CoverageStoreTypeWorldImage:
-		return "World Image (PNG/JPEG/GIF)"
+		return "World Image (PNG/JPEG/GIF with world file)"
 	case CoverageStoreTypeImageMosaic:
 		return "Image Mosaic"
+	case CoverageStoreTypeImagePyramid:
+		return "Image Pyramid"
+	case CoverageStoreTypeArcGrid:
+		return "ArcGrid (ASCII Grid)"
+	case CoverageStoreTypeGeoPackageRaster:
+		return "GeoPackage (Raster)"
 	default:
 		return "Unknown"
 	}
@@ -420,6 +429,12 @@ func (c CoverageStoreType) Type() string {
 		return "WorldImage"
 	case CoverageStoreTypeImageMosaic:
 		return "ImageMosaic"
+	case CoverageStoreTypeImagePyramid:
+		return "ImagePyramid"
+	case CoverageStoreTypeArcGrid:
+		return "ArcGrid"
+	case CoverageStoreTypeGeoPackageRaster:
+		return "GeoPackage (mosaic)"
 	default:
 		return ""
 	}
@@ -451,9 +466,25 @@ func GetCoverageStoreFields(storeType CoverageStoreType) []CoverageStoreField {
 			{Name: "name", Label: "Store Name", Placeholder: "my-mosaic-store", Required: true},
 			{Name: "url", Label: "Directory Path", Placeholder: "file:data/mosaic", Required: true},
 		}
+	case CoverageStoreTypeImagePyramid:
+		return []CoverageStoreField{
+			{Name: "name", Label: "Store Name", Placeholder: "my-pyramid-store", Required: true},
+			{Name: "url", Label: "Directory Path", Placeholder: "file:data/pyramid", Required: true},
+		}
+	case CoverageStoreTypeArcGrid:
+		return []CoverageStoreField{
+			{Name: "name", Label: "Store Name", Placeholder: "my-arcgrid-store", Required: true},
+			{Name: "url", Label: "File Path", Placeholder: "file:data/grid.asc", Required: true},
+		}
+	case CoverageStoreTypeGeoPackageRaster:
+		return []CoverageStoreField{
+			{Name: "name", Label: "Store Name", Placeholder: "my-gpkg-raster-store", Required: true},
+			{Name: "url", Label: "GeoPackage Path", Placeholder: "file:data/raster.gpkg", Required: true},
+		}
 	default:
 		return []CoverageStoreField{
 			{Name: "name", Label: "Store Name", Placeholder: "store-name", Required: true},
+			{Name: "url", Label: "File/Directory Path", Placeholder: "file:data/...", Required: true},
 		}
 	}
 }
@@ -464,5 +495,8 @@ func GetAllCoverageStoreTypes() []CoverageStoreType {
 		CoverageStoreTypeGeoTIFF,
 		CoverageStoreTypeWorldImage,
 		CoverageStoreTypeImageMosaic,
+		CoverageStoreTypeImagePyramid,
+		CoverageStoreTypeArcGrid,
+		CoverageStoreTypeGeoPackageRaster,
 	}
 }
