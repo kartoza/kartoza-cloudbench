@@ -1,0 +1,459 @@
+package components
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/kartoza/kartoza-geoserver-client/internal/models"
+	"github.com/kartoza/kartoza-geoserver-client/internal/tui/styles"
+)
+
+// TreeViewKeyMap defines the key bindings for the tree view
+type TreeViewKeyMap struct {
+	Up       key.Binding
+	Down     key.Binding
+	Enter    key.Binding
+	Back     key.Binding
+	Expand   key.Binding
+	Collapse key.Binding
+	Home     key.Binding
+	End      key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Refresh  key.Binding
+}
+
+// DefaultTreeViewKeyMap returns the default key bindings
+func DefaultTreeViewKeyMap() TreeViewKeyMap {
+	return TreeViewKeyMap{
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "down"),
+		),
+		Enter: key.NewBinding(
+			key.WithKeys("enter", "l", "right"),
+			key.WithHelp("enter/l", "expand"),
+		),
+		Back: key.NewBinding(
+			key.WithKeys("backspace", "h", "left"),
+			key.WithHelp("backspace/h", "collapse"),
+		),
+		Expand: key.NewBinding(
+			key.WithKeys("+", "="),
+			key.WithHelp("+", "expand"),
+		),
+		Collapse: key.NewBinding(
+			key.WithKeys("-"),
+			key.WithHelp("-", "collapse"),
+		),
+		Home: key.NewBinding(
+			key.WithKeys("home", "g"),
+			key.WithHelp("home/g", "first"),
+		),
+		End: key.NewBinding(
+			key.WithKeys("end", "G"),
+			key.WithHelp("end/G", "last"),
+		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup", "ctrl+u"),
+			key.WithHelp("pgup", "page up"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown", "ctrl+d"),
+			key.WithHelp("pgdown", "page down"),
+		),
+		Refresh: key.NewBinding(
+			key.WithKeys("r", "ctrl+r"),
+			key.WithHelp("r", "refresh"),
+		),
+	}
+}
+
+// FlatNode represents a flattened tree node for display
+type FlatNode struct {
+	Node   *models.TreeNode
+	Depth  int
+	IsLast bool
+}
+
+// TreeView is a component for displaying a tree structure
+type TreeView struct {
+	root       *models.TreeNode
+	flatNodes  []FlatNode
+	cursor     int
+	offset     int
+	width      int
+	height     int
+	active     bool
+	keyMap     TreeViewKeyMap
+	connected  bool
+	serverName string
+}
+
+// NewTreeView creates a new tree view component
+func NewTreeView() *TreeView {
+	return &TreeView{
+		root:   models.NewTreeNode("GeoServer", models.NodeTypeRoot),
+		keyMap: DefaultTreeViewKeyMap(),
+	}
+}
+
+// SetRoot sets the root node and flattens the tree
+func (tv *TreeView) SetRoot(root *models.TreeNode) {
+	tv.root = root
+	tv.flattenTree()
+}
+
+// GetRoot returns the root node
+func (tv *TreeView) GetRoot() *models.TreeNode {
+	return tv.root
+}
+
+// flattenTree creates a flat list of visible nodes
+func (tv *TreeView) flattenTree() {
+	tv.flatNodes = []FlatNode{}
+	tv.flattenNode(tv.root, 0, true)
+}
+
+func (tv *TreeView) flattenNode(node *models.TreeNode, depth int, isLast bool) {
+	if node == nil {
+		return
+	}
+
+	// Don't add the root node itself to flat list, start with its children
+	if node.Type != models.NodeTypeRoot {
+		tv.flatNodes = append(tv.flatNodes, FlatNode{
+			Node:   node,
+			Depth:  depth,
+			IsLast: isLast,
+		})
+	}
+
+	if node.Expanded && len(node.Children) > 0 {
+		childDepth := depth
+		if node.Type != models.NodeTypeRoot {
+			childDepth = depth + 1
+		}
+		for i, child := range node.Children {
+			isLastChild := i == len(node.Children)-1
+			tv.flattenNode(child, childDepth, isLastChild)
+		}
+	}
+}
+
+// Update handles messages for the tree view
+func (tv *TreeView) Update(msg tea.Msg) (*TreeView, tea.Cmd) {
+	if !tv.active {
+		return tv, nil
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, tv.keyMap.Up):
+			if tv.cursor > 0 {
+				tv.cursor--
+				tv.ensureVisible()
+			}
+
+		case key.Matches(msg, tv.keyMap.Down):
+			if tv.cursor < len(tv.flatNodes)-1 {
+				tv.cursor++
+				tv.ensureVisible()
+			}
+
+		case key.Matches(msg, tv.keyMap.Enter), key.Matches(msg, tv.keyMap.Expand):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				if len(node.Children) > 0 || tv.canLoadChildren(node) {
+					node.Expanded = true
+					tv.flattenTree()
+				}
+			}
+
+		case key.Matches(msg, tv.keyMap.Back), key.Matches(msg, tv.keyMap.Collapse):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				if node.Expanded {
+					node.Expanded = false
+					tv.flattenTree()
+				} else if node.Parent != nil && node.Parent.Type != models.NodeTypeRoot {
+					// Move to parent
+					for i, fn := range tv.flatNodes {
+						if fn.Node == node.Parent {
+							tv.cursor = i
+							tv.ensureVisible()
+							break
+						}
+					}
+				}
+			}
+
+		case key.Matches(msg, tv.keyMap.Home):
+			tv.cursor = 0
+			tv.offset = 0
+
+		case key.Matches(msg, tv.keyMap.End):
+			tv.cursor = len(tv.flatNodes) - 1
+			tv.ensureVisible()
+
+		case key.Matches(msg, tv.keyMap.PageUp):
+			tv.cursor -= tv.visibleHeight()
+			if tv.cursor < 0 {
+				tv.cursor = 0
+			}
+			tv.ensureVisible()
+
+		case key.Matches(msg, tv.keyMap.PageDown):
+			tv.cursor += tv.visibleHeight()
+			if tv.cursor >= len(tv.flatNodes) {
+				tv.cursor = len(tv.flatNodes) - 1
+			}
+			if tv.cursor < 0 {
+				tv.cursor = 0
+			}
+			tv.ensureVisible()
+		}
+	}
+
+	return tv, nil
+}
+
+// canLoadChildren returns true if the node type can have children loaded dynamically
+func (tv *TreeView) canLoadChildren(node *models.TreeNode) bool {
+	switch node.Type {
+	case models.NodeTypeWorkspace, models.NodeTypeDataStores, models.NodeTypeCoverageStores,
+		models.NodeTypeDataStore, models.NodeTypeCoverageStore, models.NodeTypeLayers,
+		models.NodeTypeStyles, models.NodeTypeLayerGroups:
+		return true
+	default:
+		return false
+	}
+}
+
+// visibleHeight returns the number of visible items
+func (tv *TreeView) visibleHeight() int {
+	return tv.height - 4 // Account for borders and header
+}
+
+// ensureVisible ensures the cursor is visible
+func (tv *TreeView) ensureVisible() {
+	visible := tv.visibleHeight()
+	if visible <= 0 {
+		return
+	}
+
+	if tv.cursor < tv.offset {
+		tv.offset = tv.cursor
+	} else if tv.cursor >= tv.offset+visible {
+		tv.offset = tv.cursor - visible + 1
+	}
+}
+
+// View renders the tree view
+func (tv *TreeView) View() string {
+	var b strings.Builder
+
+	// Header
+	headerStyle := styles.PanelHeaderStyle
+	if !tv.active {
+		headerStyle = headerStyle.Foreground(styles.Muted)
+	}
+
+	var header string
+	if tv.connected {
+		header = styles.ConnectedStyle.Render("●") + " " + tv.serverName
+	} else {
+		header = styles.DisconnectedStyle.Render("○") + " Not connected"
+	}
+	b.WriteString(headerStyle.Render(header))
+	b.WriteString("\n")
+
+	// Divider
+	divider := styles.TreeBranchStyle.Render(strings.Repeat("─", tv.width-4))
+	b.WriteString(divider)
+	b.WriteString("\n")
+
+	// Tree items
+	visible := tv.visibleHeight()
+	if visible <= 0 {
+		visible = 10
+	}
+
+	if len(tv.flatNodes) == 0 {
+		if tv.connected {
+			b.WriteString(styles.LoadingStyle.Render("  Loading..."))
+		} else {
+			b.WriteString(styles.MutedStyle.Render("  Press 'c' to connect"))
+		}
+	} else {
+		for i := tv.offset; i < tv.offset+visible && i < len(tv.flatNodes); i++ {
+			fn := tv.flatNodes[i]
+			line := tv.renderNode(fn, i == tv.cursor)
+			b.WriteString(line)
+			if i < tv.offset+visible-1 && i < len(tv.flatNodes)-1 {
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	// Fill remaining space
+	rendered := strings.Count(b.String(), "\n") + 1
+	for i := rendered; i < tv.height-2; i++ {
+		b.WriteString("\n")
+	}
+
+	// Status line
+	var status string
+	if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+		node := tv.flatNodes[tv.cursor].Node
+		status = fmt.Sprintf(" %s: %s", node.Type.String(), node.Name)
+	} else {
+		status = " "
+	}
+	b.WriteString("\n")
+	b.WriteString(styles.StatusBarStyle.Width(tv.width-4).Render(status))
+
+	// Build panel
+	panelStyle := styles.PanelStyle
+	if tv.active {
+		panelStyle = styles.ActivePanelStyle
+	}
+
+	return panelStyle.Width(tv.width).Height(tv.height).Render(b.String())
+}
+
+// renderNode renders a single tree node
+func (tv *TreeView) renderNode(fn FlatNode, selected bool) string {
+	node := fn.Node
+
+	// Build indent with tree lines
+	var indent strings.Builder
+	for i := 0; i < fn.Depth; i++ {
+		indent.WriteString("  ")
+	}
+
+	// Expand/collapse indicator
+	var indicator string
+	if len(node.Children) > 0 || tv.canLoadChildren(node) {
+		if node.Expanded {
+			indicator = styles.ExpandedNodeStyle.Render("▼")
+		} else {
+			indicator = styles.CollapsedNodeStyle.Render("▶")
+		}
+	} else {
+		indicator = " "
+	}
+
+	// Loading indicator
+	if node.IsLoading {
+		indicator = styles.LoadingStyle.Render("◌")
+	}
+
+	// Error indicator
+	if node.HasError {
+		indicator = styles.ErrorStyle.Render("✗")
+	}
+
+	// Icon and name
+	icon := node.Type.Icon()
+	name := tv.truncateName(node.Name, tv.width-fn.Depth*2-10)
+
+	line := fmt.Sprintf("%s%s %s %s", indent.String(), indicator, icon, name)
+
+	// Apply style
+	var style lipgloss.Style
+	if selected && tv.active {
+		style = styles.ActiveItemStyle
+	} else if selected {
+		style = styles.SelectedItemStyle
+	} else if node.HasError {
+		style = styles.ErrorStyle
+	} else {
+		style = styles.ItemStyle
+	}
+
+	return style.Width(tv.width - 4).Render(line)
+}
+
+// truncateName truncates a name to fit the width
+func (tv *TreeView) truncateName(name string, maxWidth int) string {
+	if len(name) <= maxWidth {
+		return name
+	}
+	if maxWidth <= 3 {
+		return "..."
+	}
+	return name[:maxWidth-3] + "..."
+}
+
+// SetSize sets the size of the tree view
+func (tv *TreeView) SetSize(width, height int) {
+	tv.width = width
+	tv.height = height
+}
+
+// SetActive sets whether the tree view is active
+func (tv *TreeView) SetActive(active bool) {
+	tv.active = active
+}
+
+// IsActive returns whether the tree view is active
+func (tv *TreeView) IsActive() bool {
+	return tv.active
+}
+
+// SetConnected sets the connection status
+func (tv *TreeView) SetConnected(connected bool, serverName string) {
+	tv.connected = connected
+	tv.serverName = serverName
+}
+
+// IsConnected returns the connection status
+func (tv *TreeView) IsConnected() bool {
+	return tv.connected
+}
+
+// SelectedNode returns the currently selected node
+func (tv *TreeView) SelectedNode() *models.TreeNode {
+	if len(tv.flatNodes) == 0 || tv.cursor >= len(tv.flatNodes) {
+		return nil
+	}
+	return tv.flatNodes[tv.cursor].Node
+}
+
+// Refresh rebuilds the flat node list
+func (tv *TreeView) Refresh() {
+	tv.flattenTree()
+}
+
+// ExpandSelected expands the selected node
+func (tv *TreeView) ExpandSelected() {
+	if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+		tv.flatNodes[tv.cursor].Node.Expanded = true
+		tv.flattenTree()
+	}
+}
+
+// CollapseSelected collapses the selected node
+func (tv *TreeView) CollapseSelected() {
+	if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+		tv.flatNodes[tv.cursor].Node.Expanded = false
+		tv.flattenTree()
+	}
+}
+
+// Clear clears the tree
+func (tv *TreeView) Clear() {
+	tv.root = models.NewTreeNode("GeoServer", models.NodeTypeRoot)
+	tv.flatNodes = []FlatNode{}
+	tv.cursor = 0
+	tv.offset = 0
+}

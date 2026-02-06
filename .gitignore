@@ -1,0 +1,42 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Go build cache
+.go/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Nix
+result
+result-*
+
+# Config (may contain credentials)
+.config/
+
+# Logs
+*.log
+PROMPT.log
+crash.log
+
+# OS files
+.DS_Store
+Thumbs.db
