@@ -328,6 +328,26 @@ func (d *Dialog) View() string {
 		return ""
 	}
 
+	dialogWidth := d.width/2 + 10
+	if dialogWidth < 50 {
+		dialogWidth = 50
+	}
+
+	scaledWidth := int(float64(dialogWidth) * d.animScale)
+	if scaledWidth < 10 {
+		scaledWidth = 10
+	}
+
+	dialogStyle := styles.DialogStyle.Width(scaledWidth)
+	marginOffset := int((1.0 - d.animScale) * 5)
+	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
+
+	// When closing, render empty frame only
+	if d.closing {
+		dialog := dialogStyle.Render("")
+		return styles.Center(d.width, d.height, dialog)
+	}
+
 	var b strings.Builder
 
 	// Title
@@ -377,25 +397,6 @@ func (d *Dialog) View() string {
 			b.WriteString(styles.HelpTextStyle.Render("j/k:navigate  Enter:edit  Ctrl+S:save  Esc:cancel"))
 		}
 	}
-
-	dialogWidth := d.width/2 + 10
-	if dialogWidth < 50 {
-		dialogWidth = 50
-	}
-
-	// Apply animation scale through margins (lipgloss doesn't have transform)
-	// We simulate scale by adjusting the rendered size and adding padding
-	scaledWidth := int(float64(dialogWidth) * d.animScale)
-	if scaledWidth < 10 {
-		scaledWidth = 10
-	}
-
-	// Apply opacity through color dimming
-	dialogStyle := styles.DialogStyle.Width(scaledWidth)
-
-	// Add some bounce effect by adjusting margins based on animation
-	marginOffset := int((1.0 - d.animScale) * 5)
-	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
 
 	dialog := dialogStyle.Render(b.String())
 

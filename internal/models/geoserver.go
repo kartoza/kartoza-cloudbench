@@ -5,6 +5,7 @@ type NodeType int
 
 const (
 	NodeTypeRoot NodeType = iota
+	NodeTypeConnection // A GeoServer connection (server)
 	NodeTypeWorkspace
 	NodeTypeDataStores
 	NodeTypeCoverageStores
@@ -27,6 +28,8 @@ func (n NodeType) String() string {
 	switch n {
 	case NodeTypeRoot:
 		return "root"
+	case NodeTypeConnection:
+		return "connection"
 	case NodeTypeWorkspace:
 		return "workspace"
 	case NodeTypeDataStores:
@@ -67,6 +70,8 @@ func (n NodeType) Icon() string {
 	switch n {
 	case NodeTypeRoot:
 		return "🌍"
+	case NodeTypeConnection:
+		return "🖥️"
 	case NodeTypeWorkspace:
 		return "📁"
 	case NodeTypeDataStores:
@@ -104,18 +109,20 @@ func (n NodeType) Icon() string {
 
 // TreeNode represents a node in the GeoServer hierarchy tree
 type TreeNode struct {
-	Name       string
-	Type       NodeType
-	Expanded   bool
-	Children   []*TreeNode
-	Parent     *TreeNode
-	Workspace  string // The workspace this node belongs to
-	StoreName  string // The store name (for layers)
-	StoreType  string // The store type ("datastore" or "coveragestore")
-	IsLoading  bool
-	IsLoaded   bool
-	HasError   bool
-	ErrorMsg   string
+	Name         string
+	Type         NodeType
+	Expanded     bool
+	Children     []*TreeNode
+	Parent       *TreeNode
+	ConnectionID string // The connection ID this node belongs to (for multi-connection support)
+	Workspace    string // The workspace this node belongs to
+	StoreName    string // The store name (for layers)
+	StoreType    string // The store type ("datastore" or "coveragestore")
+	IsLoading    bool
+	IsLoaded     bool
+	HasError     bool
+	ErrorMsg     string
+	Enabled      *bool // nil = unknown, true = enabled, false = disabled
 }
 
 // NewTreeNode creates a new tree node
@@ -148,8 +155,33 @@ func (n *TreeNode) Path() string {
 
 // Workspace represents a GeoServer workspace
 type Workspace struct {
-	Name string `json:"name"`
-	Href string `json:"href,omitempty"`
+	Name     string `json:"name"`
+	Href     string `json:"href,omitempty"`
+	Isolated bool   `json:"isolated,omitempty"`
+}
+
+// WorkspaceSettings represents workspace-specific settings
+type WorkspaceSettings struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Name    string `json:"name,omitempty"`
+}
+
+// WorkspaceServiceSettings represents service-specific settings for a workspace
+type WorkspaceServiceSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
+// WorkspaceConfig holds all configuration options for creating/editing a workspace
+type WorkspaceConfig struct {
+	Name             string
+	Isolated         bool
+	Default          bool
+	Enabled          bool // Settings enabled
+	WMTSEnabled      bool
+	WMSEnabled       bool
+	WCSEnabled       bool
+	WPSEnabled       bool
+	WFSEnabled       bool
 }
 
 // DataStore represents a GeoServer data store
@@ -176,8 +208,37 @@ type Layer struct {
 	Name      string `json:"name"`
 	Href      string `json:"href,omitempty"`
 	Type      string `json:"type,omitempty"`
+	Enabled   *bool  `json:"enabled,omitempty"` // Pointer to detect if present in JSON
 	Workspace string `json:"-"`
 	Store     string `json:"-"`
+}
+
+// LayerConfig holds all configuration options for editing a layer
+type LayerConfig struct {
+	Name         string
+	Workspace    string
+	Store        string
+	StoreType    string // "datastore" or "coveragestore"
+	Enabled      bool
+	Advertised   bool
+	Queryable    bool   // Only for vector layers
+	DefaultStyle string
+}
+
+// DataStoreConfig holds configuration options for editing a data store
+type DataStoreConfig struct {
+	Name        string
+	Workspace   string
+	Enabled     bool
+	Description string
+}
+
+// CoverageStoreConfig holds configuration options for editing a coverage store
+type CoverageStoreConfig struct {
+	Name        string
+	Workspace   string
+	Enabled     bool
+	Description string
 }
 
 // Style represents a GeoServer style

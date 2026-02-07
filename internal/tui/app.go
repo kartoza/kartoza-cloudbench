@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -104,13 +103,19 @@ type (
 	errMsg                  struct{ err error }
 	// CRUD operation messages
 	crudCompleteMsg struct{ success bool; err error; operation string }
+	// Connection workspaces loaded message (for multi-connection tree)
+	connectionWorkspacesLoadedMsg struct {
+		node       *models.TreeNode
+		workspaces []models.Workspace
+		err        error
+	}
 )
 
 // App is the main TUI application
 type App struct {
 	config            *config.Config
 	version           string
-	client            *api.Client
+	clients           map[string]*api.Client // Map of connection ID -> client
 	fileBrowser       *components.FileBrowser
 	treeView          *components.TreeView
 	connectionsScreen *screens.ConnectionsScreen
@@ -134,9 +139,16 @@ type App struct {
 	// Store wizard state
 	storeWizard *components.StoreWizard
 
+	// Workspace wizard state
+	workspaceWizard *components.WorkspaceWizard
+
+	// Resource wizard state (for layers and stores)
+	resourceWizard *components.ResourceWizard
+
 	// Upload state
-	pendingUploadFiles     []models.LocalFile
-	pendingUploadWorkspace string
+	pendingUploadFiles        []models.LocalFile
+	pendingUploadWorkspace    string
+	pendingUploadConnectionID string
 
 	// Tree state preservation
 	savedTreeState components.TreeState
@@ -166,6 +178,7 @@ func NewApp(cfg *config.Config, version string) *App {
 	app := &App{
 		config:            cfg,
 		version:           version,
+		clients:           make(map[string]*api.Client),
 		fileBrowser:       components.NewFileBrowser(cfg.LastLocalPath),
 		treeView:          components.NewTreeView(),
 		connectionsScreen: screens.NewConnectionsScreen(cfg),
@@ -179,10 +192,15 @@ func NewApp(cfg *config.Config, version string) *App {
 	app.fileBrowser.SetActive(true)
 	app.treeView.SetActive(false)
 
-	// Connect to active connection if available
-	if conn := cfg.GetActiveConnection(); conn != nil {
-		app.client = api.NewClient(conn)
-		app.treeView.SetConnected(true, conn.Name)
+	// Create clients for all connections
+	for i := range cfg.Connections {
+		conn := &cfg.Connections[i]
+		app.clients[conn.ID] = api.NewClient(conn)
+	}
+
+	// Mark as connected if we have any connections
+	if len(cfg.Connections) > 0 {
+		app.treeView.SetConnected(true, "GeoServer Connections")
 	}
 
 	return app
@@ -194,9 +212,9 @@ func (a *App) Init() tea.Cmd {
 		a.spinner.Tick,
 	}
 
-	// Load workspaces if connected
-	if a.client != nil {
-		cmds = append(cmds, a.loadWorkspaces())
+	// Build initial tree with all connections
+	if len(a.config.Connections) > 0 {
+		a.buildConnectionsTree()
 	}
 
 	return tea.Batch(cmds...)
@@ -248,6 +266,44 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if wizard was closed
 			if !a.storeWizard.IsVisible() {
 				a.storeWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+			return a, tea.Batch(cmds...)
+		}
+
+		// If we have a workspace wizard open, forward keys there first
+		if a.workspaceWizard != nil && a.workspaceWizard.IsVisible() {
+			var cmd tea.Cmd
+			a.workspaceWizard, cmd = a.workspaceWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed
+			if !a.workspaceWizard.IsVisible() {
+				a.workspaceWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+			return a, tea.Batch(cmds...)
+		}
+
+		// If we have a resource wizard open, forward keys there first
+		if a.resourceWizard != nil && a.resourceWizard.IsVisible() {
+			var cmd tea.Cmd
+			a.resourceWizard, cmd = a.resourceWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed
+			if !a.resourceWizard.IsVisible() {
+				a.resourceWizard = nil
 				// Execute pending CRUD command if any
 				if a.pendingCRUDCmd != nil {
 					cmds = append(cmds, a.pendingCRUDCmd)
@@ -330,9 +386,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.screen == ScreenMain {
 				if a.activePanel == PanelLeft {
 					a.fileBrowser.Refresh()
-				} else if a.client != nil {
-					a.treeView.Clear()
-					return a, a.loadWorkspaces()
+				} else if len(a.clients) > 0 {
+					// Rebuild the tree with all connections
+					a.buildConnectionsTree()
+					a.treeView.Refresh()
 				}
 				return a, nil
 			}
@@ -345,11 +402,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			// Check if we should connect after user selects a connection
-			if conn := a.connectionsScreen.GetActiveConnection(); conn != nil && a.client == nil {
-				a.client = api.NewClient(conn)
-				a.treeView.SetConnected(true, conn.Name)
-				cmds = append(cmds, a.loadWorkspaces())
+			// Rebuild tree when connections are changed
+			if len(a.config.Connections) != len(a.clients) {
+				// Update clients map
+				a.clients = make(map[string]*api.Client)
+				for i := range a.config.Connections {
+					conn := &a.config.Connections[i]
+					a.clients[conn.ID] = api.NewClient(conn)
+				}
+				// Rebuild tree
+				a.buildConnectionsTree()
+				a.treeView.SetConnected(len(a.clients) > 0, "GeoServer Connections")
 			}
 		} else if a.screen == ScreenMain && !a.showHelp {
 			if a.activePanel == PanelLeft {
@@ -382,9 +445,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.spinner, cmd = a.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
-	case workspacesLoadedMsg:
-		a.loading = false
-		a.buildWorkspaceTree(msg.workspaces)
+	case connectionWorkspacesLoadedMsg:
+		msg.node.IsLoading = false
+		if msg.err != nil {
+			msg.node.HasError = true
+			msg.node.ErrorMsg = msg.err.Error()
+			a.treeView.Refresh()
+			return a, nil
+		}
+		msg.node.IsLoaded = true
+		a.addWorkspacesToConnection(msg.node, msg.workspaces)
 		a.treeView.Refresh()
 		// If we have a newly created item, navigate to it
 		if a.newlyCreatedPath != "" {
@@ -403,6 +473,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, store := range msg.stores {
 			child := models.NewTreeNode(store.Name, models.NodeTypeDataStore)
 			child.Workspace = msg.node.Workspace
+			child.ConnectionID = msg.node.ConnectionID
+			enabled := store.Enabled
+			child.Enabled = &enabled
 			msg.node.AddChild(child)
 		}
 		a.treeView.Refresh()
@@ -413,6 +486,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, store := range msg.stores {
 			child := models.NewTreeNode(store.Name, models.NodeTypeCoverageStore)
 			child.Workspace = msg.node.Workspace
+			child.ConnectionID = msg.node.ConnectionID
+			enabled := store.Enabled
+			child.Enabled = &enabled
 			msg.node.AddChild(child)
 		}
 		a.treeView.Refresh()
@@ -423,6 +499,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, style := range msg.styles {
 			child := models.NewTreeNode(style.Name, models.NodeTypeStyle)
 			child.Workspace = msg.node.Workspace
+			child.ConnectionID = msg.node.ConnectionID
 			msg.node.AddChild(child)
 		}
 		a.treeView.Refresh()
@@ -433,6 +510,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, group := range msg.groups {
 			child := models.NewTreeNode(group.Name, models.NodeTypeLayerGroup)
 			child.Workspace = msg.node.Workspace
+			child.ConnectionID = msg.node.ConnectionID
 			msg.node.AddChild(child)
 		}
 		a.treeView.Refresh()
@@ -443,6 +521,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, layer := range msg.layers {
 			child := models.NewTreeNode(layer.Name, models.NodeTypeLayer)
 			child.Workspace = msg.node.Workspace
+			child.ConnectionID = msg.node.ConnectionID
+			child.Enabled = layer.Enabled
 			msg.node.AddChild(child)
 		}
 		a.treeView.Refresh()
@@ -452,10 +532,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.success {
 			a.statusMsg = fmt.Sprintf("Connected to GeoServer %s", msg.version)
 			a.errorMsg = ""
-			return a, a.loadWorkspaces()
+			// Rebuild tree with all connections
+			a.buildConnectionsTree()
+			a.treeView.Refresh()
 		} else {
 			a.errorMsg = fmt.Sprintf("Connection failed: %v", msg.err)
-			a.treeView.SetConnected(false, "")
 		}
 
 	case screens.ConnectionTestMsg:
@@ -466,12 +547,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if msg.Success {
-			// Update connection status
-			if conn := a.config.GetActiveConnection(); conn != nil {
-				a.client = api.NewClient(conn)
-				a.treeView.SetConnected(true, conn.Name)
-				cmds = append(cmds, a.loadWorkspaces())
+			// Update clients map and rebuild tree
+			a.clients = make(map[string]*api.Client)
+			for i := range a.config.Connections {
+				conn := &a.config.Connections[i]
+				a.clients[conn.ID] = api.NewClient(conn)
 			}
+			a.treeView.SetConnected(len(a.clients) > 0, "GeoServer Connections")
+			a.buildConnectionsTree()
 		}
 
 	case uploadCompleteMsg:
@@ -479,9 +562,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.success {
 			a.statusMsg = "Upload completed successfully"
 			a.errorMsg = ""
-			// Refresh the tree
-			a.treeView.Clear()
-			return a, a.loadWorkspaces()
+			// Refresh the tree - find the connection node and reload it
+			a.buildConnectionsTree()
+			a.treeView.Refresh()
 		} else {
 			a.errorMsg = fmt.Sprintf("Upload failed: %v", msg.err)
 		}
@@ -491,12 +574,88 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.success {
 			a.statusMsg = msg.operation + " completed successfully"
 			a.errorMsg = ""
-			// Refresh the tree
-			a.treeView.Clear()
-			return a, a.loadWorkspaces()
+			// Refresh the tree - rebuild with all connections
+			a.buildConnectionsTree()
+			a.treeView.Refresh()
 		} else {
 			a.errorMsg = fmt.Sprintf("%s failed: %v", msg.operation, msg.err)
 		}
+
+	case workspaceConfigLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load workspace config: %v", msg.err)
+			return a, nil
+		}
+		// Show the workspace wizard with loaded config
+		a.workspaceWizard = components.NewWorkspaceWizardWithConfig(msg.config)
+		a.workspaceWizard.SetSize(a.width, a.height)
+		a.workspaceWizard.SetCallbacks(
+			func(result components.WorkspaceWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeWorkspaceEdit(a.workspaceWizard.GetOriginalName(), result.Config)
+				}
+			},
+			func() {},
+		)
+		return a, a.workspaceWizard.Init()
+
+	case layerConfigLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load layer config: %v", msg.err)
+			return a, nil
+		}
+		// Show the resource wizard with loaded config
+		a.resourceWizard = components.NewLayerWizard(msg.config)
+		a.resourceWizard.SetSize(a.width, a.height)
+		a.resourceWizard.SetCallbacks(
+			func(result components.ResourceWizardResult) {
+				if result.Confirmed && result.LayerConfig != nil {
+					a.pendingCRUDCmd = a.executeLayerEdit(*result.LayerConfig)
+				}
+			},
+			func() {},
+		)
+		return a, a.resourceWizard.Init()
+
+	case dataStoreConfigLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load data store config: %v", msg.err)
+			return a, nil
+		}
+		// Show the resource wizard with loaded config
+		a.resourceWizard = components.NewDataStoreWizardEdit(msg.config)
+		a.resourceWizard.SetSize(a.width, a.height)
+		a.resourceWizard.SetCallbacks(
+			func(result components.ResourceWizardResult) {
+				if result.Confirmed && result.DataStoreConfig != nil {
+					a.pendingCRUDCmd = a.executeDataStoreEdit(*result.DataStoreConfig)
+				}
+			},
+			func() {},
+		)
+		return a, a.resourceWizard.Init()
+
+	case coverageStoreConfigLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load coverage store config: %v", msg.err)
+			return a, nil
+		}
+		// Show the resource wizard with loaded config
+		a.resourceWizard = components.NewCoverageStoreWizardEdit(msg.config)
+		a.resourceWizard.SetSize(a.width, a.height)
+		a.resourceWizard.SetCallbacks(
+			func(result components.ResourceWizardResult) {
+				if result.Confirmed && result.CoverageStoreConfig != nil {
+					a.pendingCRUDCmd = a.executeCoverageStoreEdit(*result.CoverageStoreConfig)
+				}
+			},
+			func() {},
+		)
+		return a, a.resourceWizard.Init()
 
 	case components.TreeNewMsg:
 		// Show create dialog based on node type
@@ -551,6 +710,46 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case components.WorkspaceWizardAnimationMsg:
+		// Forward to workspace wizard if we have one
+		if a.workspaceWizard != nil {
+			wasVisible := a.workspaceWizard.IsVisible()
+			var cmd tea.Cmd
+			a.workspaceWizard, cmd = a.workspaceWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed during animation
+			if wasVisible && !a.workspaceWizard.IsVisible() {
+				a.workspaceWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+		}
+
+	case components.ResourceWizardAnimationMsg:
+		// Forward to resource wizard if we have one
+		if a.resourceWizard != nil {
+			wasVisible := a.resourceWizard.IsVisible()
+			var cmd tea.Cmd
+			a.resourceWizard, cmd = a.resourceWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed during animation
+			if wasVisible && !a.resourceWizard.IsVisible() {
+				a.resourceWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+		}
+
 	case components.InfoDialogAnimationMsg:
 		// Forward to info dialog if we have one
 		if a.infoDialog != nil && a.infoDialog.IsVisible() {
@@ -562,6 +761,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if dialog was closed during animation
 			if !a.infoDialog.IsVisible() {
 				a.infoDialog = nil
+			}
+		}
+
+	case components.InfoDialogMetadataMsg:
+		// Forward metadata message to info dialog if we have one
+		if a.infoDialog != nil && a.infoDialog.IsVisible() {
+			var cmd tea.Cmd
+			a.infoDialog, cmd = a.infoDialog.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -578,8 +787,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if wasVisible && !a.progressDialog.IsVisible() {
 				// Trigger tree refresh if upload completed successfully
 				if a.progressDialog.IsDone() && a.progressDialog.GetError() == nil {
-					a.treeView.Clear()
-					cmds = append(cmds, a.loadWorkspaces())
+					a.buildConnectionsTree()
+					a.treeView.Refresh()
 				}
 				a.progressDialog = nil
 			}
@@ -599,7 +808,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Continue uploading the next file
 		cmds = append(cmds,
 			components.SendProgressUpdate("Uploading Files", msg.Index, len(msg.Files), msg.Files[msg.Index].Name, false, nil),
-			a.uploadFile(msg.Files, msg.Workspace, msg.Index),
+			a.uploadFile(msg.Files, msg.Workspace, msg.ConnectionID, msg.Index),
 		)
 
 	case components.FileInfoMsg:
@@ -609,14 +818,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.infoDialog.Init()
 
 	case components.TreeInfoMsg:
-		// Show info dialog for tree node
-		a.infoDialog = components.NewTreeNodeInfoDialog(msg.Node)
+		// Show info dialog for tree node with connection info for extended metadata
+		geoserverURL := ""
+		username := ""
+		password := ""
+		if conn := a.getConnectionForNode(msg.Node); conn != nil {
+			if client := a.getClientForNode(msg.Node); client != nil {
+				geoserverURL = client.BaseURL()
+			}
+			username = conn.Username
+			password = conn.Password
+		}
+		a.infoDialog = components.NewTreeNodeInfoDialogWithConnection(msg.Node, geoserverURL, username, password)
 		a.infoDialog.SetSize(a.width, a.height)
 		return a, a.infoDialog.Init()
 
 	case components.TreePreviewMsg:
-		// Open layer preview in browser
+		// Open layer preview in browser and show status message
+		a.statusMsg = fmt.Sprintf("Opening preview for %s in browser...", msg.Node.Name)
 		return a, a.openLayerPreview(msg.Node)
+
+	case components.TreePublishMsg:
+		// Publish a layer from a store
+		return a, a.publishLayerFromStore(msg.Node)
 
 	case errMsg:
 		a.loading = false
@@ -659,6 +883,18 @@ func (a *App) View() string {
 	if a.storeWizard != nil && a.storeWizard.IsVisible() {
 		a.storeWizard.SetSize(a.width, a.height)
 		content = a.storeWizard.View()
+	}
+
+	// Render workspace wizard overlay
+	if a.workspaceWizard != nil && a.workspaceWizard.IsVisible() {
+		a.workspaceWizard.SetSize(a.width, a.height)
+		content = a.workspaceWizard.View()
+	}
+
+	// Render resource wizard overlay
+	if a.resourceWizard != nil && a.resourceWizard.IsVisible() {
+		a.resourceWizard.SetSize(a.width, a.height)
+		content = a.resourceWizard.View()
 	}
 
 	// Render info dialog overlay
@@ -747,12 +983,14 @@ func (a *App) renderHelpBar() string {
 		items = append(items, styles.RenderHelpKey("n", "new"))
 		items = append(items, styles.RenderHelpKey("e", "edit"))
 		items = append(items, styles.RenderHelpKey("d", "delete"))
-		// Show preview option for layers and stores
+		// Show preview and publish options for layers and stores
 		if node := a.treeView.SelectedNode(); node != nil {
 			switch node.Type {
-			case models.NodeTypeLayer, models.NodeTypeLayerGroup,
-				models.NodeTypeDataStore, models.NodeTypeCoverageStore:
+			case models.NodeTypeLayer, models.NodeTypeLayerGroup:
 				items = append(items, styles.RenderHelpKey("o", "preview"))
+			case models.NodeTypeDataStore, models.NodeTypeCoverageStore:
+				items = append(items, styles.RenderHelpKey("o", "preview"))
+				items = append(items, styles.RenderHelpKey("p", "publish"))
 			}
 		}
 	}
@@ -857,715 +1095,4 @@ func (a *App) updateSizes() {
 
 	a.fileBrowser.SetSize(panelWidth, panelHeight)
 	a.treeView.SetSize(panelWidth, panelHeight)
-}
-
-// loadWorkspaces loads workspaces from the server
-func (a *App) loadWorkspaces() tea.Cmd {
-	a.loading = true
-	return func() tea.Msg {
-		if a.client == nil {
-			return errMsg{fmt.Errorf("not connected")}
-		}
-
-		workspaces, err := a.client.GetWorkspaces()
-		if err != nil {
-			return errMsg{err}
-		}
-
-		return workspacesLoadedMsg{workspaces}
-	}
-}
-
-// buildWorkspaceTree builds the tree structure from workspaces
-func (a *App) buildWorkspaceTree(workspaces []models.Workspace) {
-	root := models.NewTreeNode("GeoServer", models.NodeTypeRoot)
-	root.Expanded = true
-
-	for _, ws := range workspaces {
-		wsNode := models.NewTreeNode(ws.Name, models.NodeTypeWorkspace)
-		wsNode.Workspace = ws.Name
-
-		// Add category nodes
-		dsNode := models.NewTreeNode("Data Stores", models.NodeTypeDataStores)
-		dsNode.Workspace = ws.Name
-		wsNode.AddChild(dsNode)
-
-		csNode := models.NewTreeNode("Coverage Stores", models.NodeTypeCoverageStores)
-		csNode.Workspace = ws.Name
-		wsNode.AddChild(csNode)
-
-		stylesNode := models.NewTreeNode("Styles", models.NodeTypeStyles)
-		stylesNode.Workspace = ws.Name
-		wsNode.AddChild(stylesNode)
-
-		layersNode := models.NewTreeNode("Layers", models.NodeTypeLayers)
-		layersNode.Workspace = ws.Name
-		wsNode.AddChild(layersNode)
-
-		lgNode := models.NewTreeNode("Layer Groups", models.NodeTypeLayerGroups)
-		lgNode.Workspace = ws.Name
-		wsNode.AddChild(lgNode)
-
-		root.AddChild(wsNode)
-	}
-
-	a.treeView.SetRoot(root)
-}
-
-// loadNodeChildren loads children for a tree node
-func (a *App) loadNodeChildren(node *models.TreeNode) tea.Cmd {
-	if a.client == nil || node.IsLoaded || node.IsLoading {
-		return nil
-	}
-
-	node.IsLoading = true
-
-	switch node.Type {
-	case models.NodeTypeDataStores:
-		return func() tea.Msg {
-			stores, err := a.client.GetDataStores(node.Workspace)
-			if err != nil {
-				node.IsLoading = false
-				node.HasError = true
-				node.ErrorMsg = err.Error()
-				return errMsg{err}
-			}
-			return dataStoresLoadedMsg{node: node, stores: stores}
-		}
-
-	case models.NodeTypeCoverageStores:
-		return func() tea.Msg {
-			stores, err := a.client.GetCoverageStores(node.Workspace)
-			if err != nil {
-				node.IsLoading = false
-				node.HasError = true
-				node.ErrorMsg = err.Error()
-				return errMsg{err}
-			}
-			return coverageStoresLoadedMsg{node: node, stores: stores}
-		}
-
-	case models.NodeTypeStyles:
-		return func() tea.Msg {
-			styles, err := a.client.GetStyles(node.Workspace)
-			if err != nil {
-				node.IsLoading = false
-				node.HasError = true
-				node.ErrorMsg = err.Error()
-				return errMsg{err}
-			}
-			return stylesLoadedMsg{node: node, styles: styles}
-		}
-
-	case models.NodeTypeLayers:
-		return func() tea.Msg {
-			layers, err := a.client.GetLayers(node.Workspace)
-			if err != nil {
-				node.IsLoading = false
-				node.HasError = true
-				node.ErrorMsg = err.Error()
-				return errMsg{err}
-			}
-			return layersLoadedMsg{node: node, layers: layers}
-		}
-
-	case models.NodeTypeLayerGroups:
-		return func() tea.Msg {
-			groups, err := a.client.GetLayerGroups(node.Workspace)
-			if err != nil {
-				node.IsLoading = false
-				node.HasError = true
-				node.ErrorMsg = err.Error()
-				return errMsg{err}
-			}
-			return layerGroupsLoadedMsg{node: node, groups: groups}
-		}
-	}
-
-	return nil
-}
-
-// handleUpload handles file upload - shows confirmation dialog first
-func (a *App) handleUpload() tea.Cmd {
-	if a.client == nil {
-		a.errorMsg = "Not connected to GeoServer"
-		return nil
-	}
-
-	// Get selected files
-	selectedFiles := a.fileBrowser.SelectedFiles()
-	if len(selectedFiles) == 0 {
-		// Use current file if none selected
-		if file := a.fileBrowser.SelectedFile(); file != nil && !file.IsDir {
-			selectedFiles = []models.LocalFile{*file}
-		}
-	}
-
-	if len(selectedFiles) == 0 {
-		a.errorMsg = "No files selected for upload"
-		return nil
-	}
-
-	// Get target workspace from tree selection
-	targetNode := a.treeView.SelectedNode()
-	var workspace string
-	if targetNode != nil {
-		workspace = targetNode.Workspace
-	}
-
-	if workspace == "" {
-		a.errorMsg = "Select a workspace in the GeoServer tree first"
-		return nil
-	}
-
-	// Store pending upload info
-	a.pendingUploadFiles = selectedFiles
-	a.pendingUploadWorkspace = workspace
-
-	// Build confirmation message
-	var fileList strings.Builder
-	for i, file := range selectedFiles {
-		if i > 0 {
-			fileList.WriteString("\n")
-		}
-		fileList.WriteString(fmt.Sprintf("  %s %s", file.Type.Icon(), file.Name))
-		if i >= 4 && len(selectedFiles) > 5 {
-			fileList.WriteString(fmt.Sprintf("\n  ... and %d more files", len(selectedFiles)-5))
-			break
-		}
-	}
-
-	message := fmt.Sprintf("Upload %d file(s) to workspace '%s'?\n\nSource files:\n%s\n\nDestination: %s",
-		len(selectedFiles), workspace, fileList.String(), workspace)
-
-	a.crudDialog = components.NewConfirmDialog("Confirm Upload", message)
-	a.crudDialog.SetSize(a.width, a.height)
-
-	a.crudDialog.SetCallbacks(
-		func(result components.DialogResult) {
-			if result.Confirmed {
-				a.pendingCRUDCmd = a.executeUpload()
-			}
-		},
-		func() {
-			// Cancel - clear pending upload
-			a.pendingUploadFiles = nil
-			a.pendingUploadWorkspace = ""
-		},
-	)
-
-	return a.crudDialog.Init()
-}
-
-// executeUpload performs the actual file upload with progress dialog
-func (a *App) executeUpload() tea.Cmd {
-	if len(a.pendingUploadFiles) == 0 || a.pendingUploadWorkspace == "" {
-		a.errorMsg = "No upload pending"
-		return nil
-	}
-
-	selectedFiles := a.pendingUploadFiles
-	workspace := a.pendingUploadWorkspace
-
-	// Clear pending state
-	a.pendingUploadFiles = nil
-	a.pendingUploadWorkspace = ""
-
-	// Save tree state before upload
-	a.savedTreeState = a.treeView.SaveState()
-
-	// Build list of file names for the progress dialog
-	fileNames := make([]string, len(selectedFiles))
-	for i, f := range selectedFiles {
-		fileNames[i] = f.Name
-	}
-
-	// Create progress dialog
-	a.progressDialog = components.NewProgressDialog("Uploading Files", "📤", fileNames)
-	a.progressDialog.SetSize(a.width, a.height)
-
-	// Start the upload in a goroutine and return the init command
-	return tea.Batch(
-		a.progressDialog.Init(),
-		a.startUpload(selectedFiles, workspace),
-	)
-}
-
-// UploadNextMsg signals to upload the next file
-type UploadNextMsg struct {
-	Files     []models.LocalFile
-	Workspace string
-	Index     int
-}
-
-// startUpload starts the upload process by uploading the first file
-func (a *App) startUpload(files []models.LocalFile, workspace string) tea.Cmd {
-	if len(files) == 0 {
-		return nil
-	}
-	// Send progress update for the first file and start uploading
-	return tea.Batch(
-		components.SendProgressUpdate("Uploading Files", 0, len(files), files[0].Name, false, nil),
-		a.uploadFile(files, workspace, 0),
-	)
-}
-
-// uploadFile uploads a single file and returns a command to continue or finish
-func (a *App) uploadFile(files []models.LocalFile, workspace string, index int) tea.Cmd {
-	return func() tea.Msg {
-		file := files[index]
-		storeName := strings.TrimSuffix(file.Name, filepath.Ext(file.Name))
-
-		var err error
-		switch file.Type {
-		case models.FileTypeShapefile:
-			err = a.client.UploadShapefile(workspace, storeName, file.Path)
-		case models.FileTypeGeoTIFF:
-			err = a.client.UploadGeoTIFF(workspace, storeName, file.Path)
-		case models.FileTypeGeoPackage:
-			err = a.client.UploadGeoPackage(workspace, storeName, file.Path)
-		case models.FileTypeSLD, models.FileTypeCSS:
-			format := "sld"
-			if file.Type == models.FileTypeCSS {
-				format = "css"
-			}
-			err = a.client.UploadStyle(workspace, storeName, file.Path, format)
-		default:
-			err = fmt.Errorf("unsupported file type: %s", file.Type)
-		}
-
-		if err != nil {
-			return components.ProgressUpdateMsg{
-				ID:       "Uploading Files",
-				Current:  index,
-				Total:    len(files),
-				ItemName: file.Name,
-				Done:     true,
-				Error:    err,
-			}
-		}
-
-		// Check if there are more files
-		if index+1 < len(files) {
-			return UploadNextMsg{
-				Files:     files,
-				Workspace: workspace,
-				Index:     index + 1,
-			}
-		}
-
-		// All files uploaded successfully
-		return components.ProgressUpdateMsg{
-			ID:       "Uploading Files",
-			Current:  len(files),
-			Total:    len(files),
-			ItemName: "",
-			Done:     true,
-			Error:    nil,
-		}
-	}
-}
-
-// openLayerPreview opens the layer preview in the browser
-func (a *App) openLayerPreview(node *models.TreeNode) tea.Cmd {
-	return func() tea.Msg {
-		if a.client == nil {
-			return errMsg{err: fmt.Errorf("not connected to GeoServer")}
-		}
-
-		var layerName string
-		var layerType string
-		var storeName string
-		var storeType string
-
-		switch node.Type {
-		case models.NodeTypeLayer, models.NodeTypeLayerGroup:
-			layerName = node.Name
-			storeName = node.StoreName
-			storeType = node.StoreType
-			layerType = "vector"
-			if node.StoreType == "coveragestore" {
-				layerType = "raster"
-			}
-		case models.NodeTypeDataStore:
-			// For data stores, use the store name as layer name (GeoServer convention)
-			layerName = node.Name
-			storeName = node.Name
-			storeType = "datastore"
-			layerType = "vector"
-		case models.NodeTypeCoverageStore:
-			// For coverage stores, use the store name as layer name
-			layerName = node.Name
-			storeName = node.Name
-			storeType = "coveragestore"
-			layerType = "raster"
-		default:
-			return errMsg{err: fmt.Errorf("can only preview layers, layer groups, and stores")}
-		}
-
-		// Create layer info
-		layerInfo := &preview.LayerInfo{
-			Name:         layerName,
-			Workspace:    node.Workspace,
-			StoreName:    storeName,
-			StoreType:    storeType,
-			GeoServerURL: a.client.BaseURL(),
-			Type:         layerType,
-		}
-
-		// Start or update preview server
-		if a.previewServer == nil {
-			a.previewServer = preview.NewServer()
-		}
-
-		url, err := a.previewServer.Start(layerInfo)
-		if err != nil {
-			return errMsg{err: fmt.Errorf("failed to start preview server: %w", err)}
-		}
-
-		// Open browser
-		if err := preview.OpenBrowser(url); err != nil {
-			return errMsg{err: fmt.Errorf("failed to open browser: %w", err)}
-		}
-
-		return nil
-	}
-}
-
-// showCreateDialog shows a dialog to create a new item
-func (a *App) showCreateDialog(contextNode *models.TreeNode, nodeType models.NodeType) tea.Cmd {
-	if a.client == nil {
-		a.errorMsg = "Not connected to GeoServer"
-		return nil
-	}
-
-	// Get workspace from context
-	workspace := ""
-	if contextNode != nil {
-		workspace = contextNode.Workspace
-	}
-
-	switch nodeType {
-	case models.NodeTypeWorkspace:
-		// Use simple dialog for workspace (just needs a name)
-		fields := []components.DialogField{
-			{Name: "name", Label: "Name", Placeholder: "workspace-name"},
-		}
-		a.crudDialog = components.NewInputDialog("Create Workspace", fields)
-		a.crudDialog.SetSize(a.width, a.height)
-		a.crudOperation = CRUDCreate
-		a.crudNode = contextNode
-		a.crudNodeType = nodeType
-
-		a.crudDialog.SetCallbacks(
-			func(result components.DialogResult) {
-				if result.Confirmed {
-					a.pendingCRUDCmd = a.executeCRUDCreate(result.Values)
-				}
-			},
-			func() {},
-		)
-		return a.crudDialog.Init()
-
-	case models.NodeTypeDataStore:
-		// Use wizard for data store (needs type selection + configuration)
-		if workspace == "" {
-			a.errorMsg = "Select a workspace first"
-			return nil
-		}
-		a.storeWizard = components.NewDataStoreWizard(workspace)
-		a.storeWizard.SetSize(a.width, a.height)
-		a.crudNode = contextNode
-
-		a.storeWizard.SetCallbacks(
-			func(result components.StoreWizardResult) {
-				if result.Confirmed {
-					a.pendingCRUDCmd = a.executeDataStoreCreate(workspace, result)
-				}
-			},
-			func() {},
-		)
-		return a.storeWizard.Init()
-
-	case models.NodeTypeCoverageStore:
-		// Use wizard for coverage store
-		if workspace == "" {
-			a.errorMsg = "Select a workspace first"
-			return nil
-		}
-		a.storeWizard = components.NewCoverageStoreWizard(workspace)
-		a.storeWizard.SetSize(a.width, a.height)
-		a.crudNode = contextNode
-
-		a.storeWizard.SetCallbacks(
-			func(result components.StoreWizardResult) {
-				if result.Confirmed {
-					a.pendingCRUDCmd = a.executeCoverageStoreCreate(workspace, result)
-				}
-			},
-			func() {},
-		)
-		return a.storeWizard.Init()
-
-	default:
-		a.errorMsg = "Cannot create this type of item"
-		return nil
-	}
-}
-
-// showEditDialog shows a dialog to edit an item
-func (a *App) showEditDialog(node *models.TreeNode) tea.Cmd {
-	if a.client == nil {
-		a.errorMsg = "Not connected to GeoServer"
-		return nil
-	}
-
-	var title string
-	var fields []components.DialogField
-
-	switch node.Type {
-	case models.NodeTypeWorkspace:
-		title = "Edit Workspace"
-		fields = []components.DialogField{
-			{Name: "name", Label: "Name", Placeholder: "workspace-name", Value: node.Name},
-		}
-
-	case models.NodeTypeDataStore:
-		title = "Edit Data Store"
-		fields = []components.DialogField{
-			{Name: "name", Label: "Name", Placeholder: "datastore-name", Value: node.Name},
-		}
-
-	case models.NodeTypeCoverageStore:
-		title = "Edit Coverage Store"
-		fields = []components.DialogField{
-			{Name: "name", Label: "Name", Placeholder: "coveragestore-name", Value: node.Name},
-		}
-
-	default:
-		a.errorMsg = "Cannot edit this type of item"
-		return nil
-	}
-
-	a.crudDialog = components.NewInputDialog(title, fields)
-	a.crudDialog.SetSize(a.width, a.height)
-	a.crudOperation = CRUDEdit
-	a.crudNode = node
-	a.crudNodeType = node.Type
-
-	// Set callbacks
-	a.crudDialog.SetCallbacks(
-		func(result components.DialogResult) {
-			if result.Confirmed {
-				a.pendingCRUDCmd = a.executeCRUDEdit(result.Values)
-			}
-		},
-		func() {
-			// Cancel - dialog will close automatically
-		},
-	)
-
-	return a.crudDialog.Init()
-}
-
-// showDeleteDialog shows a confirmation dialog to delete an item
-func (a *App) showDeleteDialog(node *models.TreeNode) tea.Cmd {
-	if a.client == nil {
-		a.errorMsg = "Not connected to GeoServer"
-		return nil
-	}
-
-	message := fmt.Sprintf("Are you sure you want to delete %s '%s'?\nThis action cannot be undone.",
-		node.Type.String(), node.Name)
-
-	a.crudDialog = components.NewConfirmDialog("Delete "+node.Type.String(), message)
-	a.crudDialog.SetSize(a.width, a.height)
-	a.crudOperation = CRUDDelete
-	a.crudNode = node
-	a.crudNodeType = node.Type
-
-	// Set callbacks
-	a.crudDialog.SetCallbacks(
-		func(result components.DialogResult) {
-			if result.Confirmed {
-				a.pendingCRUDCmd = a.executeCRUDDelete()
-			}
-		},
-		func() {
-			// Cancel - dialog will close automatically
-		},
-	)
-
-	return a.crudDialog.Init()
-}
-
-// executeCRUDCreate executes the create operation for workspaces
-func (a *App) executeCRUDCreate(values map[string]string) tea.Cmd {
-	name := strings.TrimSpace(values["name"])
-	if name == "" {
-		a.errorMsg = "Name is required"
-		return nil
-	}
-
-	// Set path to navigate to after creation (workspace name is the path)
-	a.newlyCreatedPath = name
-
-	a.loading = true
-	return func() tea.Msg {
-		operation := "Create workspace"
-		err := a.client.CreateWorkspace(name)
-		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
-	}
-}
-
-// executeDataStoreCreate executes the data store creation
-func (a *App) executeDataStoreCreate(workspace string, result components.StoreWizardResult) tea.Cmd {
-	name := strings.TrimSpace(result.Values["name"])
-	if name == "" {
-		a.errorMsg = "Store name is required"
-		return nil
-	}
-
-	// Set path to navigate to after creation (workspace/Data Stores/storename)
-	a.newlyCreatedPath = workspace + "/Data Stores/" + name
-
-	a.loading = true
-	return func() tea.Msg {
-		operation := fmt.Sprintf("Create data store '%s'", name)
-		err := a.client.CreateDataStore(workspace, name, result.DataStoreType, result.Values)
-		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
-	}
-}
-
-// executeCoverageStoreCreate executes the coverage store creation
-func (a *App) executeCoverageStoreCreate(workspace string, result components.StoreWizardResult) tea.Cmd {
-	name := strings.TrimSpace(result.Values["name"])
-	if name == "" {
-		a.errorMsg = "Store name is required"
-		return nil
-	}
-
-	url := result.Values["url"]
-	if url == "" {
-		a.errorMsg = "File path is required"
-		return nil
-	}
-
-	// Set path to navigate to after creation (workspace/Coverage Stores/storename)
-	a.newlyCreatedPath = workspace + "/Coverage Stores/" + name
-
-	a.loading = true
-	return func() tea.Msg {
-		operation := fmt.Sprintf("Create coverage store '%s'", name)
-		err := a.client.CreateCoverageStore(workspace, name, result.CoverageStoreType, url)
-		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
-	}
-}
-
-// executeCRUDEdit executes the edit operation
-func (a *App) executeCRUDEdit(values map[string]string) tea.Cmd {
-	newName := strings.TrimSpace(values["name"])
-	if newName == "" {
-		a.errorMsg = "Name is required"
-		return nil
-	}
-
-	if a.crudNode == nil {
-		a.errorMsg = "No item selected"
-		return nil
-	}
-
-	oldName := a.crudNode.Name
-	if newName == oldName {
-		return nil // No change
-	}
-
-	workspace := a.crudNode.Workspace
-	nodeType := a.crudNodeType
-
-	// Set path to navigate to after rename (the renamed item)
-	switch nodeType {
-	case models.NodeTypeWorkspace:
-		a.newlyCreatedPath = newName
-	case models.NodeTypeDataStore:
-		a.newlyCreatedPath = workspace + "/Data Stores/" + newName
-	case models.NodeTypeCoverageStore:
-		a.newlyCreatedPath = workspace + "/Coverage Stores/" + newName
-	}
-
-	a.loading = true
-	return func() tea.Msg {
-		var err error
-		var operation string
-
-		switch nodeType {
-		case models.NodeTypeWorkspace:
-			operation = "Rename workspace"
-			err = a.client.UpdateWorkspace(oldName, newName)
-
-		case models.NodeTypeDataStore:
-			operation = "Rename data store"
-			err = a.client.UpdateDataStore(workspace, oldName, newName)
-
-		case models.NodeTypeCoverageStore:
-			operation = "Rename coverage store"
-			err = a.client.UpdateCoverageStore(workspace, oldName, newName)
-		}
-
-		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
-	}
-}
-
-// executeCRUDDelete executes the delete operation
-func (a *App) executeCRUDDelete() tea.Cmd {
-	if a.crudNode == nil {
-		a.errorMsg = "No item selected"
-		return nil
-	}
-
-	// Navigate to parent after deletion
-	if a.crudNode.Parent != nil && a.crudNode.Parent.Type != models.NodeTypeRoot {
-		a.newlyCreatedPath = a.crudNode.Parent.Path()
-	} else {
-		// If deleting a workspace, just save current state
-		a.savedTreeState = a.treeView.SaveState()
-	}
-
-	nodeName := a.crudNode.Name
-	workspace := a.crudNode.Workspace
-	nodeType := a.crudNodeType
-
-	a.loading = true
-	return func() tea.Msg {
-		var err error
-		var operation string
-
-		switch nodeType {
-		case models.NodeTypeWorkspace:
-			operation = "Delete workspace"
-			err = a.client.DeleteWorkspace(nodeName, true)
-
-		case models.NodeTypeDataStore:
-			operation = "Delete data store"
-			err = a.client.DeleteDataStore(workspace, nodeName, true)
-
-		case models.NodeTypeCoverageStore:
-			operation = "Delete coverage store"
-			err = a.client.DeleteCoverageStore(workspace, nodeName, true)
-
-		case models.NodeTypeLayer:
-			operation = "Delete layer"
-			err = a.client.DeleteLayer(workspace, nodeName)
-
-		case models.NodeTypeStyle:
-			operation = "Delete style"
-			err = a.client.DeleteStyle(workspace, nodeName, true)
-
-		case models.NodeTypeLayerGroup:
-			operation = "Delete layer group"
-			err = a.client.DeleteLayerGroup(workspace, nodeName)
-		}
-
-		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
-	}
 }

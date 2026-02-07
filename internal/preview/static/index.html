@@ -320,6 +320,108 @@
             opacity: 0.5;
         }
 
+        .capabilities-section {
+            margin-bottom: 20px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .capabilities-header {
+            padding: 12px 14px;
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: background 0.2s;
+        }
+
+        .capabilities-header:hover {
+            background: var(--bg-secondary);
+        }
+
+        .capabilities-header h4 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .capabilities-header .toggle {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .capabilities-body {
+            padding: 14px;
+        }
+
+        .capabilities-body.collapsed {
+            display: none;
+        }
+
+        .cap-item {
+            margin-bottom: 10px;
+        }
+
+        .cap-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .cap-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 2px;
+        }
+
+        .cap-value {
+            font-size: 13px;
+            color: var(--text-primary);
+            word-break: break-all;
+        }
+
+        .cap-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .cap-list li {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        .cap-list li:last-child {
+            border-bottom: none;
+        }
+
+        .cap-code {
+            background: var(--bg-primary);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .cap-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            font-size: 10px;
+            font-weight: 600;
+            border-radius: 10px;
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent);
+            margin-right: 4px;
+            margin-bottom: 4px;
+        }
+
         .coords-display {
             position: absolute;
             bottom: 30px;
@@ -382,12 +484,50 @@
             const [layerStatus, setLayerStatus] = useState('loading');
             const [layerBounds, setLayerBounds] = useState(null);
             const [opacity, setOpacity] = useState(0.85);
+            const [capabilities, setCapabilities] = useState(null);
+            const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+            const [extendedMetadata, setExtendedMetadata] = useState(null);
+            const [metadataLoading, setMetadataLoading] = useState(false);
+            const [expandedSections, setExpandedSections] = useState({
+                service: true,
+                layer: true,
+                formats: false,
+                srs: false
+            });
             const mapRef = useRef(null);
             const mapInstanceRef = useRef(null);
 
             useEffect(() => {
                 fetchLayerInfo();
             }, []);
+
+            // Fetch extended metadata when layer is loaded
+            useEffect(() => {
+                if (layer && !extendedMetadata && !metadataLoading) {
+                    fetchExtendedMetadata();
+                }
+            }, [layer]);
+
+            // Zoom to layer extent when extended metadata is available
+            useEffect(() => {
+                if (extendedMetadata && mapInstanceRef.current) {
+                    // Use latlon_bbox from REST API metadata (most reliable source)
+                    const bbox = extendedMetadata.latlon_bbox;
+                    console.log('Extended metadata latlon_bbox:', bbox);
+                    if (bbox &&
+                        (bbox.minx !== 0 || bbox.miny !== 0 || bbox.maxx !== 0 || bbox.maxy !== 0) &&
+                        (bbox.minx !== bbox.maxx || bbox.miny !== bbox.maxy) &&
+                        isFinite(bbox.minx) && isFinite(bbox.miny) && isFinite(bbox.maxx) && isFinite(bbox.maxy)) {
+                        const bounds = [
+                            [bbox.minx, bbox.miny],
+                            [bbox.maxx, bbox.maxy]
+                        ];
+                        console.log('Zooming to bounds from REST API:', bounds);
+                        setLayerBounds(bounds);
+                        mapInstanceRef.current.fitBounds(bounds, { padding: 50, maxZoom: 18 });
+                    }
+                }
+            }, [extendedMetadata]);
 
             useEffect(() => {
                 if (layer && mapRef.current && !mapInstanceRef.current) {
@@ -408,6 +548,40 @@
                     setError(err.message);
                     setLoading(false);
                 }
+            };
+
+            const fetchExtendedMetadata = async () => {
+                setMetadataLoading(true);
+                try {
+                    const response = await fetch('/api/metadata');
+                    if (response.ok) {
+                        const data = await response.json();
+                        setExtendedMetadata(data);
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch extended metadata:', err);
+                } finally {
+                    setMetadataLoading(false);
+                }
+            };
+
+            const formatDate = (dateStr) => {
+                if (!dateStr) return null;
+                try {
+                    const date = new Date(dateStr);
+                    return date.toLocaleString();
+                } catch {
+                    return dateStr;
+                }
+            };
+
+            const formatFilePath = (path) => {
+                if (!path) return null;
+                // Handle file:// URLs
+                if (path.startsWith('file:')) {
+                    return path.replace('file:', '');
+                }
+                return path;
             };
 
             const initializeMap = () => {
@@ -523,11 +697,13 @@
 
                 setLayerStatus('loading');
                 const layerName = `${layer.workspace}:${layer.name}`;
+                console.log('Fetching layer bounds for:', layerName);
 
                 // Try WMS GetCapabilities first to get the layer bounding box
                 try {
                     const wmsUrl = `${layer.geoserver_url}/${layer.workspace}/wms`;
                     const capsUrl = `${wmsUrl}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities`;
+                    console.log('Fetching WMS capabilities from:', capsUrl);
 
                     const response = await fetch(capsUrl);
                     if (response.ok) {
@@ -537,9 +713,12 @@
 
                         // Find the layer in capabilities
                         const layers = xml.querySelectorAll('Layer');
+                        console.log('Found', layers.length, 'layers in capabilities');
                         for (const layerEl of layers) {
                             const nameEl = layerEl.querySelector('Name');
-                            if (nameEl && (nameEl.textContent === layer.name || nameEl.textContent === layerName)) {
+                            const foundName = nameEl?.textContent;
+                            if (nameEl && (foundName === layer.name || foundName === layerName)) {
+                                console.log('Found matching layer:', foundName);
                                 // Try LatLonBoundingBox first (WMS 1.1.1)
                                 const latLonBbox = layerEl.querySelector('LatLonBoundingBox');
                                 if (latLonBbox) {
@@ -547,6 +726,7 @@
                                         [parseFloat(latLonBbox.getAttribute('minx')), parseFloat(latLonBbox.getAttribute('miny'))],
                                         [parseFloat(latLonBbox.getAttribute('maxx')), parseFloat(latLonBbox.getAttribute('maxy'))]
                                     ];
+                                    console.log('Found LatLonBoundingBox, zooming to:', bounds);
                                     setLayerBounds(bounds);
                                     map.fitBounds(bounds, { padding: 50, maxZoom: 18 });
                                     setLayerStatus('loaded');
@@ -562,14 +742,17 @@
                                             [parseFloat(bbox.getAttribute('minx')), parseFloat(bbox.getAttribute('miny'))],
                                             [parseFloat(bbox.getAttribute('maxx')), parseFloat(bbox.getAttribute('maxy'))]
                                         ];
+                                        console.log('Found EPSG:4326 BoundingBox, zooming to:', bounds);
                                         setLayerBounds(bounds);
                                         map.fitBounds(bounds, { padding: 50, maxZoom: 18 });
                                         setLayerStatus('loaded');
                                         return;
                                     }
                                 }
+                                console.log('Layer found but no suitable bounding box');
                             }
                         }
+                        console.log('Layer not found in capabilities, looked for:', layer.name, 'or', layerName);
                     }
                 } catch (err) {
                     console.error('Failed to fetch WMS capabilities:', err);
@@ -668,6 +851,133 @@
                 }
             };
 
+            const fetchCapabilities = async () => {
+                if (!layer || capabilitiesLoading || capabilities) return;
+
+                setCapabilitiesLoading(true);
+                const layerName = `${layer.workspace}:${layer.name}`;
+
+                try {
+                    const wmsUrl = `${layer.geoserver_url}/${layer.workspace}/wms`;
+                    const capsUrl = `${wmsUrl}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetCapabilities`;
+
+                    const response = await fetch(capsUrl);
+                    if (!response.ok) throw new Error('Failed to fetch capabilities');
+
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+
+                    // Parse service information
+                    const serviceInfo = {};
+                    const service = xml.querySelector('Service');
+                    if (service) {
+                        serviceInfo.name = service.querySelector('Name')?.textContent || 'N/A';
+                        serviceInfo.title = service.querySelector('Title')?.textContent || 'N/A';
+                        serviceInfo.abstract = service.querySelector('Abstract')?.textContent || '';
+                        serviceInfo.onlineResource = service.querySelector('OnlineResource')?.getAttribute('xlink:href') || '';
+
+                        const keywords = service.querySelectorAll('KeywordList Keyword');
+                        serviceInfo.keywords = Array.from(keywords).map(k => k.textContent);
+
+                        const contactInfo = service.querySelector('ContactInformation');
+                        if (contactInfo) {
+                            serviceInfo.contactPerson = contactInfo.querySelector('ContactPersonPrimary ContactPerson')?.textContent || '';
+                            serviceInfo.contactOrg = contactInfo.querySelector('ContactPersonPrimary ContactOrganization')?.textContent || '';
+                            serviceInfo.contactEmail = contactInfo.querySelector('ContactElectronicMailAddress')?.textContent || '';
+                        }
+                    }
+
+                    // Parse layer-specific information
+                    const layerInfo = {};
+                    const layers = xml.querySelectorAll('Layer');
+                    for (const layerEl of layers) {
+                        const nameEl = layerEl.querySelector('Name');
+                        if (nameEl && (nameEl.textContent === layer.name || nameEl.textContent === layerName)) {
+                            layerInfo.name = nameEl.textContent;
+                            layerInfo.title = layerEl.querySelector('Title')?.textContent || layer.name;
+                            layerInfo.abstract = layerEl.querySelector('Abstract')?.textContent || '';
+                            layerInfo.queryable = layerEl.getAttribute('queryable') === '1';
+                            layerInfo.opaque = layerEl.getAttribute('opaque') === '1';
+
+                            // Get SRS list
+                            const srsList = layerEl.querySelectorAll('SRS');
+                            layerInfo.srs = Array.from(srsList).map(s => s.textContent);
+
+                            // Get keywords
+                            const keywords = layerEl.querySelectorAll('KeywordList Keyword');
+                            layerInfo.keywords = Array.from(keywords).map(k => k.textContent);
+
+                            // Get styles
+                            const styles = layerEl.querySelectorAll('Style');
+                            layerInfo.styles = Array.from(styles).map(s => ({
+                                name: s.querySelector('Name')?.textContent || '',
+                                title: s.querySelector('Title')?.textContent || '',
+                                abstract: s.querySelector('Abstract')?.textContent || ''
+                            }));
+
+                            // Get bounding boxes
+                            const latLonBbox = layerEl.querySelector('LatLonBoundingBox');
+                            if (latLonBbox) {
+                                layerInfo.latLonBbox = {
+                                    minx: latLonBbox.getAttribute('minx'),
+                                    miny: latLonBbox.getAttribute('miny'),
+                                    maxx: latLonBbox.getAttribute('maxx'),
+                                    maxy: latLonBbox.getAttribute('maxy')
+                                };
+                            }
+
+                            // Get native bounding box
+                            const bboxes = layerEl.querySelectorAll('BoundingBox');
+                            layerInfo.boundingBoxes = Array.from(bboxes).map(b => ({
+                                srs: b.getAttribute('SRS') || b.getAttribute('CRS'),
+                                minx: b.getAttribute('minx'),
+                                miny: b.getAttribute('miny'),
+                                maxx: b.getAttribute('maxx'),
+                                maxy: b.getAttribute('maxy')
+                            }));
+
+                            break;
+                        }
+                    }
+
+                    // Parse supported formats
+                    const capability = xml.querySelector('Capability');
+                    const formats = {};
+                    if (capability) {
+                        const getMap = capability.querySelector('Request GetMap');
+                        if (getMap) {
+                            const formatEls = getMap.querySelectorAll('Format');
+                            formats.getMap = Array.from(formatEls).map(f => f.textContent);
+                        }
+
+                        const getFeatureInfo = capability.querySelector('Request GetFeatureInfo');
+                        if (getFeatureInfo) {
+                            const formatEls = getFeatureInfo.querySelectorAll('Format');
+                            formats.getFeatureInfo = Array.from(formatEls).map(f => f.textContent);
+                        }
+                    }
+
+                    setCapabilities({ service: serviceInfo, layer: layerInfo, formats });
+                } catch (err) {
+                    console.error('Failed to parse capabilities:', err);
+                    setCapabilities({ error: err.message });
+                } finally {
+                    setCapabilitiesLoading(false);
+                }
+            };
+
+            const toggleSection = (section) => {
+                setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+            };
+
+            // Fetch capabilities when tab changes to 'capabilities'
+            useEffect(() => {
+                if (activeTab === 'capabilities' && layer && !capabilities) {
+                    fetchCapabilities();
+                }
+            }, [activeTab, layer]);
+
             if (loading) {
                 return (
                     <div className="app-container">
@@ -733,6 +1043,12 @@
                                 Metadata
                             </button>
                             <button
+                                className={`tab ${activeTab === 'capabilities' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('capabilities')}
+                            >
+                                Capabilities
+                            </button>
+                            <button
                                 className={`tab ${activeTab === 'attributes' ? 'active' : ''}`}
                                 onClick={() => setActiveTab('attributes')}
                             >
@@ -750,6 +1066,12 @@
                                                 <div className="info-label">Name</div>
                                                 <div className="info-value">{layer.name}</div>
                                             </div>
+                                            {extendedMetadata?.layer_title && extendedMetadata.layer_title !== layer.name && (
+                                                <div className="info-item">
+                                                    <div className="info-label">Title</div>
+                                                    <div className="info-value">{extendedMetadata.layer_title}</div>
+                                                </div>
+                                            )}
                                             <div className="info-item">
                                                 <div className="info-label">Workspace</div>
                                                 <div className="info-value">{layer.workspace}</div>
@@ -766,6 +1088,18 @@
                                                     </span>
                                                 </div>
                                             </div>
+                                            {extendedMetadata?.layer_srs && (
+                                                <div className="info-item">
+                                                    <div className="info-label">Coordinate System</div>
+                                                    <div className="info-value">{extendedMetadata.layer_srs}</div>
+                                                </div>
+                                            )}
+                                            {extendedMetadata?.layer_default_style && (
+                                                <div className="info-item">
+                                                    <div className="info-label">Default Style</div>
+                                                    <div className="info-value">{extendedMetadata.layer_default_style}</div>
+                                                </div>
+                                            )}
                                             {layerBounds && (
                                                 <div className="info-item">
                                                     <div className="info-label">Bounding Box</div>
@@ -776,6 +1110,12 @@
                                                 </div>
                                             )}
                                         </div>
+                                        {extendedMetadata?.layer_abstract && (
+                                            <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                                                <div className="info-label">Abstract</div>
+                                                <div className="info-value" style={{ fontSize: '12px', lineHeight: '1.5' }}>{extendedMetadata.layer_abstract}</div>
+                                            </div>
+                                        )}
                                         {layerBounds && (
                                             <button
                                                 onClick={zoomToLayer}
@@ -796,25 +1136,376 @@
                                         )}
                                     </div>
 
+                                    {/* Store / Data Source Information */}
+                                    {extendedMetadata && (
+                                        <div className="section">
+                                            <div className="section-title">Data Source</div>
+                                            <div className="info-grid">
+                                                {extendedMetadata.store_format && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Format</div>
+                                                        <div className="info-value">{extendedMetadata.store_format}</div>
+                                                    </div>
+                                                )}
+                                                {extendedMetadata.coverage_native_format && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Native Format</div>
+                                                        <div className="info-value">{extendedMetadata.coverage_native_format}</div>
+                                                    </div>
+                                                )}
+                                                {formatFilePath(extendedMetadata.store_url) && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Server File Path</div>
+                                                        <div className="info-value" style={{ fontSize: '11px', fontFamily: 'monospace' }}>
+                                                            {formatFilePath(extendedMetadata.store_url)}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <div className="info-item">
+                                                    <div className="info-label">Store Enabled</div>
+                                                    <div className="info-value">
+                                                        <span className={`cap-badge ${extendedMetadata.store_enabled ? 'badge-vector' : ''}`}>
+                                                            {extendedMetadata.store_enabled ? 'Yes' : 'No'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="info-item">
+                                                    <div className="info-label">Layer Enabled</div>
+                                                    <div className="info-value">
+                                                        <span className={`cap-badge ${extendedMetadata.layer_enabled ? 'badge-vector' : ''}`}>
+                                                            {extendedMetadata.layer_enabled ? 'Yes' : 'No'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="info-item">
+                                                    <div className="info-label">Queryable</div>
+                                                    <div className="info-value">
+                                                        <span className={`cap-badge ${extendedMetadata.layer_queryable ? 'badge-vector' : ''}`}>
+                                                            {extendedMetadata.layer_queryable ? 'Yes' : 'No'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="info-item">
+                                                    <div className="info-label">Advertised</div>
+                                                    <div className="info-value">
+                                                        <span className={`cap-badge ${extendedMetadata.layer_advertised ? 'badge-vector' : ''}`}>
+                                                            {extendedMetadata.layer_advertised ? 'Yes' : 'No'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Timestamps */}
+                                    {extendedMetadata && (extendedMetadata.date_created || extendedMetadata.date_modified) && (
+                                        <div className="section">
+                                            <div className="section-title">Timestamps</div>
+                                            <div className="info-grid">
+                                                {extendedMetadata.date_created && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Created</div>
+                                                        <div className="info-value">{formatDate(extendedMetadata.date_created)}</div>
+                                                    </div>
+                                                )}
+                                                {extendedMetadata.date_modified && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Modified</div>
+                                                        <div className="info-value">{formatDate(extendedMetadata.date_modified)}</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Coverage Dimensions (for raster) */}
+                                    {extendedMetadata?.coverage_dimensions?.length > 0 && (
+                                        <div className="section">
+                                            <div className="section-title">Raster Bands</div>
+                                            <div className="info-grid">
+                                                <div className="info-item">
+                                                    <div className="info-label">Dimensions</div>
+                                                    <div className="info-value">
+                                                        {extendedMetadata.coverage_dimensions.map((dim, idx) => (
+                                                            <span key={idx} className="cap-badge">{dim}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {extendedMetadata.coverage_interpolation && (
+                                                    <div className="info-item">
+                                                        <div className="info-label">Interpolation</div>
+                                                        <div className="info-value">{extendedMetadata.coverage_interpolation}</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Keywords */}
+                                    {extendedMetadata?.layer_keywords?.length > 0 && (
+                                        <div className="section">
+                                            <div className="section-title">Keywords</div>
+                                            <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                                                {extendedMetadata.layer_keywords.map((kw, idx) => (
+                                                    <span key={idx} className="cap-badge">{kw}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Native Bounding Box */}
+                                    {extendedMetadata?.native_bbox?.crs && (
+                                        <div className="section">
+                                            <div className="section-title">Native Bounding Box</div>
+                                            <div className="info-grid">
+                                                <div className="info-item">
+                                                    <div className="info-label">CRS</div>
+                                                    <div className="info-value">{extendedMetadata.native_bbox.crs}</div>
+                                                </div>
+                                                <div className="info-item">
+                                                    <div className="info-label">Extent</div>
+                                                    <div className="info-value" style={{ fontSize: '11px', fontFamily: 'monospace' }}>
+                                                        {extendedMetadata.native_bbox.minx?.toFixed(2)}, {extendedMetadata.native_bbox.miny?.toFixed(2)}<br/>
+                                                        {extendedMetadata.native_bbox.maxx?.toFixed(2)}, {extendedMetadata.native_bbox.maxy?.toFixed(2)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="section">
-                                        <div className="section-title">GeoServer Connection</div>
+                                        <div className="section-title">GeoServer Endpoints</div>
                                         <div className="info-grid">
                                             <div className="info-item">
-                                                <div className="info-label">URL</div>
+                                                <div className="info-label">GeoServer URL</div>
                                                 <div className="info-value">{layer.geoserver_url}</div>
                                             </div>
                                             <div className="info-item">
                                                 <div className="info-label">WMS Endpoint</div>
-                                                <div className="info-value">{layer.geoserver_url}/{layer.workspace}/wms</div>
+                                                <div className="info-value" style={{ fontSize: '11px' }}>{layer.geoserver_url}/{layer.workspace}/wms</div>
                                             </div>
                                             {layer.type === 'vector' && (
                                                 <div className="info-item">
                                                     <div className="info-label">WFS Endpoint</div>
-                                                    <div className="info-value">{layer.geoserver_url}/{layer.workspace}/wfs</div>
+                                                    <div className="info-value" style={{ fontSize: '11px' }}>{layer.geoserver_url}/{layer.workspace}/wfs</div>
+                                                </div>
+                                            )}
+                                            {layer.type === 'raster' && (
+                                                <div className="info-item">
+                                                    <div className="info-label">WCS Endpoint</div>
+                                                    <div className="info-value" style={{ fontSize: '11px' }}>{layer.geoserver_url}/{layer.workspace}/wcs</div>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
+
+                                    {metadataLoading && (
+                                        <div className="section" style={{ textAlign: 'center', padding: '20px' }}>
+                                            <div className="spinner" style={{ margin: '0 auto', width: '24px', height: '24px' }}></div>
+                                            <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>Loading extended metadata...</div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'capabilities' && (
+                                <div>
+                                    {capabilitiesLoading ? (
+                                        <div className="loading-spinner">
+                                            <div className="spinner"></div>
+                                        </div>
+                                    ) : capabilities?.error ? (
+                                        <div className="error-message">{capabilities.error}</div>
+                                    ) : capabilities ? (
+                                        <div>
+                                            {/* Service Information */}
+                                            <div className="capabilities-section">
+                                                <div
+                                                    className="capabilities-header"
+                                                    onClick={() => toggleSection('service')}
+                                                >
+                                                    <h4>WMS Service Information</h4>
+                                                    <span className="toggle">{expandedSections.service ? '▼' : '▶'}</span>
+                                                </div>
+                                                <div className={`capabilities-body ${expandedSections.service ? '' : 'collapsed'}`}>
+                                                    <div className="cap-item">
+                                                        <div className="cap-label">Service Name</div>
+                                                        <div className="cap-value">{capabilities.service?.name || 'N/A'}</div>
+                                                    </div>
+                                                    <div className="cap-item">
+                                                        <div className="cap-label">Title</div>
+                                                        <div className="cap-value">{capabilities.service?.title || 'N/A'}</div>
+                                                    </div>
+                                                    {capabilities.service?.abstract && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Abstract</div>
+                                                            <div className="cap-value" style={{ fontSize: '12px' }}>{capabilities.service.abstract}</div>
+                                                        </div>
+                                                    )}
+                                                    {capabilities.service?.contactOrg && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Contact Organization</div>
+                                                            <div className="cap-value">{capabilities.service.contactOrg}</div>
+                                                        </div>
+                                                    )}
+                                                    {capabilities.service?.contactEmail && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Contact Email</div>
+                                                            <div className="cap-value">{capabilities.service.contactEmail}</div>
+                                                        </div>
+                                                    )}
+                                                    {capabilities.service?.keywords?.length > 0 && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Keywords</div>
+                                                            <div className="cap-value">
+                                                                {capabilities.service.keywords.map((kw, idx) => (
+                                                                    <span key={idx} className="cap-badge">{kw}</span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Layer Information */}
+                                            <div className="capabilities-section">
+                                                <div
+                                                    className="capabilities-header"
+                                                    onClick={() => toggleSection('layer')}
+                                                >
+                                                    <h4>Layer Details</h4>
+                                                    <span className="toggle">{expandedSections.layer ? '▼' : '▶'}</span>
+                                                </div>
+                                                <div className={`capabilities-body ${expandedSections.layer ? '' : 'collapsed'}`}>
+                                                    <div className="cap-item">
+                                                        <div className="cap-label">Layer Name</div>
+                                                        <div className="cap-value">{capabilities.layer?.name || layer.name}</div>
+                                                    </div>
+                                                    <div className="cap-item">
+                                                        <div className="cap-label">Title</div>
+                                                        <div className="cap-value">{capabilities.layer?.title || 'N/A'}</div>
+                                                    </div>
+                                                    {capabilities.layer?.abstract && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Abstract</div>
+                                                            <div className="cap-value" style={{ fontSize: '12px' }}>{capabilities.layer.abstract}</div>
+                                                        </div>
+                                                    )}
+                                                    <div className="cap-item">
+                                                        <div className="cap-label">Queryable</div>
+                                                        <div className="cap-value">
+                                                            <span className={`cap-badge ${capabilities.layer?.queryable ? 'badge-vector' : ''}`}>
+                                                                {capabilities.layer?.queryable ? 'Yes' : 'No'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {capabilities.layer?.latLonBbox && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Lat/Lon Bounding Box</div>
+                                                            <div className="cap-code">
+                                                                MinX: {capabilities.layer.latLonBbox.minx}{'\n'}
+                                                                MinY: {capabilities.layer.latLonBbox.miny}{'\n'}
+                                                                MaxX: {capabilities.layer.latLonBbox.maxx}{'\n'}
+                                                                MaxY: {capabilities.layer.latLonBbox.maxy}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {capabilities.layer?.styles?.length > 0 && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Available Styles</div>
+                                                            <ul className="cap-list">
+                                                                {capabilities.layer.styles.map((style, idx) => (
+                                                                    <li key={idx}>
+                                                                        <strong>{style.name}</strong>
+                                                                        {style.title && style.title !== style.name && (
+                                                                            <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>
+                                                                                ({style.title})
+                                                                            </span>
+                                                                        )}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                    {capabilities.layer?.keywords?.length > 0 && (
+                                                        <div className="cap-item">
+                                                            <div className="cap-label">Keywords</div>
+                                                            <div className="cap-value">
+                                                                {capabilities.layer.keywords.map((kw, idx) => (
+                                                                    <span key={idx} className="cap-badge">{kw}</span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Supported SRS */}
+                                            {capabilities.layer?.srs?.length > 0 && (
+                                                <div className="capabilities-section">
+                                                    <div
+                                                        className="capabilities-header"
+                                                        onClick={() => toggleSection('srs')}
+                                                    >
+                                                        <h4>Supported Coordinate Systems ({capabilities.layer.srs.length})</h4>
+                                                        <span className="toggle">{expandedSections.srs ? '▼' : '▶'}</span>
+                                                    </div>
+                                                    <div className={`capabilities-body ${expandedSections.srs ? '' : 'collapsed'}`}>
+                                                        <div className="cap-value">
+                                                            {capabilities.layer.srs.slice(0, 30).map((srs, idx) => (
+                                                                <span key={idx} className="cap-badge">{srs}</span>
+                                                            ))}
+                                                            {capabilities.layer.srs.length > 30 && (
+                                                                <span style={{ color: 'var(--text-secondary)', fontSize: '12px', display: 'block', marginTop: '8px' }}>
+                                                                    ... and {capabilities.layer.srs.length - 30} more
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Supported Formats */}
+                                            {capabilities.formats && (
+                                                <div className="capabilities-section">
+                                                    <div
+                                                        className="capabilities-header"
+                                                        onClick={() => toggleSection('formats')}
+                                                    >
+                                                        <h4>Supported Output Formats</h4>
+                                                        <span className="toggle">{expandedSections.formats ? '▼' : '▶'}</span>
+                                                    </div>
+                                                    <div className={`capabilities-body ${expandedSections.formats ? '' : 'collapsed'}`}>
+                                                        {capabilities.formats.getMap?.length > 0 && (
+                                                            <div className="cap-item">
+                                                                <div className="cap-label">GetMap Formats</div>
+                                                                <ul className="cap-list">
+                                                                    {capabilities.formats.getMap.map((fmt, idx) => (
+                                                                        <li key={idx}>{fmt}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {capabilities.formats.getFeatureInfo?.length > 0 && (
+                                                            <div className="cap-item">
+                                                                <div className="cap-label">GetFeatureInfo Formats</div>
+                                                                <ul className="cap-list">
+                                                                    {capabilities.formats.getFeatureInfo.map((fmt, idx) => (
+                                                                        <li key={idx}>{fmt}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="empty-state">
+                                            <div className="empty-state-icon">📄</div>
+                                            <div>Loading capabilities...</div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

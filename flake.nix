@@ -21,6 +21,12 @@
           pymdown-extensions
         ]);
 
+        # Test GeoServer configuration
+        geoserverContainer = "kartoza-geoserver-test";
+        geoserverPort = "8600";
+        geoserverUser = "admin";
+        geoserverPass = "geoserver";
+
       in
       {
         packages = {
@@ -87,6 +93,9 @@
             # Git
             git
             gh
+
+            # Docker for test environment
+            docker
           ];
 
           shellHook = ''
@@ -95,6 +104,13 @@
             export GOCACHE="$PWD/.go/cache"
             export GOMODCACHE="$PWD/.go/pkg/mod"
             export PATH="$GOPATH/bin:$PATH"
+
+            # Test GeoServer configuration
+            export GEOSERVER_CONTAINER="${geoserverContainer}"
+            export GEOSERVER_PORT="${geoserverPort}"
+            export GEOSERVER_USER="${geoserverUser}"
+            export GEOSERVER_PASS="${geoserverPass}"
+            export GEOSERVER_URL="http://localhost:${geoserverPort}/geoserver"
 
             # Helpful aliases
             alias gor='go run .'
@@ -107,6 +123,68 @@
             alias docs='mkdocs serve'
             alias docs-build='mkdocs build'
 
+            # GeoServer test environment commands as exported functions
+            export -f geoserver-start 2>/dev/null || true
+            geoserver-start() {
+              echo "Starting test GeoServer on port ${geoserverPort}..."
+              docker run -d \
+                --name ${geoserverContainer} \
+                -p ${geoserverPort}:8080 \
+                -e GEOSERVER_ADMIN_USER=${geoserverUser} \
+                -e GEOSERVER_ADMIN_PASSWORD=${geoserverPass} \
+                -e STABLE_EXTENSIONS=wps-plugin \
+                kartoza/geoserver:2.26.0
+              echo ""
+              echo "GeoServer starting at: http://localhost:${geoserverPort}/geoserver"
+              echo "Credentials: ${geoserverUser} / ${geoserverPass}"
+              echo ""
+              echo "Wait ~30 seconds for GeoServer to fully start."
+              echo "Check status with: geoserver-status"
+            }
+            export -f geoserver-start
+
+            geoserver-stop() {
+              echo "Stopping test GeoServer..."
+              docker stop ${geoserverContainer} 2>/dev/null || true
+              docker rm ${geoserverContainer} 2>/dev/null || true
+              echo "GeoServer stopped."
+            }
+            export -f geoserver-stop
+
+            geoserver-status() {
+              if docker ps --format '{{.Names}}' | grep -q "^${geoserverContainer}$"; then
+                echo "GeoServer is running"
+                echo ""
+                echo "URL:      http://localhost:${geoserverPort}/geoserver"
+                echo "REST API: http://localhost:${geoserverPort}/geoserver/rest"
+                echo "User:     ${geoserverUser}"
+                echo "Password: ${geoserverPass}"
+                echo ""
+                # Check if GeoServer is ready
+                if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${geoserverPort}/geoserver/rest/about/version.json" -u "${geoserverUser}:${geoserverPass}" | grep -q "200"; then
+                  echo "Status: READY"
+                else
+                  echo "Status: STARTING (wait a moment...)"
+                fi
+              else
+                echo "GeoServer is not running"
+                echo "Start with: geoserver-start"
+              fi
+            }
+            export -f geoserver-status
+
+            geoserver-logs() {
+              docker logs -f ${geoserverContainer}
+            }
+            export -f geoserver-logs
+
+            geoserver-creds() {
+              echo "URL:      $GEOSERVER_URL"
+              echo "User:     $GEOSERVER_USER"
+              echo "Password: $GEOSERVER_PASS"
+            }
+            export -f geoserver-creds
+
             echo ""
             echo "🌍 Kartoza GeoServer Client Development Environment"
             echo ""
@@ -116,6 +194,13 @@
             echo "  gob  - Build binary"
             echo "  gom  - Tidy go modules"
             echo "  gol  - Run linter"
+            echo ""
+            echo "Test GeoServer:"
+            echo "  geoserver-start  - Start Kartoza GeoServer container"
+            echo "  geoserver-stop   - Stop and remove container"
+            echo "  geoserver-status - Check status and show credentials"
+            echo "  geoserver-logs   - Follow container logs"
+            echo "  geoserver-creds  - Show connection credentials"
             echo ""
             echo "Documentation:"
             echo "  docs       - Serve docs locally (http://localhost:8000)"

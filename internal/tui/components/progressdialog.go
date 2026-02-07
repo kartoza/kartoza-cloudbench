@@ -132,6 +132,8 @@ func (d *ProgressDialog) StartCloseAnimation() tea.Cmd {
 	d.targetScale = 0.0
 	d.targetOpacity = 0.0
 	d.animating = true
+	// Use a stiffer, critically-damped spring for faster closing
+	d.spring = harmonica.NewSpring(harmonica.FPS(60), 12.0, 1.0)
 	return d.animateCmd()
 }
 
@@ -165,6 +167,12 @@ func (d *ProgressDialog) Update(msg tea.Msg) (*ProgressDialog, tea.Cmd) {
 		d.currentItem = msg.Current
 		d.currentName = msg.ItemName
 
+		// Store verification results if provided
+		if msg.VerificationResult != "" {
+			d.verificationResult = msg.VerificationResult
+			d.verificationOK = msg.VerificationOK
+		}
+
 		if msg.Error != nil {
 			d.err = msg.Error
 			d.done = true
@@ -181,8 +189,12 @@ func (d *ProgressDialog) Update(msg tea.Msg) (*ProgressDialog, tea.Cmd) {
 			if d.onComplete != nil {
 				d.onComplete()
 			}
-			// Start close animation after a brief delay to show completion
-			cmds = append(cmds, tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+			// Wait longer if we have verification results to show
+			delay := time.Millisecond * 500
+			if d.verificationResult != "" {
+				delay = time.Second * 3
+			}
+			cmds = append(cmds, tea.Tick(delay, func(t time.Time) tea.Msg {
 				return ProgressDialogAnimationMsg{ID: d.id + "-close"}
 			}))
 		}
@@ -223,9 +235,10 @@ func (d *ProgressDialog) updateAnimation() (*ProgressDialog, tea.Cmd) {
 	// Update scale using spring physics
 	d.animScale, d.animVelocity = d.spring.Update(d.animScale, d.animVelocity, d.targetScale)
 
-	// Update opacity
+	// Update opacity - faster when closing
 	opacityStep := 0.1
 	if d.closing {
+		opacityStep = 0.15 // Faster fade out
 		d.animOpacity -= opacityStep
 		if d.animOpacity < 0 {
 			d.animOpacity = 0
@@ -237,8 +250,12 @@ func (d *ProgressDialog) updateAnimation() (*ProgressDialog, tea.Cmd) {
 		}
 	}
 
-	// Check if animation is complete
-	scaleClose := abs(d.animScale-d.targetScale) < 0.01 && abs(d.animVelocity) < 0.01
+	// Check if animation is complete - use more relaxed threshold when closing
+	threshold := 0.01
+	if d.closing {
+		threshold = 0.05 // More relaxed threshold for faster closing
+	}
+	scaleClose := abs(d.animScale-d.targetScale) < threshold && abs(d.animVelocity) < threshold
 	opacityClose := d.closing && d.animOpacity <= 0.01 || !d.closing && d.animOpacity >= 0.99
 
 	if scaleClose && opacityClose {
@@ -261,6 +278,33 @@ func (d *ProgressDialog) View() string {
 		return ""
 	}
 
+	dialogWidth := d.width/2 + 10
+	if dialogWidth < 50 {
+		dialogWidth = 50
+	}
+	maxWidth := 70
+	if d.verificationResult != "" {
+		maxWidth = 80
+	}
+	if dialogWidth > maxWidth {
+		dialogWidth = maxWidth
+	}
+
+	scaledWidth := int(float64(dialogWidth) * d.animScale)
+	if scaledWidth < 10 {
+		scaledWidth = 10
+	}
+
+	dialogStyle := styles.DialogStyle.Width(scaledWidth)
+	marginOffset := int((1.0 - d.animScale) * 5)
+	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
+
+	// When closing, render empty frame only
+	if d.closing {
+		dialog := dialogStyle.Render("")
+		return styles.Center(d.width, d.height, dialog)
+	}
+
 	var b strings.Builder
 
 	// Title with icon
@@ -278,6 +322,19 @@ func (d *ProgressDialog) View() string {
 		// Complete state
 		successIcon := styles.SuccessStyle.Render("✓")
 		b.WriteString(fmt.Sprintf("%s Complete! Uploaded %d file(s)\n\n", successIcon, d.totalItems))
+
+		// Show verification results if available
+		if d.verificationResult != "" {
+			b.WriteString(styles.DialogTitleStyle.Render("Verification"))
+			b.WriteString("\n")
+			// Color the result based on success/failure
+			if d.verificationOK {
+				b.WriteString(styles.SuccessStyle.Render(d.verificationResult))
+			} else {
+				b.WriteString(styles.ErrorStyle.Render(d.verificationResult))
+			}
+			b.WriteString("\n")
+		}
 	} else {
 		// In progress state
 		b.WriteString(fmt.Sprintf("Uploading %d of %d files...\n\n", d.currentItem+1, d.totalItems))
@@ -318,26 +375,6 @@ func (d *ProgressDialog) View() string {
 	} else {
 		b.WriteString(styles.HelpTextStyle.Render("Press Esc to cancel"))
 	}
-
-	dialogWidth := d.width/2 + 10
-	if dialogWidth < 50 {
-		dialogWidth = 50
-	}
-	if dialogWidth > 70 {
-		dialogWidth = 70
-	}
-
-	// Apply animation scale
-	scaledWidth := int(float64(dialogWidth) * d.animScale)
-	if scaledWidth < 10 {
-		scaledWidth = 10
-	}
-
-	dialogStyle := styles.DialogStyle.Width(scaledWidth)
-
-	// Add bounce effect
-	marginOffset := int((1.0 - d.animScale) * 5)
-	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
 
 	dialog := dialogStyle.Render(b.String())
 

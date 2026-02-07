@@ -29,6 +29,7 @@ type TreeViewKeyMap struct {
 	Delete   key.Binding
 	Info     key.Binding
 	Preview  key.Binding
+	Publish  key.Binding
 }
 
 // DefaultTreeViewKeyMap returns the default key bindings
@@ -98,6 +99,10 @@ func DefaultTreeViewKeyMap() TreeViewKeyMap {
 			key.WithKeys("o"),
 			key.WithHelp("o", "preview"),
 		),
+		Publish: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "publish"),
+		),
 	}
 }
 
@@ -122,6 +127,10 @@ type (
 	}
 	// TreePreviewMsg is sent when user wants to preview a layer
 	TreePreviewMsg struct {
+		Node *models.TreeNode
+	}
+	// TreePublishMsg is sent when user wants to publish a layer from a store
+	TreePublishMsg struct {
 		Node *models.TreeNode
 	}
 )
@@ -177,23 +186,17 @@ func (tv *TreeView) flattenNode(node *models.TreeNode, depth int, isLast bool) {
 		return
 	}
 
-	// Don't add the root node itself to flat list, start with its children
-	if node.Type != models.NodeTypeRoot {
-		tv.flatNodes = append(tv.flatNodes, FlatNode{
-			Node:   node,
-			Depth:  depth,
-			IsLast: isLast,
-		})
-	}
+	// Add all nodes including the root (connection name)
+	tv.flatNodes = append(tv.flatNodes, FlatNode{
+		Node:   node,
+		Depth:  depth,
+		IsLast: isLast,
+	})
 
 	if node.Expanded && len(node.Children) > 0 {
-		childDepth := depth
-		if node.Type != models.NodeTypeRoot {
-			childDepth = depth + 1
-		}
 		for i, child := range node.Children {
 			isLastChild := i == len(node.Children)-1
-			tv.flattenNode(child, childDepth, isLastChild)
+			tv.flattenNode(child, depth+1, isLastChild)
 		}
 	}
 }
@@ -328,6 +331,18 @@ func (tv *TreeView) Update(msg tea.Msg) (*TreeView, tea.Cmd) {
 					}
 				}
 			}
+
+		case key.Matches(msg, tv.keyMap.Publish):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				// Allow publish for data stores and coverage stores (publishes a layer from the store)
+				switch node.Type {
+				case models.NodeTypeDataStore, models.NodeTypeCoverageStore:
+					return tv, func() tea.Msg {
+						return TreePublishMsg{Node: node}
+					}
+				}
+			}
 		}
 	}
 
@@ -343,6 +358,8 @@ func (tv *TreeView) getNewItemType(node *models.TreeNode) models.NodeType {
 	switch node.Type {
 	case models.NodeTypeRoot:
 		return models.NodeTypeWorkspace
+	case models.NodeTypeConnection:
+		return models.NodeTypeWorkspace // Create workspace under connection
 	case models.NodeTypeWorkspace:
 		return models.NodeTypeWorkspace // Create sibling workspace
 	case models.NodeTypeDataStores:
@@ -361,7 +378,7 @@ func (tv *TreeView) getNewItemType(node *models.TreeNode) models.NodeType {
 // canEdit returns true if the node can be edited
 func (tv *TreeView) canEdit(node *models.TreeNode) bool {
 	switch node.Type {
-	case models.NodeTypeWorkspace, models.NodeTypeDataStore, models.NodeTypeCoverageStore:
+	case models.NodeTypeWorkspace, models.NodeTypeDataStore, models.NodeTypeCoverageStore, models.NodeTypeLayer:
 		return true
 	default:
 		return false
@@ -382,7 +399,7 @@ func (tv *TreeView) canDelete(node *models.TreeNode) bool {
 // canLoadChildren returns true if the node type can have children loaded dynamically
 func (tv *TreeView) canLoadChildren(node *models.TreeNode) bool {
 	switch node.Type {
-	case models.NodeTypeWorkspace, models.NodeTypeDataStores, models.NodeTypeCoverageStores,
+	case models.NodeTypeConnection, models.NodeTypeWorkspace, models.NodeTypeDataStores, models.NodeTypeCoverageStores,
 		models.NodeTypeDataStore, models.NodeTypeCoverageStore, models.NodeTypeLayers,
 		models.NodeTypeStyles, models.NodeTypeLayerGroups:
 		return true
@@ -517,9 +534,19 @@ func (tv *TreeView) renderNode(fn FlatNode, selected bool) string {
 
 	// Icon and name
 	icon := node.Type.Icon()
-	name := tv.truncateName(node.Name, tv.width-fn.Depth*2-10)
+	name := tv.truncateName(node.Name, tv.width-fn.Depth*2-15)
 
-	line := fmt.Sprintf("%s%s %s %s", indent.String(), indicator, icon, name)
+	// Enabled status indicator (only for layers and stores)
+	var enabledIndicator string
+	if node.Enabled != nil {
+		if *node.Enabled {
+			enabledIndicator = styles.SuccessStyle.Render(" ✓")
+		} else {
+			enabledIndicator = styles.ErrorStyle.Render(" ✗")
+		}
+	}
+
+	line := fmt.Sprintf("%s%s %s %s%s", indent.String(), indicator, icon, name, enabledIndicator)
 
 	// Apply style
 	var style lipgloss.Style
@@ -572,6 +599,11 @@ func (tv *TreeView) SetConnected(connected bool, serverName string) {
 // IsConnected returns the connection status
 func (tv *TreeView) IsConnected() bool {
 	return tv.connected
+}
+
+// ServerName returns the connected server name
+func (tv *TreeView) ServerName() string {
+	return tv.serverName
 }
 
 // SelectedNode returns the currently selected node

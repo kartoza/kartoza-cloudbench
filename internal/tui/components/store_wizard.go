@@ -404,6 +404,26 @@ func (w *StoreWizard) View() string {
 		return ""
 	}
 
+	dialogWidth := w.width/2 + 10
+	if dialogWidth < 60 {
+		dialogWidth = 60
+	}
+
+	scaledWidth := int(float64(dialogWidth) * w.animScale)
+	if scaledWidth < 10 {
+		scaledWidth = 10
+	}
+
+	dialogStyle := styles.DialogStyle.Width(scaledWidth)
+	marginOffset := int((1.0 - w.animScale) * 5)
+	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
+
+	// When closing, render empty frame only
+	if w.closing {
+		dialog := dialogStyle.Render("")
+		return styles.Center(w.width, w.height, dialog)
+	}
+
 	var b strings.Builder
 
 	// Title
@@ -422,20 +442,6 @@ func (w *StoreWizard) View() string {
 	case StepConfigureStore:
 		b.WriteString(w.renderConfiguration())
 	}
-
-	dialogWidth := w.width/2 + 10
-	if dialogWidth < 60 {
-		dialogWidth = 60
-	}
-
-	scaledWidth := int(float64(dialogWidth) * w.animScale)
-	if scaledWidth < 10 {
-		scaledWidth = 10
-	}
-
-	dialogStyle := styles.DialogStyle.Width(scaledWidth)
-	marginOffset := int((1.0 - w.animScale) * 5)
-	dialogStyle = dialogStyle.MarginTop(marginOffset).MarginBottom(marginOffset)
 
 	dialog := dialogStyle.Render(b.String())
 

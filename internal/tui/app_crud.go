@@ -1,0 +1,535 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kartoza/kartoza-geoserver-client/internal/models"
+	"github.com/kartoza/kartoza-geoserver-client/internal/tui/components"
+)
+
+// workspaceConfigLoadedMsg is sent when workspace config is loaded for editing
+type workspaceConfigLoadedMsg struct {
+	config *models.WorkspaceConfig
+	err    error
+}
+
+// layerConfigLoadedMsg is sent when layer config is loaded for editing
+type layerConfigLoadedMsg struct {
+	config *models.LayerConfig
+	err    error
+}
+
+// dataStoreConfigLoadedMsg is sent when data store config is loaded for editing
+type dataStoreConfigLoadedMsg struct {
+	config *models.DataStoreConfig
+	err    error
+}
+
+// coverageStoreConfigLoadedMsg is sent when coverage store config is loaded for editing
+type coverageStoreConfigLoadedMsg struct {
+	config *models.CoverageStoreConfig
+	err    error
+}
+
+// showCreateDialog shows a dialog to create a new item
+func (a *App) showCreateDialog(contextNode *models.TreeNode, nodeType models.NodeType) tea.Cmd {
+	client := a.getClientForNode(contextNode)
+	if client == nil && contextNode != nil {
+		a.errorMsg = "No connection for selected node"
+		return nil
+	}
+
+	// Get workspace from context
+	workspace := ""
+	if contextNode != nil {
+		workspace = contextNode.Workspace
+	}
+
+	switch nodeType {
+	case models.NodeTypeWorkspace:
+		// Use workspace wizard with service toggles
+		a.workspaceWizard = components.NewWorkspaceWizard()
+		a.workspaceWizard.SetSize(a.width, a.height)
+		a.crudOperation = CRUDCreate
+		a.crudNode = contextNode
+		a.crudNodeType = nodeType
+
+		a.workspaceWizard.SetCallbacks(
+			func(result components.WorkspaceWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeWorkspaceCreate(result.Config)
+				}
+			},
+			func() {},
+		)
+		return a.workspaceWizard.Init()
+
+	case models.NodeTypeDataStore:
+		// Use wizard for data store (needs type selection + configuration)
+		if workspace == "" {
+			a.errorMsg = "Select a workspace first"
+			return nil
+		}
+		a.storeWizard = components.NewDataStoreWizard(workspace)
+		a.storeWizard.SetSize(a.width, a.height)
+		a.crudNode = contextNode
+
+		a.storeWizard.SetCallbacks(
+			func(result components.StoreWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeDataStoreCreate(workspace, result)
+				}
+			},
+			func() {},
+		)
+		return a.storeWizard.Init()
+
+	case models.NodeTypeCoverageStore:
+		// Use wizard for coverage store
+		if workspace == "" {
+			a.errorMsg = "Select a workspace first"
+			return nil
+		}
+		a.storeWizard = components.NewCoverageStoreWizard(workspace)
+		a.storeWizard.SetSize(a.width, a.height)
+		a.crudNode = contextNode
+
+		a.storeWizard.SetCallbacks(
+			func(result components.StoreWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeCoverageStoreCreate(workspace, result)
+				}
+			},
+			func() {},
+		)
+		return a.storeWizard.Init()
+
+	default:
+		a.errorMsg = "Cannot create this type of item"
+		return nil
+	}
+}
+
+// showEditDialog shows a dialog to edit an item
+func (a *App) showEditDialog(node *models.TreeNode) tea.Cmd {
+	if a.getClientForNode(node) == nil {
+		a.errorMsg = "No connection for selected node"
+		return nil
+	}
+
+	switch node.Type {
+	case models.NodeTypeWorkspace:
+		// For workspaces, fetch config and show workspace wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadWorkspaceConfigAndShowWizard(node.Name)
+
+	case models.NodeTypeDataStore:
+		// For data stores, fetch config and show resource wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadDataStoreConfigAndShowWizard(node.Workspace, node.Name)
+
+	case models.NodeTypeCoverageStore:
+		// For coverage stores, fetch config and show resource wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadCoverageStoreConfigAndShowWizard(node.Workspace, node.Name)
+
+	case models.NodeTypeLayer:
+		// For layers, fetch config and show resource wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadLayerConfigAndShowWizard(node.Workspace, node.Name)
+
+	default:
+		a.errorMsg = "Cannot edit this type of item"
+		return nil
+	}
+}
+
+// loadWorkspaceConfigAndShowWizard loads workspace config and shows the edit wizard
+func (a *App) loadWorkspaceConfigAndShowWizard(workspaceName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return workspaceConfigLoadedMsg{config: nil, err: fmt.Errorf("no client for node")}
+		}
+		config, err := client.GetWorkspaceConfig(workspaceName)
+		return workspaceConfigLoadedMsg{config: config, err: err}
+	}
+}
+
+// loadLayerConfigAndShowWizard loads layer config and shows the edit wizard
+func (a *App) loadLayerConfigAndShowWizard(workspace, layerName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return layerConfigLoadedMsg{config: nil, err: fmt.Errorf("no client for node")}
+		}
+		config, err := client.GetLayerConfig(workspace, layerName)
+		return layerConfigLoadedMsg{config: config, err: err}
+	}
+}
+
+// loadDataStoreConfigAndShowWizard loads data store config and shows the edit wizard
+func (a *App) loadDataStoreConfigAndShowWizard(workspace, storeName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return dataStoreConfigLoadedMsg{config: nil, err: fmt.Errorf("no client for node")}
+		}
+		config, err := client.GetDataStoreConfig(workspace, storeName)
+		return dataStoreConfigLoadedMsg{config: config, err: err}
+	}
+}
+
+// loadCoverageStoreConfigAndShowWizard loads coverage store config and shows the edit wizard
+func (a *App) loadCoverageStoreConfigAndShowWizard(workspace, storeName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return coverageStoreConfigLoadedMsg{config: nil, err: fmt.Errorf("no client for node")}
+		}
+		config, err := client.GetCoverageStoreConfig(workspace, storeName)
+		return coverageStoreConfigLoadedMsg{config: config, err: err}
+	}
+}
+
+// showDeleteDialog shows a confirmation dialog to delete an item
+func (a *App) showDeleteDialog(node *models.TreeNode) tea.Cmd {
+	if a.getClientForNode(node) == nil {
+		a.errorMsg = "No connection for selected node"
+		return nil
+	}
+
+	message := fmt.Sprintf("Are you sure you want to delete %s '%s'?\nThis action cannot be undone.",
+		node.Type.String(), node.Name)
+
+	a.crudDialog = components.NewConfirmDialog("Delete "+node.Type.String(), message)
+	a.crudDialog.SetSize(a.width, a.height)
+	a.crudOperation = CRUDDelete
+	a.crudNode = node
+	a.crudNodeType = node.Type
+
+	// Set callbacks
+	a.crudDialog.SetCallbacks(
+		func(result components.DialogResult) {
+			if result.Confirmed {
+				a.pendingCRUDCmd = a.executeCRUDDelete()
+			}
+		},
+		func() {
+			// Cancel - dialog will close automatically
+		},
+	)
+
+	return a.crudDialog.Init()
+}
+
+// executeCRUDCreate executes the create operation for workspaces (legacy - kept for compatibility)
+func (a *App) executeCRUDCreate(values map[string]string) tea.Cmd {
+	name := strings.TrimSpace(values["name"])
+	if name == "" {
+		a.errorMsg = "Name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation (workspace name is the path)
+	a.newlyCreatedPath = name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Create workspace"
+		err := client.CreateWorkspace(name)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeWorkspaceCreate executes workspace creation with full config
+func (a *App) executeWorkspaceCreate(config models.WorkspaceConfig) tea.Cmd {
+	if config.Name == "" {
+		a.errorMsg = "Name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation (workspace name is the path)
+	a.newlyCreatedPath = config.Name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Create workspace"
+		err := client.CreateWorkspaceWithConfig(config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeWorkspaceEdit executes workspace update with full config
+func (a *App) executeWorkspaceEdit(oldName string, config models.WorkspaceConfig) tea.Cmd {
+	if config.Name == "" {
+		a.errorMsg = "Name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after update
+	a.newlyCreatedPath = config.Name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Update workspace"
+		err := client.UpdateWorkspaceWithConfig(oldName, config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeLayerEdit executes layer update with full config
+func (a *App) executeLayerEdit(config models.LayerConfig) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Update layer"
+		err := client.UpdateLayerConfig(config.Workspace, config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeDataStoreEdit executes data store update with full config
+func (a *App) executeDataStoreEdit(config models.DataStoreConfig) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Update data store"
+		err := client.UpdateDataStoreConfig(config.Workspace, config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeCoverageStoreEdit executes coverage store update with full config
+func (a *App) executeCoverageStoreEdit(config models.CoverageStoreConfig) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := "Update coverage store"
+		err := client.UpdateCoverageStoreConfig(config.Workspace, config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeDataStoreCreate executes the data store creation
+func (a *App) executeDataStoreCreate(workspace string, result components.StoreWizardResult) tea.Cmd {
+	name := strings.TrimSpace(result.Values["name"])
+	if name == "" {
+		a.errorMsg = "Store name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation (workspace/Data Stores/storename)
+	a.newlyCreatedPath = workspace + "/Data Stores/" + name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Create data store '%s'", name)
+		err := client.CreateDataStore(workspace, name, result.DataStoreType, result.Values)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeCoverageStoreCreate executes the coverage store creation
+func (a *App) executeCoverageStoreCreate(workspace string, result components.StoreWizardResult) tea.Cmd {
+	name := strings.TrimSpace(result.Values["name"])
+	if name == "" {
+		a.errorMsg = "Store name is required"
+		return nil
+	}
+
+	url := result.Values["url"]
+	if url == "" {
+		a.errorMsg = "File path is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation (workspace/Coverage Stores/storename)
+	a.newlyCreatedPath = workspace + "/Coverage Stores/" + name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Create coverage store '%s'", name)
+		err := client.CreateCoverageStore(workspace, name, result.CoverageStoreType, url)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeCRUDEdit executes the edit operation
+func (a *App) executeCRUDEdit(values map[string]string) tea.Cmd {
+	newName := strings.TrimSpace(values["name"])
+	if newName == "" {
+		a.errorMsg = "Name is required"
+		return nil
+	}
+
+	if a.crudNode == nil {
+		a.errorMsg = "No item selected"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	oldName := a.crudNode.Name
+	if newName == oldName {
+		return nil // No change
+	}
+
+	workspace := a.crudNode.Workspace
+	nodeType := a.crudNodeType
+
+	// Set path to navigate to after rename (the renamed item)
+	switch nodeType {
+	case models.NodeTypeWorkspace:
+		a.newlyCreatedPath = newName
+	case models.NodeTypeDataStore:
+		a.newlyCreatedPath = workspace + "/Data Stores/" + newName
+	case models.NodeTypeCoverageStore:
+		a.newlyCreatedPath = workspace + "/Coverage Stores/" + newName
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		var err error
+		var operation string
+
+		switch nodeType {
+		case models.NodeTypeWorkspace:
+			operation = "Rename workspace"
+			err = client.UpdateWorkspace(oldName, newName)
+
+		case models.NodeTypeDataStore:
+			operation = "Rename data store"
+			err = client.UpdateDataStore(workspace, oldName, newName)
+
+		case models.NodeTypeCoverageStore:
+			operation = "Rename coverage store"
+			err = client.UpdateCoverageStore(workspace, oldName, newName)
+		}
+
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeCRUDDelete executes the delete operation
+func (a *App) executeCRUDDelete() tea.Cmd {
+	if a.crudNode == nil {
+		a.errorMsg = "No item selected"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Navigate to parent after deletion
+	if a.crudNode.Parent != nil && a.crudNode.Parent.Type != models.NodeTypeRoot {
+		a.newlyCreatedPath = a.crudNode.Parent.Path()
+	} else {
+		// If deleting a workspace, just save current state
+		a.savedTreeState = a.treeView.SaveState()
+	}
+
+	nodeName := a.crudNode.Name
+	workspace := a.crudNode.Workspace
+	nodeType := a.crudNodeType
+
+	a.loading = true
+	return func() tea.Msg {
+		var err error
+		var operation string
+
+		switch nodeType {
+		case models.NodeTypeWorkspace:
+			operation = "Delete workspace"
+			err = client.DeleteWorkspace(nodeName, true)
+
+		case models.NodeTypeDataStore:
+			operation = "Delete data store"
+			err = client.DeleteDataStore(workspace, nodeName, true)
+
+		case models.NodeTypeCoverageStore:
+			operation = "Delete coverage store"
+			err = client.DeleteCoverageStore(workspace, nodeName, true)
+
+		case models.NodeTypeLayer:
+			operation = "Delete layer"
+			err = client.DeleteLayer(workspace, nodeName)
+
+		case models.NodeTypeStyle:
+			operation = "Delete style"
+			err = client.DeleteStyle(workspace, nodeName, true)
+
+		case models.NodeTypeLayerGroup:
+			operation = "Delete layer group"
+			err = client.DeleteLayerGroup(workspace, nodeName)
+		}
+
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}

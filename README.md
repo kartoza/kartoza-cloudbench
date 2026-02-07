@@ -88,6 +88,26 @@ go run .     # Run the application
 | `d` | Delete selected item |
 | `o` | Preview layer in browser |
 
+#### Workspace Creation/Edit Wizard
+When creating or editing a workspace, a wizard provides access to:
+- **Basic Info** - Workspace name, default workspace option, isolated workspace option
+- **Services** - Toggle which OGC services are enabled for this workspace (WMTS, WMS, WCS, WPS, WFS)
+- **Settings** - Enable/disable workspace-specific settings
+
+#### Layer Edit Wizard
+When editing a layer (press `e` on a layer), you can configure:
+- **Enabled** - Whether the layer is enabled for service requests
+- **Advertised** - Whether the layer appears in GetCapabilities documents
+- **Queryable** - Whether the layer supports GetFeatureInfo (vector layers only)
+
+#### Store Edit Wizard
+When editing a data store or coverage store, you can configure:
+- **Name** - The store name
+- **Enabled** - Whether the store is enabled
+- **Description** - Optional description
+
+These settings match the options available in the GeoServer web admin interface.
+
 #### Store Creation Wizard
 When creating a data store or coverage store, a wizard guides you through:
 1. **Type Selection** - Choose the store type (PostGIS, Shapefile Directory, GeoPackage, etc.)
