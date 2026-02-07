@@ -69,16 +69,23 @@ release:
 
     A Midnight Commander-style TUI for managing GeoServer instances.
 
+    ### Highlights
+
+    - **Dual-panel interface** - Local filesystem on the left, GeoServer explorer on the right
+    - **Multi-connection support** - Manage multiple GeoServer instances simultaneously
+    - **Upload with verification** - Upload Shapefiles, GeoPackage, GeoTIFF with automatic verification
+    - **Full CRUD operations** - Create, edit, delete workspaces, stores, and layers
+    - **Layer preview** - Built-in MapLibre GL web viewer with WMS support
+    - **Vim-style navigation** - Familiar j/k/h/l keys for navigation
+
   footer: |
     ---
-
-    **Full Changelog**: https://github.com/kartoza/kartoza-geoserver-client/compare/{{ .PreviousTag }}...{{ .Tag }}
 
     ### Installation
 
     #### Quick Install (Linux/macOS)
     ```bash
-    # Using curl
+    # Download and extract
     curl -sSL https://github.com/kartoza/kartoza-geoserver-client/releases/download/{{ .Tag }}/kartoza-geoserver-client_{{ .Version }}_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz | tar xz
 
     # Move to PATH
@@ -90,26 +97,24 @@ release:
     nix run github:kartoza/kartoza-geoserver-client
     ```
 
-    #### Package Managers
-    - **Debian/Ubuntu**: Download `.deb` package below
-    - **Fedora/RHEL**: Download `.rpm` package below
-    - **Snap**: `snap install kartoza-geoserver-client` (coming soon)
-    - **Flatpak**: Download `.flatpak` below
+    #### Debian/Ubuntu
+    ```bash
+    sudo dpkg -i kartoza-geoserver-client_{{ .Version }}_amd64.deb
+    ```
 
-brews:
-  - name: kartoza-geoserver-client
-    repository:
-      owner: kartoza
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    commit_author:
-      name: Kartoza Bot
-      email: bot@kartoza.com
-    directory: Formula
-    homepage: https://github.com/kartoza/kartoza-geoserver-client
-    description: "Midnight Commander-style TUI for managing GeoServer instances"
-    license: MIT
-    skip_upload: auto
+    #### Fedora/RHEL
+    ```bash
+    sudo rpm -i kartoza-geoserver-client-{{ .Version }}.x86_64.rpm
+    ```
+
+    ### Quick Start
+
+    1. Launch: `kartoza-geoserver-client`
+    2. Press `c` to open connection manager
+    3. Press `a` to add a GeoServer connection
+    4. Navigate and explore!
+
+    **Made with love by [Kartoza](https://kartoza.com)**
 
 nfpms:
   - id: packages
@@ -128,31 +133,3 @@ nfpms:
         dst: /usr/share/doc/kartoza-geoserver-client/README.md
       - src: LICENSE
         dst: /usr/share/doc/kartoza-geoserver-client/LICENSE
-
-snapcrafts:
-  - id: snap
-    name: kartoza-geoserver-client
-    publish: false
-    summary: "TUI for managing GeoServer instances"
-    description: |
-      A Midnight Commander-style Terminal User Interface (TUI) for managing
-      GeoServer instances. Browse local geospatial files and upload them to
-      GeoServer with ease.
-
-      Features:
-      - Dual-panel interface with local files and GeoServer resources
-      - Multiple GeoServer connection support
-      - Upload Shapefiles, GeoPackage, GeoTIFF, and styles
-      - Create, edit, and delete workspaces, stores, and layers
-      - Interactive layer preview with MapLibre GL
-    license: MIT
-    grade: stable
-    confinement: strict
-    base: core22
-    apps:
-      kartoza-geoserver-client:
-        command: kartoza-geoserver-client
-        plugs:
-          - home
-          - network
-          - network-bind
