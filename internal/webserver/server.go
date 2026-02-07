@@ -1,0 +1,249 @@
+package webserver
+
+import (
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/kartoza/kartoza-geoserver-client/internal/api"
+	"github.com/kartoza/kartoza-geoserver-client/internal/config"
+	"github.com/kartoza/kartoza-geoserver-client/internal/preview"
+)
+
+//go:embed static/*
+var staticFiles embed.FS
+
+// Server represents the web server
+type Server struct {
+	config        *config.Config
+	clients       map[string]*api.Client // Connection ID -> Client
+	clientsMu     sync.RWMutex
+	previewServer *preview.Server
+	addr          string
+}
+
+// New creates a new web server
+func New(cfg *config.Config) *Server {
+	s := &Server{
+		config:  cfg,
+		clients: make(map[string]*api.Client),
+	}
+
+	// Initialize clients for existing connections
+	for _, conn := range cfg.Connections {
+		client := api.NewClient(&conn)
+		s.clients[conn.ID] = client
+	}
+
+	return s
+}
+
+// Start starts the web server
+func (s *Server) Start(addr string) error {
+	s.addr = addr
+
+	mux := http.NewServeMux()
+	s.setupRoutes(mux)
+
+	log.Printf("Starting web server on %s", addr)
+	return http.ListenAndServe(addr, mux)
+}
+
+// setupRoutes sets up all HTTP routes
+func (s *Server) setupRoutes(mux *http.ServeMux) {
+	// API routes - connections
+	mux.HandleFunc("/api/connections", s.handleConnections)
+	mux.HandleFunc("/api/connections/", s.handleConnectionByID)
+
+	// API routes - workspaces (pattern: /api/connections/{connId}/workspaces)
+	mux.HandleFunc("/api/workspaces/", s.handleWorkspaces)
+
+	// API routes - data stores
+	mux.HandleFunc("/api/datastores/", s.handleDataStores)
+
+	// API routes - coverage stores
+	mux.HandleFunc("/api/coveragestores/", s.handleCoverageStores)
+
+	// API routes - layers
+	mux.HandleFunc("/api/layers/", s.handleLayers)
+
+	// API routes - styles
+	mux.HandleFunc("/api/styles/", s.handleStyles)
+
+	// API routes - layer groups
+	mux.HandleFunc("/api/layergroups/", s.handleLayerGroups)
+
+	// API routes - feature types
+	mux.HandleFunc("/api/featuretypes/", s.handleFeatureTypes)
+
+	// API routes - coverages
+	mux.HandleFunc("/api/coverages/", s.handleCoverages)
+
+	// API routes - upload
+	mux.HandleFunc("/api/upload", s.handleUpload)
+
+	// API routes - preview
+	mux.HandleFunc("/api/preview", s.handlePreview)
+	mux.HandleFunc("/api/layer", s.handleLayerInfo)
+	mux.HandleFunc("/api/metadata", s.handleMetadata)
+
+	// Serve static files (React app)
+	mux.HandleFunc("/", s.serveStatic)
+}
+
+// serveStatic serves the React app and static files
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	// Try to serve from embedded static files
+	path := r.URL.Path
+	if path == "/" {
+		path = "/index.html"
+	}
+
+	// Strip leading slash and add static prefix
+	filePath := "static" + path
+
+	// Try to open the file
+	content, err := staticFiles.ReadFile(filePath)
+	if err != nil {
+		// File not found - serve index.html for SPA routing
+		content, err = staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		path = "/index.html"
+	}
+
+	// Set content type based on extension
+	contentType := "text/html"
+	switch {
+	case strings.HasSuffix(path, ".js"):
+		contentType = "application/javascript"
+	case strings.HasSuffix(path, ".css"):
+		contentType = "text/css"
+	case strings.HasSuffix(path, ".json"):
+		contentType = "application/json"
+	case strings.HasSuffix(path, ".svg"):
+		contentType = "image/svg+xml"
+	case strings.HasSuffix(path, ".png"):
+		contentType = "image/png"
+	case strings.HasSuffix(path, ".ico"):
+		contentType = "image/x-icon"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Write(content)
+}
+
+// GetStaticFS returns a filesystem for serving static files (for development mode)
+func GetStaticFS() fs.FS {
+	sub, _ := fs.Sub(staticFiles, "static")
+	return sub
+}
+
+// Helper methods for JSON responses
+
+func (s *Server) jsonResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) jsonError(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// getClient returns the API client for a connection ID
+func (s *Server) getClient(connID string) *api.Client {
+	s.clientsMu.RLock()
+	defer s.clientsMu.RUnlock()
+	return s.clients[connID]
+}
+
+// getConnectionConfig returns the connection config for an ID
+func (s *Server) getConnectionConfig(connID string) *config.Connection {
+	for i := range s.config.Connections {
+		if s.config.Connections[i].ID == connID {
+			return &s.config.Connections[i]
+		}
+	}
+	return nil
+}
+
+// addClient adds a new API client for a connection
+func (s *Server) addClient(conn *config.Connection) {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	s.clients[conn.ID] = api.NewClient(conn)
+}
+
+// removeClient removes an API client
+func (s *Server) removeClient(connID string) {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	delete(s.clients, connID)
+}
+
+// parsePathParams extracts connection ID, workspace, and resource name from URL path
+// Expected patterns:
+//   /api/workspaces/{connId}
+//   /api/workspaces/{connId}/{workspace}
+//   /api/datastores/{connId}/{workspace}
+//   /api/datastores/{connId}/{workspace}/{storeName}
+func parsePathParams(path, prefix string) (connID, workspace, resource string) {
+	// Remove prefix
+	path = strings.TrimPrefix(path, prefix)
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimSuffix(path, "/")
+
+	parts := strings.Split(path, "/")
+	if len(parts) >= 1 && parts[0] != "" {
+		connID = parts[0]
+	}
+	if len(parts) >= 2 {
+		workspace = parts[1]
+	}
+	if len(parts) >= 3 {
+		resource = parts[2]
+	}
+	return
+}
+
+// parseStorePathParams extracts connection ID, workspace, store name, and resource from URL
+// Pattern: /api/{type}/{connId}/{workspace}/{store}/{resource}
+func parseStorePathParams(path, prefix string) (connID, workspace, store, resource string) {
+	path = strings.TrimPrefix(path, prefix)
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimSuffix(path, "/")
+
+	parts := strings.Split(path, "/")
+	if len(parts) >= 1 && parts[0] != "" {
+		connID = parts[0]
+	}
+	if len(parts) >= 2 {
+		workspace = parts[1]
+	}
+	if len(parts) >= 3 {
+		store = parts[2]
+	}
+	if len(parts) >= 4 {
+		resource = parts[3]
+	}
+	return
+}
+
+// saveConfig saves the configuration to disk
+func (s *Server) saveConfig() error {
+	return s.config.Save()
+}
+
+// generateConnectionID generates a unique connection ID
+func generateConnectionID() string {
+	return fmt.Sprintf("conn_%d", len(config.DefaultConfig().Connections)+1)
+}

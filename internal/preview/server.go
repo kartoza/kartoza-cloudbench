@@ -138,6 +138,38 @@ func (s *Server) GetPort() int {
 	return s.port
 }
 
+// GetCurrentLayer returns the current layer info
+func (s *Server) GetCurrentLayer() *LayerInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.layer
+}
+
+// GetLayerMetadata fetches and returns extended metadata for the current layer
+func (s *Server) GetLayerMetadata() (*ExtendedMetadata, error) {
+	s.mu.RLock()
+	layer := s.layer
+	s.mu.RUnlock()
+
+	if layer == nil {
+		return nil, fmt.Errorf("no layer configured")
+	}
+
+	metadata := &ExtendedMetadata{
+		Errors: []string{},
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// Fetch store information
+	s.fetchStoreMetadata(client, layer, metadata)
+
+	// Fetch layer/featuretype/coverage information
+	s.fetchLayerMetadata(client, layer, metadata)
+
+	return metadata, nil
+}
+
 // handleLayerInfo returns the current layer info as JSON
 func (s *Server) handleLayerInfo(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()

@@ -12,6 +12,30 @@
 
       # Overlay that can be imported by other flakes
       overlay = final: prev: {
+        # Web frontend built with Nix
+        kartoza-geoserver-web-frontend = final.buildNpmPackage {
+          pname = "kartoza-geoserver-web-frontend";
+          inherit version;
+          src = "${self}/web";
+
+          npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Will be updated
+
+          buildPhase = ''
+            npm run build
+          '';
+
+          installPhase = ''
+            mkdir -p $out
+            cp -r ../internal/webserver/static/* $out/ 2>/dev/null || cp -r dist/* $out/
+          '';
+
+          meta = with final.lib; {
+            description = "Web frontend for Kartoza GeoServer Client";
+            license = licenses.mit;
+          };
+        };
+
+        # TUI application
         kartoza-geoserver-client = final.buildGoModule {
           pname = "kartoza-geoserver-client";
           inherit version;
@@ -31,6 +55,38 @@
             license = licenses.mit;
             maintainers = [ ];
             mainProgram = "kartoza-geoserver-client";
+            platforms = platforms.unix ++ platforms.windows;
+          };
+        };
+
+        # Web server with embedded frontend
+        kartoza-geoserver-web = final.buildGoModule {
+          pname = "kartoza-geoserver-web";
+          inherit version;
+          src = self;
+
+          vendorHash = null;
+
+          # Copy the built frontend before Go build
+          preBuild = ''
+            mkdir -p internal/webserver/static
+            cp -r ${final.kartoza-geoserver-web-frontend}/* internal/webserver/static/ || true
+          '';
+
+          subPackages = [ "cmd/web" ];
+
+          ldflags = [
+            "-s"
+            "-w"
+            "-X main.version=${version}"
+          ];
+
+          meta = with final.lib; {
+            description = "Web interface for Kartoza GeoServer Client";
+            homepage = "https://github.com/kartoza/kartoza-geoserver-client";
+            license = licenses.mit;
+            maintainers = [ ];
+            mainProgram = "kartoza-geoserver-web";
             platforms = platforms.unix ++ platforms.windows;
           };
         };
@@ -68,6 +124,8 @@
         packages = {
           default = pkgs.kartoza-geoserver-client;
           kartoza-geoserver-client = pkgs.kartoza-geoserver-client;
+          kartoza-geoserver-web = pkgs.kartoza-geoserver-web;
+          kartoza-geoserver-web-frontend = pkgs.kartoza-geoserver-web-frontend;
         };
 
         devShells.default = pkgs.mkShell {
@@ -81,6 +139,11 @@
             impl
             delve
             go-tools
+
+            # Node.js for web frontend (from Nix)
+            nodejs_22
+            nodePackages.typescript
+            nodePackages.typescript-language-server
 
             # Build tools
             gnumake
@@ -200,6 +263,25 @@
             }
             export -f geoserver-creds
 
+            # Web development commands
+            web-dev() {
+              echo "Starting web development servers..."
+              echo "Frontend: cd web && npm run dev"
+              echo "Backend:  go run ./cmd/web"
+            }
+            export -f web-dev
+
+            web-build() {
+              echo "Building web frontend with Nix..."
+              nix build .#kartoza-geoserver-web-frontend -o result-frontend
+              echo "Copying to internal/webserver/static..."
+              rm -rf internal/webserver/static/*
+              cp -r result-frontend/* internal/webserver/static/
+              rm result-frontend
+              echo "Frontend built successfully!"
+            }
+            export -f web-build
+
             echo ""
             echo "🌍 Kartoza GeoServer Client Development Environment"
             echo ""
@@ -209,6 +291,11 @@
             echo "  gob  - Build binary"
             echo "  gom  - Tidy go modules"
             echo "  gol  - Run linter"
+            echo ""
+            echo "Web Interface:"
+            echo "  web-dev    - Show dev server instructions"
+            echo "  web-build  - Build frontend with Nix"
+            echo "  nix build .#kartoza-geoserver-web - Build complete web server"
             echo ""
             echo "Test GeoServer:"
             echo "  geoserver-start  - Start Kartoza GeoServer container"
@@ -228,6 +315,11 @@
           default = {
             type = "app";
             program = "${self.packages.${system}.default}/bin/kartoza-geoserver-client";
+          };
+
+          web = {
+            type = "app";
+            program = "${self.packages.${system}.kartoza-geoserver-web}/bin/web";
           };
 
           setup = {
