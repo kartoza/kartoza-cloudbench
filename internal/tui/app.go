@@ -150,6 +150,11 @@ type App struct {
 	pendingUploadWorkspace    string
 	pendingUploadConnectionID string
 
+	// Last uploaded resource info (for focusing after refresh)
+	lastUploadedWorkspace    string
+	lastUploadedStoreNames   []string
+	lastUploadedConnectionID string
+
 	// Tree state preservation
 	savedTreeState components.TreeState
 
@@ -789,6 +794,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.progressDialog.IsDone() && a.progressDialog.GetError() == nil {
 					a.buildConnectionsTree()
 					a.treeView.Refresh()
+
+					// Navigate to and focus on the uploaded resource
+					if a.lastUploadedConnectionID != "" && a.lastUploadedWorkspace != "" && len(a.lastUploadedStoreNames) > 0 {
+						// Focus on the last uploaded store
+						lastStore := a.lastUploadedStoreNames[len(a.lastUploadedStoreNames)-1]
+						a.focusUploadedResource(a.lastUploadedConnectionID, a.lastUploadedWorkspace, lastStore)
+
+						// Clear last uploaded info
+						a.lastUploadedConnectionID = ""
+						a.lastUploadedWorkspace = ""
+						a.lastUploadedStoreNames = nil
+					}
 				}
 				a.progressDialog = nil
 			}

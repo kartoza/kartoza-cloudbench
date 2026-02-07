@@ -204,3 +204,91 @@ func (a *App) loadNodeChildren(node *models.TreeNode) tea.Cmd {
 
 	return nil
 }
+
+// focusUploadedResource navigates to and focuses on an uploaded store in the tree
+func (a *App) focusUploadedResource(connectionID, workspace, storeName string) {
+	root := a.treeView.GetRoot()
+	if root == nil {
+		return
+	}
+
+	// Find the connection node
+	var connNode *models.TreeNode
+	for _, child := range root.Children {
+		if child.ConnectionID == connectionID {
+			connNode = child
+			break
+		}
+	}
+	if connNode == nil {
+		return
+	}
+
+	// Expand connection node
+	connNode.Expanded = true
+
+	// Find the workspace node
+	var wsNode *models.TreeNode
+	for _, child := range connNode.Children {
+		if child.Type == models.NodeTypeWorkspace && child.Name == workspace {
+			wsNode = child
+			break
+		}
+	}
+	if wsNode == nil {
+		return
+	}
+
+	// Expand workspace node
+	wsNode.Expanded = true
+
+	// Find either Data Stores or Coverage Stores category
+	var categoryNode *models.TreeNode
+	var storeNode *models.TreeNode
+
+	// Check Data Stores first
+	for _, child := range wsNode.Children {
+		if child.Type == models.NodeTypeDataStores {
+			child.Expanded = true
+			for _, store := range child.Children {
+				if store.Name == storeName {
+					categoryNode = child
+					storeNode = store
+					break
+				}
+			}
+		}
+		if storeNode != nil {
+			break
+		}
+	}
+
+	// If not found in Data Stores, check Coverage Stores
+	if storeNode == nil {
+		for _, child := range wsNode.Children {
+			if child.Type == models.NodeTypeCoverageStores {
+				child.Expanded = true
+				for _, store := range child.Children {
+					if store.Name == storeName {
+						categoryNode = child
+						storeNode = store
+						break
+					}
+				}
+			}
+			if storeNode != nil {
+				break
+			}
+		}
+	}
+
+	// If we found the store, expand it and select it
+	if storeNode != nil {
+		if categoryNode != nil {
+			categoryNode.Expanded = true
+		}
+		storeNode.Expanded = true
+		a.treeView.SelectNode(storeNode)
+		a.statusMsg = "Uploaded: " + storeName
+	}
+}

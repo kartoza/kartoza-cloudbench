@@ -808,3 +808,45 @@ func (tv *TreeView) expandParentsForPath(node *models.TreeNode, targetPath strin
 
 	return false
 }
+
+// SelectNode selects the given node in the tree, expanding parents as needed
+func (tv *TreeView) SelectNode(node *models.TreeNode) {
+	if node == nil {
+		return
+	}
+
+	// Expand all parent nodes first
+	tv.expandParentsToNode(node)
+
+	// Rebuild flat list after expanding
+	tv.flattenTree()
+
+	// Find and select the node
+	for i, fn := range tv.flatNodes {
+		if fn.Node == node {
+			tv.cursor = i
+			tv.ensureVisible()
+			return
+		}
+	}
+}
+
+// expandParentsToNode expands all parents of the given node
+func (tv *TreeView) expandParentsToNode(node *models.TreeNode) {
+	if node == nil || node.Parent == nil {
+		return
+	}
+
+	// Build list of parents from root to node
+	var parents []*models.TreeNode
+	current := node.Parent
+	for current != nil {
+		parents = append([]*models.TreeNode{current}, parents...)
+		current = current.Parent
+	}
+
+	// Expand each parent
+	for _, parent := range parents {
+		parent.Expanded = true
+	}
+}

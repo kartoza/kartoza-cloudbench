@@ -112,6 +112,14 @@ func (a *App) executeUpload() tea.Cmd {
 	workspace := a.pendingUploadWorkspace
 	connectionID := a.pendingUploadConnectionID
 
+	// Store info about what we're uploading for focusing after refresh
+	a.lastUploadedWorkspace = workspace
+	a.lastUploadedConnectionID = connectionID
+	a.lastUploadedStoreNames = make([]string, len(selectedFiles))
+	for i, f := range selectedFiles {
+		a.lastUploadedStoreNames[i] = strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
+	}
+
 	// Clear pending state
 	a.pendingUploadFiles = nil
 	a.pendingUploadWorkspace = ""
