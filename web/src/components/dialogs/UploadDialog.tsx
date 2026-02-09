@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Modal,
   ModalOverlay,
@@ -19,8 +19,11 @@ import {
   Badge,
   useToast,
   useColorModeValue,
+  Checkbox,
+  Divider,
+  Spinner,
 } from '@chakra-ui/react'
-import { FiFile, FiCheck, FiX, FiUploadCloud } from 'react-icons/fi'
+import { FiFile, FiCheck, FiX, FiUploadCloud, FiLayers, FiDatabase } from 'react-icons/fi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import { useTreeStore } from '../../stores/treeStore'
@@ -32,6 +35,13 @@ interface FileUpload {
   progress: number
   status: 'pending' | 'uploading' | 'success' | 'error'
   error?: string
+  storeName?: string
+  storeType?: string
+}
+
+interface AvailableLayer {
+  name: string
+  selected: boolean
 }
 
 export default function UploadDialog() {
@@ -44,6 +54,11 @@ export default function UploadDialog() {
 
   const [files, setFiles] = useState<FileUpload[]>([])
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadComplete, setUploadComplete] = useState(false)
+  const [availableLayers, setAvailableLayers] = useState<AvailableLayer[]>([])
+  const [loadingLayers, setLoadingLayers] = useState(false)
+  const [publishingLayers, setPublishingLayers] = useState(false)
+  const [currentStore, setCurrentStore] = useState<{ name: string; type: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
@@ -52,6 +67,16 @@ export default function UploadDialog() {
   const isOpen = activeDialog === 'upload'
   const connectionId = selectedNode?.connectionId || activeConnectionId
   const workspace = selectedNode?.workspace
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setFiles([])
+      setUploadComplete(false)
+      setAvailableLayers([])
+      setCurrentStore(null)
+    }
+  }, [isOpen])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -89,6 +114,9 @@ export default function UploadDialog() {
         status: 'pending' as const,
       })),
     ])
+    // Reset upload complete state when adding new files
+    setUploadComplete(false)
+    setAvailableLayers([])
   }
 
   const removeFile = (index: number) => {
@@ -117,6 +145,7 @@ export default function UploadDialog() {
     }
 
     setIsUploading(true)
+    let lastGpkgStore: { name: string; type: string } | null = null
 
     for (let i = 0; i < files.length; i++) {
       if (files[i].status !== 'pending') continue
@@ -128,7 +157,7 @@ export default function UploadDialog() {
       )
 
       try {
-        await api.uploadFile(connectionId, workspace, files[i].file, (progress) => {
+        const result = await api.uploadFile(connectionId, workspace, files[i].file, (progress) => {
           setFiles((prev) =>
             prev.map((f, idx) =>
               idx === i ? { ...f, progress } : f
@@ -138,9 +167,20 @@ export default function UploadDialog() {
 
         setFiles((prev) =>
           prev.map((f, idx) =>
-            idx === i ? { ...f, status: 'success' as const, progress: 100 } : f
+            idx === i ? {
+              ...f,
+              status: 'success' as const,
+              progress: 100,
+              storeName: result.storeName,
+              storeType: result.storeType,
+            } : f
           )
         )
+
+        // Track the last successful GeoPackage upload
+        if (files[i].file.name.toLowerCase().endsWith('.gpkg') && result.storeName) {
+          lastGpkgStore = { name: result.storeName, type: result.storeType || 'datastore' }
+        }
       } catch (err) {
         setFiles((prev) =>
           prev.map((f, idx) =>
@@ -153,6 +193,7 @@ export default function UploadDialog() {
     }
 
     setIsUploading(false)
+    setUploadComplete(true)
 
     // Invalidate queries to refresh the tree
     queryClient.invalidateQueries({ queryKey: ['datastores', connectionId, workspace] })
@@ -169,10 +210,110 @@ export default function UploadDialog() {
         duration: 3000,
       })
     }
+
+    // Check for available layers in GeoPackage stores
+    if (lastGpkgStore && lastGpkgStore.type === 'datastore') {
+      setCurrentStore(lastGpkgStore)
+      await loadAvailableLayers(lastGpkgStore.name)
+    }
+  }
+
+  const loadAvailableLayers = async (storeName: string) => {
+    if (!connectionId || !workspace) return
+
+    setLoadingLayers(true)
+    try {
+      const layers = await api.getAvailableFeatureTypes(connectionId, workspace, storeName)
+      if (layers.length > 0) {
+        setAvailableLayers(layers.map((name) => ({ name, selected: true })))
+      }
+    } catch (err) {
+      console.error('Failed to load available layers:', err)
+    } finally {
+      setLoadingLayers(false)
+    }
+  }
+
+  const toggleLayerSelection = (index: number) => {
+    setAvailableLayers((prev) =>
+      prev.map((layer, i) =>
+        i === index ? { ...layer, selected: !layer.selected } : layer
+      )
+    )
+  }
+
+  const selectAllLayers = () => {
+    setAvailableLayers((prev) =>
+      prev.map((layer) => ({ ...layer, selected: true }))
+    )
+  }
+
+  const deselectAllLayers = () => {
+    setAvailableLayers((prev) =>
+      prev.map((layer) => ({ ...layer, selected: false }))
+    )
+  }
+
+  const handlePublishLayers = async () => {
+    if (!connectionId || !workspace || !currentStore) return
+
+    const selectedLayers = availableLayers.filter((l) => l.selected).map((l) => l.name)
+    if (selectedLayers.length === 0) {
+      toast({
+        title: 'No layers selected',
+        description: 'Please select at least one layer to publish',
+        status: 'warning',
+        duration: 3000,
+      })
+      return
+    }
+
+    setPublishingLayers(true)
+    try {
+      const result = await api.publishFeatureTypes(connectionId, workspace, currentStore.name, selectedLayers)
+
+      if (result.published.length > 0) {
+        toast({
+          title: 'Layers published',
+          description: `${result.published.length} layer(s) published successfully`,
+          status: 'success',
+          duration: 3000,
+        })
+
+        // Remove published layers from available list
+        setAvailableLayers((prev) =>
+          prev.filter((l) => !result.published.includes(l.name))
+        )
+
+        // Invalidate queries to refresh the tree
+        queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
+      }
+
+      if (result.errors.length > 0) {
+        toast({
+          title: 'Some layers failed',
+          description: result.errors.join(', '),
+          status: 'error',
+          duration: 5000,
+        })
+      }
+    } catch (err) {
+      toast({
+        title: 'Publish failed',
+        description: (err as Error).message,
+        status: 'error',
+        duration: 5000,
+      })
+    } finally {
+      setPublishingLayers(false)
+    }
   }
 
   const handleClose = () => {
     setFiles([])
+    setUploadComplete(false)
+    setAvailableLayers([])
+    setCurrentStore(null)
     closeDialog()
   }
 
@@ -198,10 +339,13 @@ export default function UploadDialog() {
     }
   }
 
+  const hasPendingUploads = files.some((f) => f.status === 'pending')
+  const selectedLayerCount = availableLayers.filter((l) => l.selected).length
+
   return (
     <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-      <ModalContent borderRadius="xl" overflow="hidden">
+      <ModalContent borderRadius="xl" overflow="hidden" maxH="85vh">
         {/* Gradient Header */}
         <Box
           bg="linear-gradient(135deg, #3B9DD9 0%, #5BB5E8 100%)"
@@ -235,53 +379,55 @@ export default function UploadDialog() {
         </Box>
         <ModalCloseButton color="white" />
 
-        <ModalBody py={6}>
+        <ModalBody py={6} overflowY="auto">
           <VStack spacing={4}>
-            {/* Dropzone */}
-            <Box
-              w="100%"
-              p={8}
-              bg={dropzoneBg}
-              border="2px dashed"
-              borderColor={dropzoneBorder}
-              borderRadius="xl"
-              textAlign="center"
-              cursor="pointer"
-              onClick={() => fileInputRef.current?.click()}
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
-              _hover={{
-                borderColor: 'kartoza.500',
-                bg: 'kartoza.50',
-              }}
-              transition="all 0.2s"
-            >
-              <VStack spacing={3}>
-                <Box
-                  bg="kartoza.50"
-                  p={4}
-                  borderRadius="full"
-                >
-                  <Icon as={FiUploadCloud} boxSize={10} color="kartoza.500" />
-                </Box>
-                <VStack spacing={1}>
-                  <Text fontWeight="600" color="gray.700">
-                    Drop files here or click to browse
-                  </Text>
-                  <Text fontSize="sm" color="gray.500">
-                    Shapefile (.zip), GeoPackage (.gpkg), GeoTIFF (.tif), SLD, CSS
-                  </Text>
+            {/* Dropzone - hide after upload complete */}
+            {!uploadComplete && (
+              <Box
+                w="100%"
+                p={8}
+                bg={dropzoneBg}
+                border="2px dashed"
+                borderColor={dropzoneBorder}
+                borderRadius="xl"
+                textAlign="center"
+                cursor="pointer"
+                onClick={() => fileInputRef.current?.click()}
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                _hover={{
+                  borderColor: 'kartoza.500',
+                  bg: 'kartoza.50',
+                }}
+                transition="all 0.2s"
+              >
+                <VStack spacing={3}>
+                  <Box
+                    bg="kartoza.50"
+                    p={4}
+                    borderRadius="full"
+                  >
+                    <Icon as={FiUploadCloud} boxSize={10} color="kartoza.500" />
+                  </Box>
+                  <VStack spacing={1}>
+                    <Text fontWeight="600" color="gray.700">
+                      Drop files here or click to browse
+                    </Text>
+                    <Text fontSize="sm" color="gray.500">
+                      Shapefile (.zip), GeoPackage (.gpkg), GeoTIFF (.tif), SLD, CSS
+                    </Text>
+                  </VStack>
                 </VStack>
-              </VStack>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".zip,.shp,.gpkg,.tif,.tiff,.sld,.css"
-                style={{ display: 'none' }}
-                onChange={handleFileSelect}
-              />
-            </Box>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".zip,.shp,.gpkg,.tif,.tiff,.sld,.css"
+                  style={{ display: 'none' }}
+                  onChange={handleFileSelect}
+                />
+              </Box>
+            )}
 
             {/* File list */}
             {files.length > 0 && (
@@ -338,6 +484,63 @@ export default function UploadDialog() {
                 ))}
               </List>
             )}
+
+            {/* Available layers section */}
+            {uploadComplete && availableLayers.length > 0 && (
+              <>
+                <Divider />
+                <Box w="100%">
+                  <HStack justify="space-between" mb={3}>
+                    <HStack>
+                      <Icon as={FiLayers} color="kartoza.500" />
+                      <Text fontWeight="600">Available Layers in {currentStore?.name}</Text>
+                    </HStack>
+                    <HStack spacing={2}>
+                      <Button size="xs" variant="ghost" onClick={selectAllLayers}>
+                        Select All
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={deselectAllLayers}>
+                        Deselect All
+                      </Button>
+                    </HStack>
+                  </HStack>
+                  <Text fontSize="sm" color="gray.500" mb={3}>
+                    The GeoPackage contains multiple layers. Select which layers to publish:
+                  </Text>
+                  <VStack align="stretch" spacing={2} maxH="200px" overflowY="auto">
+                    {availableLayers.map((layer, index) => (
+                      <Box
+                        key={layer.name}
+                        p={2}
+                        bg={dropzoneBg}
+                        borderRadius="md"
+                        border="1px solid"
+                        borderColor={layer.selected ? 'kartoza.200' : 'gray.200'}
+                      >
+                        <Checkbox
+                          isChecked={layer.selected}
+                          onChange={() => toggleLayerSelection(index)}
+                          colorScheme="kartoza"
+                        >
+                          <HStack spacing={2}>
+                            <Icon as={FiDatabase} color="gray.500" boxSize={4} />
+                            <Text fontSize="sm">{layer.name}</Text>
+                          </HStack>
+                        </Checkbox>
+                      </Box>
+                    ))}
+                  </VStack>
+                </Box>
+              </>
+            )}
+
+            {/* Loading layers indicator */}
+            {loadingLayers && (
+              <HStack spacing={2} color="gray.500">
+                <Spinner size="sm" />
+                <Text fontSize="sm">Checking for available layers...</Text>
+              </HStack>
+            )}
           </VStack>
         </ModalBody>
 
@@ -348,20 +551,41 @@ export default function UploadDialog() {
           bg="gray.50"
         >
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
-            {isUploading ? 'Close' : 'Cancel'}
+            {uploadComplete ? 'Close' : 'Cancel'}
           </Button>
-          <Button
-            colorScheme="kartoza"
-            onClick={handleUpload}
-            isLoading={isUploading}
-            loadingText="Uploading..."
-            isDisabled={files.length === 0 || !workspace}
-            leftIcon={<FiUploadCloud />}
-            borderRadius="lg"
-            px={6}
-          >
-            Upload {files.length > 0 && `(${files.length})`}
-          </Button>
+
+          {/* Show publish button if there are available layers */}
+          {uploadComplete && availableLayers.length > 0 && (
+            <Button
+              colorScheme="green"
+              onClick={handlePublishLayers}
+              isLoading={publishingLayers}
+              loadingText="Publishing..."
+              isDisabled={selectedLayerCount === 0}
+              leftIcon={<FiLayers />}
+              borderRadius="lg"
+              px={6}
+            >
+              Publish {selectedLayerCount > 0 && `(${selectedLayerCount})`}
+            </Button>
+          )}
+
+          {/* Show upload button if there are pending uploads */}
+          {(!uploadComplete || hasPendingUploads) && (
+            <Button
+              colorScheme="kartoza"
+              onClick={handleUpload}
+              isLoading={isUploading}
+              loadingText="Uploading..."
+              isDisabled={files.length === 0 || !workspace || !hasPendingUploads}
+              leftIcon={<FiUploadCloud />}
+              borderRadius="lg"
+              px={6}
+            >
+              Upload {files.filter((f) => f.status === 'pending').length > 0 &&
+                `(${files.filter((f) => f.status === 'pending').length})`}
+            </Button>
+          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

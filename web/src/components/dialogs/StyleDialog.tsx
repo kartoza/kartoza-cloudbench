@@ -289,16 +289,31 @@ function ColorPicker({
     <FormControl>
       <FormLabel fontSize="sm">{label}</FormLabel>
       <HStack>
-        <Input
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          w="50px"
-          h="40px"
-          p={1}
-          borderRadius="md"
-          cursor="pointer"
-        />
+        <Box position="relative">
+          <Box
+            w="40px"
+            h="40px"
+            borderRadius="full"
+            bg={value}
+            border="2px solid"
+            borderColor={borderColor}
+            cursor="pointer"
+            _hover={{ borderColor: 'kartoza.400' }}
+            transition="border-color 0.2s"
+          />
+          <Input
+            type="color"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            position="absolute"
+            top={0}
+            left={0}
+            w="40px"
+            h="40px"
+            opacity={0}
+            cursor="pointer"
+          />
+        </Box>
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}

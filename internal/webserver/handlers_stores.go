@@ -41,8 +41,10 @@ type CoverageStoreCreateRequest struct {
 
 // handleDataStores handles data store related requests
 // Pattern: /api/datastores/{connId}/{workspace} or /api/datastores/{connId}/{workspace}/{store}
+// Also handles: /api/datastores/{connId}/{workspace}/{store}/available
+//               /api/datastores/{connId}/{workspace}/{store}/publish
 func (s *Server) handleDataStores(w http.ResponseWriter, r *http.Request) {
-	connID, workspace, store := parsePathParams(r.URL.Path, "/api/datastores")
+	connID, workspace, store, action := parseStorePathParams(r.URL.Path, "/api/datastores")
 
 	if connID == "" || workspace == "" {
 		s.jsonError(w, "Connection ID and workspace are required", http.StatusBadRequest)
@@ -53,6 +55,18 @@ func (s *Server) handleDataStores(w http.ResponseWriter, r *http.Request) {
 	if client == nil {
 		s.jsonError(w, "Connection not found", http.StatusNotFound)
 		return
+	}
+
+	// Handle special actions on stores
+	if store != "" && action != "" {
+		switch action {
+		case "available":
+			s.handleStoreAvailableFeatureTypes(w, r, client, workspace, store)
+			return
+		case "publish":
+			s.handleStorePublishFeatureTypes(w, r, client, workspace, store)
+			return
+		}
 	}
 
 	if store == "" {
@@ -82,6 +96,72 @@ func (s *Server) handleDataStores(w http.ResponseWriter, r *http.Request) {
 			s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
+}
+
+// PublishFeatureTypeRequest represents a request to publish feature types
+type PublishFeatureTypeRequest struct {
+	FeatureTypes []string `json:"featureTypes"`
+}
+
+// handleStoreAvailableFeatureTypes returns unpublished feature types for a store
+func (s *Server) handleStoreAvailableFeatureTypes(w http.ResponseWriter, r *http.Request, client *api.Client, workspace, store string) {
+	if r.Method == http.MethodOptions {
+		s.handleCORS(w)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	available, err := client.GetAvailableFeatureTypes(workspace, store)
+	if err != nil {
+		s.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.jsonResponse(w, map[string][]string{"available": available})
+}
+
+// handleStorePublishFeatureTypes publishes feature types from a store
+func (s *Server) handleStorePublishFeatureTypes(w http.ResponseWriter, r *http.Request, client *api.Client, workspace, store string) {
+	if r.Method == http.MethodOptions {
+		s.handleCORS(w)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PublishFeatureTypeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.FeatureTypes) == 0 {
+		s.jsonError(w, "At least one feature type is required", http.StatusBadRequest)
+		return
+	}
+
+	// Publish each feature type
+	var published []string
+	var errors []string
+
+	for _, ft := range req.FeatureTypes {
+		if err := client.PublishFeatureType(workspace, store, ft); err != nil {
+			errors = append(errors, ft+": "+err.Error())
+		} else {
+			published = append(published, ft)
+		}
+	}
+
+	s.jsonResponse(w, map[string]interface{}{
+		"published": published,
+		"errors":    errors,
+	})
 }
 
 // listDataStores returns all data stores for a workspace

@@ -161,6 +161,28 @@ export async function deleteDataStore(connId: string, workspace: string, name: s
   return handleResponse<void>(response)
 }
 
+// Get available (unpublished) feature types in a data store
+export async function getAvailableFeatureTypes(connId: string, workspace: string, store: string): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/datastores/${connId}/${workspace}/${store}/available`)
+  const result = await handleResponse<{ available: string[] }>(response)
+  return result.available || []
+}
+
+// Publish feature types from a data store
+export async function publishFeatureTypes(
+  connId: string,
+  workspace: string,
+  store: string,
+  featureTypes: string[]
+): Promise<{ published: string[]; errors: string[] }> {
+  const response = await fetch(`${API_BASE}/datastores/${connId}/${workspace}/${store}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ featureTypes }),
+  })
+  return handleResponse<{ published: string[]; errors: string[] }>(response)
+}
+
 // Coverage Store API
 export async function getCoverageStores(connId: string, workspace: string): Promise<CoverageStore[]> {
   const response = await fetch(`${API_BASE}/coveragestores/${connId}/${workspace}`)

@@ -1519,6 +1519,33 @@ func (c *Client) GetFeatureTypes(workspace, datastore string) ([]models.FeatureT
 	return result.FeatureTypes.FeatureType, nil
 }
 
+// GetAvailableFeatureTypes fetches unpublished feature types for a datastore
+// This returns feature types that exist in the data source but haven't been published yet
+func (c *Client) GetAvailableFeatureTypes(workspace, datastore string) ([]string, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/workspaces/%s/datastores/%s/featuretypes?list=available", workspace, datastore), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get available feature types: %s", string(body))
+	}
+
+	var result struct {
+		List struct {
+			String []string `json:"string"`
+		} `json:"list"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode available feature types: %w", err)
+	}
+
+	return result.List.String, nil
+}
+
 // GetCoverages fetches all coverages for a coverage store
 func (c *Client) GetCoverages(workspace, coveragestore string) ([]models.Coverage, error) {
 	resp, err := c.doRequest("GET", fmt.Sprintf("/workspaces/%s/coveragestores/%s/coverages", workspace, coveragestore), nil, "")
