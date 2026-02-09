@@ -9,12 +9,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/kartoza/kartoza-geoserver-client/internal/config"
 	"github.com/kartoza/kartoza-geoserver-client/internal/models"
 )
+
+// fixEmptyGeoServerResponse handles GeoServer's quirk of returning "" instead of {} or []
+// for empty collections. This converts patterns like {"dataStores": ""} to {"dataStores": {}}
+func fixEmptyGeoServerResponse(body []byte) []byte {
+	// Pattern matches: "someKey": "" where the value is an empty string
+	// and converts it to "someKey": {} to allow proper unmarshaling
+	re := regexp.MustCompile(`("(?:dataStores|coverageStores|wmsStores|wmtsStores|styles|layers|layerGroups|featureTypes|coverages|workspaces)")\s*:\s*""`)
+	return re.ReplaceAll(body, []byte(`$1: {}`))
+}
 
 // Client is a GeoServer REST API client
 type Client struct {
@@ -370,13 +380,21 @@ func (c *Client) GetDataStores(workspace string) ([]models.DataStore, error) {
 		return nil, fmt.Errorf("failed to get datastores: %s", string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Fix GeoServer's empty string response quirk
+	body = fixEmptyGeoServerResponse(body)
+
 	var result struct {
 		DataStores struct {
 			DataStore []models.DataStore `json:"dataStore"`
 		} `json:"dataStores"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode datastores: %w", err)
 	}
 
@@ -416,13 +434,21 @@ func (c *Client) GetCoverageStores(workspace string) ([]models.CoverageStore, er
 		return nil, fmt.Errorf("failed to get coverage stores: %s", string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Fix GeoServer's empty string response quirk
+	body = fixEmptyGeoServerResponse(body)
+
 	var result struct {
 		CoverageStores struct {
 			CoverageStore []models.CoverageStore `json:"coverageStore"`
 		} `json:"coverageStores"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode coverage stores: %w", err)
 	}
 
@@ -462,13 +488,21 @@ func (c *Client) GetLayers(workspace string) ([]models.Layer, error) {
 		return nil, fmt.Errorf("failed to get layers: %s", string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Fix GeoServer's empty string response quirk
+	body = fixEmptyGeoServerResponse(body)
+
 	var result struct {
 		Layers struct {
 			Layer []models.Layer `json:"layer"`
 		} `json:"layers"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode layers: %w", err)
 	}
 
@@ -499,13 +533,21 @@ func (c *Client) GetStyles(workspace string) ([]models.Style, error) {
 		return nil, fmt.Errorf("failed to get styles: %s", string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Fix GeoServer's empty string response quirk
+	body = fixEmptyGeoServerResponse(body)
+
 	var result struct {
 		Styles struct {
 			Style []models.Style `json:"style"`
 		} `json:"styles"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode styles: %w", err)
 	}
 
@@ -655,13 +697,21 @@ func (c *Client) GetLayerGroups(workspace string) ([]models.LayerGroup, error) {
 		return nil, fmt.Errorf("failed to get layer groups: %s", string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Fix GeoServer's empty string response quirk
+	body = fixEmptyGeoServerResponse(body)
+
 	var result struct {
 		LayerGroups struct {
 			LayerGroup []models.LayerGroup `json:"layerGroup"`
 		} `json:"layerGroups"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode layer groups: %w", err)
 	}
 
@@ -1074,6 +1124,124 @@ func (c *Client) UploadGeoPackage(workspace, storeName, filePath string) error {
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("upload failed: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
+// DownloadLayerAsShapefile downloads a layer's data via WFS as a zipped shapefile
+// Returns the shapefile data as bytes
+func (c *Client) DownloadLayerAsShapefile(workspace, layerName string) ([]byte, error) {
+	// Build WFS GetFeature URL with SHAPE-ZIP output format
+	wfsURL := fmt.Sprintf("%s/wfs?service=WFS&version=1.1.0&request=GetFeature&typeName=%s:%s&outputFormat=SHAPE-ZIP",
+		c.baseURL, workspace, layerName)
+
+	req, err := http.NewRequest("GET", wfsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(c.username, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("WFS request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("WFS request failed (%d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return data, nil
+}
+
+// UploadShapefileData uploads shapefile data (as zipped bytes) to create a datastore
+func (c *Client) UploadShapefileData(workspace, storeName string, data []byte) error {
+	path := fmt.Sprintf("/workspaces/%s/datastores/%s/file.shp", workspace, storeName)
+
+	req, err := http.NewRequest("PUT", c.baseURL+"/rest"+path, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", "application/zip")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed (%d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// DownloadCoverageAsGeoTIFF downloads a coverage via WCS as GeoTIFF
+// Returns the GeoTIFF data as bytes
+func (c *Client) DownloadCoverageAsGeoTIFF(workspace, coverageName string) ([]byte, error) {
+	// Build WCS GetCoverage URL
+	wcsURL := fmt.Sprintf("%s/wcs?service=WCS&version=2.0.1&request=GetCoverage&CoverageId=%s__%s&format=image/geotiff",
+		c.baseURL, workspace, coverageName)
+
+	req, err := http.NewRequest("GET", wcsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(c.username, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("WCS request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("WCS request failed (%d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return data, nil
+}
+
+// UploadGeoTIFFData uploads GeoTIFF data to create a coverage store
+func (c *Client) UploadGeoTIFFData(workspace, storeName string, data []byte) error {
+	path := fmt.Sprintf("/workspaces/%s/coveragestores/%s/file.geotiff", workspace, storeName)
+
+	req, err := http.NewRequest("PUT", c.baseURL+"/rest"+path, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", "image/tiff")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed (%d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	return nil
@@ -2137,6 +2305,171 @@ func (c *Client) UpdateDataStoreConfig(workspace string, config models.DataStore
 	return nil
 }
 
+// DataStoreDetails contains full datastore configuration for syncing
+type DataStoreDetails struct {
+	Name                 string            `json:"name"`
+	Description          string            `json:"description,omitempty"`
+	Type                 string            `json:"type"`
+	Enabled              bool              `json:"enabled"`
+	ConnectionParameters map[string]string `json:"connectionParameters"`
+}
+
+// GetDataStoreDetails retrieves full data store configuration including connection parameters
+func (c *Client) GetDataStoreDetails(workspace, storeName string) (*DataStoreDetails, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/workspaces/%s/datastores/%s", workspace, storeName), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get data store details: %s", string(bodyBytes))
+	}
+
+	var storeResult struct {
+		DataStore struct {
+			Name                 string `json:"name"`
+			Description          string `json:"description"`
+			Type                 string `json:"type"`
+			Enabled              bool   `json:"enabled"`
+			ConnectionParameters struct {
+				Entry []struct {
+					Key   string `json:"@key"`
+					Value string `json:"$"`
+				} `json:"entry"`
+			} `json:"connectionParameters"`
+		} `json:"dataStore"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&storeResult); err != nil {
+		return nil, fmt.Errorf("failed to decode data store details: %w", err)
+	}
+
+	details := &DataStoreDetails{
+		Name:                 storeResult.DataStore.Name,
+		Description:          storeResult.DataStore.Description,
+		Type:                 storeResult.DataStore.Type,
+		Enabled:              storeResult.DataStore.Enabled,
+		ConnectionParameters: make(map[string]string),
+	}
+
+	// Convert entry array to map
+	for _, entry := range storeResult.DataStore.ConnectionParameters.Entry {
+		details.ConnectionParameters[entry.Key] = entry.Value
+	}
+
+	return details, nil
+}
+
+// CreateDataStoreFromDetails creates a data store using full configuration details
+func (c *Client) CreateDataStoreFromDetails(workspace string, details *DataStoreDetails) error {
+	// Convert connection parameters map back to entry array format
+	entries := make([]map[string]string, 0, len(details.ConnectionParameters))
+	for key, value := range details.ConnectionParameters {
+		entries = append(entries, map[string]string{
+			"@key": key,
+			"$":    value,
+		})
+	}
+
+	body := map[string]interface{}{
+		"dataStore": map[string]interface{}{
+			"name":        details.Name,
+			"description": details.Description,
+			"type":        details.Type,
+			"enabled":     details.Enabled,
+			"connectionParameters": map[string]interface{}{
+				"entry": entries,
+			},
+		},
+	}
+
+	resp, err := c.doJSONRequest("POST", fmt.Sprintf("/workspaces/%s/datastores", workspace), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create data store: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
+// CoverageStoreDetails contains full coverage store configuration for syncing
+type CoverageStoreDetails struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type"`
+	Enabled     bool   `json:"enabled"`
+	URL         string `json:"url"`
+}
+
+// GetCoverageStoreDetails retrieves full coverage store details including URL and type
+func (c *Client) GetCoverageStoreDetails(workspace, storeName string) (*CoverageStoreDetails, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/workspaces/%s/coveragestores/%s", workspace, storeName), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get coverage store details: %s", string(bodyBytes))
+	}
+
+	var storeResult struct {
+		CoverageStore struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+			Enabled     bool   `json:"enabled"`
+			URL         string `json:"url"`
+		} `json:"coverageStore"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&storeResult); err != nil {
+		return nil, fmt.Errorf("failed to decode coverage store details: %w", err)
+	}
+
+	return &CoverageStoreDetails{
+		Name:        storeResult.CoverageStore.Name,
+		Description: storeResult.CoverageStore.Description,
+		Type:        storeResult.CoverageStore.Type,
+		Enabled:     storeResult.CoverageStore.Enabled,
+		URL:         storeResult.CoverageStore.URL,
+	}, nil
+}
+
+// CreateCoverageStoreFromDetails creates a coverage store using full configuration details
+func (c *Client) CreateCoverageStoreFromDetails(workspace string, details *CoverageStoreDetails) error {
+	body := map[string]interface{}{
+		"coverageStore": map[string]interface{}{
+			"name":        details.Name,
+			"description": details.Description,
+			"type":        details.Type,
+			"enabled":     details.Enabled,
+			"url":         details.URL,
+		},
+	}
+
+	resp, err := c.doJSONRequest("POST", fmt.Sprintf("/workspaces/%s/coveragestores", workspace), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create coverage store: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
 // GetCoverageStoreConfig retrieves coverage store configuration
 func (c *Client) GetCoverageStoreConfig(workspace, storeName string) (*models.CoverageStoreConfig, error) {
 	config := &models.CoverageStoreConfig{
@@ -3103,4 +3436,210 @@ func (c *Client) UpdateContact(contact *models.GeoServerContact) error {
 	}
 
 	return nil
+}
+
+// ============================================================================
+// Download Functions - Export resource configurations as JSON/SLD
+// ============================================================================
+
+// DownloadWorkspace returns the workspace configuration as JSON bytes
+func (c *Client) DownloadWorkspace(name string) ([]byte, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/workspaces/%s", name), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("workspace not found: %s", name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadDataStore returns the data store configuration as JSON bytes
+func (c *Client) DownloadDataStore(workspace, name string) ([]byte, error) {
+	path := fmt.Sprintf("/workspaces/%s/datastores/%s", workspace, name)
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("data store not found: %s/%s", workspace, name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadCoverageStore returns the coverage store configuration as JSON bytes
+func (c *Client) DownloadCoverageStore(workspace, name string) ([]byte, error) {
+	path := fmt.Sprintf("/workspaces/%s/coveragestores/%s", workspace, name)
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("coverage store not found: %s/%s", workspace, name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadLayer returns the layer configuration as JSON bytes
+func (c *Client) DownloadLayer(workspace, name string) ([]byte, error) {
+	var path string
+	if workspace == "" {
+		path = fmt.Sprintf("/layers/%s", name)
+	} else {
+		path = fmt.Sprintf("/workspaces/%s/layers/%s", workspace, name)
+	}
+
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("layer not found: %s", name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadStyle returns the style content (SLD/CSS) as bytes
+func (c *Client) DownloadStyle(workspace, name string) ([]byte, string, error) {
+	// First get style info to determine format
+	var infoPath string
+	if workspace == "" {
+		infoPath = fmt.Sprintf("/styles/%s", name)
+	} else {
+		infoPath = fmt.Sprintf("/workspaces/%s/styles/%s", workspace, name)
+	}
+
+	resp, err := c.doRequest("GET", infoPath, nil, "")
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("style not found: %s", name)
+	}
+
+	var styleInfo struct {
+		Style struct {
+			Format   string `json:"format"`
+			Filename string `json:"filename"`
+		} `json:"style"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&styleInfo); err != nil {
+		return nil, "", err
+	}
+
+	// Now get the actual style content
+	format := styleInfo.Style.Format
+	if format == "" {
+		format = "sld"
+	}
+
+	// Determine content type and extension
+	var contentType, ext string
+	switch format {
+	case "css":
+		contentType = "application/vnd.geoserver.geocss+css"
+		ext = ".css"
+	case "mbstyle":
+		contentType = "application/vnd.geoserver.mbstyle+json"
+		ext = ".json"
+	default: // sld
+		contentType = "application/vnd.ogc.sld+xml"
+		ext = ".sld"
+	}
+
+	// Create request for style content
+	url := c.baseURL + "/rest" + infoPath + ".sld"
+	if format == "css" {
+		url = c.baseURL + "/rest" + infoPath + ".css"
+	} else if format == "mbstyle" {
+		url = c.baseURL + "/rest" + infoPath + ".mbstyle"
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", contentType)
+
+	resp2, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("failed to download style content")
+	}
+
+	data, err := io.ReadAll(resp2.Body)
+	return data, ext, err
+}
+
+// DownloadLayerGroup returns the layer group configuration as JSON bytes
+func (c *Client) DownloadLayerGroup(workspace, name string) ([]byte, error) {
+	var path string
+	if workspace == "" {
+		path = fmt.Sprintf("/layergroups/%s", name)
+	} else {
+		path = fmt.Sprintf("/workspaces/%s/layergroups/%s", workspace, name)
+	}
+
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("layer group not found: %s", name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadFeatureType returns the feature type configuration as JSON bytes
+func (c *Client) DownloadFeatureType(workspace, store, name string) ([]byte, error) {
+	path := fmt.Sprintf("/workspaces/%s/datastores/%s/featuretypes/%s", workspace, store, name)
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("feature type not found: %s/%s/%s", workspace, store, name)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// DownloadCoverage returns the coverage configuration as JSON bytes
+func (c *Client) DownloadCoverage(workspace, store, name string) ([]byte, error) {
+	path := fmt.Sprintf("/workspaces/%s/coveragestores/%s/coverages/%s", workspace, store, name)
+	resp, err := c.doRequest("GET", path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("coverage not found: %s/%s/%s", workspace, store, name)
+	}
+
+	return io.ReadAll(resp.Body)
 }

@@ -6,12 +6,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NimbleMarkets/ntcharts/sparkline"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kartoza/kartoza-geoserver-client/internal/api"
 	"github.com/kartoza/kartoza-geoserver-client/internal/config"
+)
+
+const (
+	maxPingHistory = 30 // Keep last 30 ping times for sparkline
 )
 
 // ServerStatus holds the status of a single server
@@ -30,6 +35,13 @@ type ServerStatus struct {
 	StyleCount     int
 	Version        string
 	Error          string
+}
+
+// ServerPingHistory holds ping history for sparklines
+type ServerPingHistory struct {
+	ConnectionID string
+	PingTimes    []float64 // Response times in ms
+	LastUpdated  time.Time
 }
 
 // DashboardKeyMap defines the key bindings
@@ -75,6 +87,9 @@ type DashboardStatusMsg struct {
 	Statuses []ServerStatus
 }
 
+// DashboardAutoRefreshMsg triggers automatic refresh
+type DashboardAutoRefreshMsg struct{}
+
 // DashboardScreen shows server status overview
 type DashboardScreen struct {
 	config         *config.Config
@@ -83,6 +98,7 @@ type DashboardScreen struct {
 	height         int
 	selectedIdx    int
 	statuses       []ServerStatus
+	pingHistory    map[string]*ServerPingHistory // Connection ID -> ping history
 	loading        bool
 	lastRefresh    time.Time
 	spinner        spinner.Model
@@ -96,11 +112,12 @@ func NewDashboardScreen(cfg *config.Config) *DashboardScreen {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#38B2AC"))
 
 	return &DashboardScreen{
-		config:   cfg,
-		keys:     DefaultDashboardKeyMap(),
-		statuses: make([]ServerStatus, 0),
-		loading:  true,
-		spinner:  s,
+		config:      cfg,
+		keys:        DefaultDashboardKeyMap(),
+		statuses:    make([]ServerStatus, 0),
+		pingHistory: make(map[string]*ServerPingHistory),
+		loading:     true,
+		spinner:     s,
 	}
 }
 
@@ -108,8 +125,17 @@ func NewDashboardScreen(cfg *config.Config) *DashboardScreen {
 func (d *DashboardScreen) Init() tea.Cmd {
 	return tea.Batch(
 		d.spinner.Tick,
-		d.refreshStatus(),
+		d.refreshStatusStaggered(),
+		d.scheduleAutoRefresh(),
 	)
+}
+
+// scheduleAutoRefresh schedules the next auto-refresh based on config
+func (d *DashboardScreen) scheduleAutoRefresh() tea.Cmd {
+	interval := time.Duration(d.config.GetPingInterval()) * time.Second
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
+		return DashboardAutoRefreshMsg{}
+	})
 }
 
 // Update handles messages
@@ -129,13 +155,22 @@ func (d *DashboardScreen) Update(msg tea.Msg) (*DashboardScreen, tea.Cmd) {
 	case DashboardStatusMsg:
 		d.mu.Lock()
 		d.statuses = msg.Statuses
+		// Update ping history
+		for _, status := range msg.Statuses {
+			d.addPingToHistory(status.ConnectionID, status.ResponseTimeMs)
+		}
 		d.loading = false
 		d.lastRefresh = time.Now()
 		d.mu.Unlock()
 
 	case DashboardRefreshMsg:
 		d.loading = true
-		cmds = append(cmds, d.refreshStatus())
+		cmds = append(cmds, d.refreshStatusStaggered())
+
+	case DashboardAutoRefreshMsg:
+		// Auto-refresh without setting loading to avoid disrupting UI
+		cmds = append(cmds, d.refreshStatusStaggered())
+		cmds = append(cmds, d.scheduleAutoRefresh())
 
 	case tea.KeyMsg:
 		switch {
@@ -149,26 +184,63 @@ func (d *DashboardScreen) Update(msg tea.Msg) (*DashboardScreen, tea.Cmd) {
 			}
 		case key.Matches(msg, d.keys.Refresh):
 			d.loading = true
-			cmds = append(cmds, d.refreshStatus())
+			cmds = append(cmds, d.refreshStatusStaggered())
 		}
 	}
 
 	return d, tea.Batch(cmds...)
 }
 
-// refreshStatus fetches status for all connections
-func (d *DashboardScreen) refreshStatus() tea.Cmd {
-	return func() tea.Msg {
-		var wg sync.WaitGroup
-		statusChan := make(chan ServerStatus, len(d.config.Connections))
+// addPingToHistory adds a new ping time to the history for a server
+func (d *DashboardScreen) addPingToHistory(connectionID string, responseTimeMs int64) {
+	history, exists := d.pingHistory[connectionID]
+	if !exists {
+		history = &ServerPingHistory{
+			ConnectionID: connectionID,
+			PingTimes:    make([]float64, 0, maxPingHistory),
+		}
+		d.pingHistory[connectionID] = history
+	}
 
-		for _, conn := range d.config.Connections {
+	// Add new ping time
+	history.PingTimes = append(history.PingTimes, float64(responseTimeMs))
+	history.LastUpdated = time.Now()
+
+	// Trim to max history
+	if len(history.PingTimes) > maxPingHistory {
+		history.PingTimes = history.PingTimes[len(history.PingTimes)-maxPingHistory:]
+	}
+}
+
+// refreshStatusStaggered fetches status for all connections with staggered timing
+func (d *DashboardScreen) refreshStatusStaggered() tea.Cmd {
+	return func() tea.Msg {
+		connections := d.config.Connections
+		if len(connections) == 0 {
+			return DashboardStatusMsg{Statuses: []ServerStatus{}}
+		}
+
+		// Calculate stagger delay: spread pings over half the refresh interval
+		staggerDelay := time.Duration(d.config.GetPingInterval()*500/len(connections)) * time.Millisecond
+		if staggerDelay > 2*time.Second {
+			staggerDelay = 2 * time.Second // Cap at 2 seconds between pings
+		}
+		if staggerDelay < 100*time.Millisecond {
+			staggerDelay = 100 * time.Millisecond // Minimum 100ms delay
+		}
+
+		var wg sync.WaitGroup
+		statusChan := make(chan ServerStatus, len(connections))
+
+		for i, conn := range connections {
 			wg.Add(1)
-			go func(conn config.Connection) {
+			go func(conn config.Connection, delay time.Duration) {
 				defer wg.Done()
+				// Stagger the requests
+				time.Sleep(delay)
 				status := d.fetchServerStatus(&conn)
 				statusChan <- status
-			}(conn)
+			}(conn, time.Duration(i)*staggerDelay)
 		}
 
 		go func() {
@@ -270,8 +342,8 @@ func (d *DashboardScreen) View() string {
 		MarginBottom(1)
 
 	summary := summaryStyle.Render(fmt.Sprintf(
-		"✓ %d Online  ✗ %d Offline  📦 %d Layers  🗄 %d Stores",
-		onlineCount, offlineCount, totalLayers, totalStores,
+		"✓ %d Online  ✗ %d Offline  📦 %d Layers  🗄 %d Stores  ⏱ Refresh: %ds",
+		onlineCount, offlineCount, totalLayers, totalStores, d.config.GetPingInterval(),
 	))
 
 	// Alert section for offline servers
@@ -443,9 +515,8 @@ func (d *DashboardScreen) renderServerCard(server ServerStatus, selected bool, i
 		memoryLine = d.renderMemoryBar(server.MemoryUsedPct, cardWidth-4)
 	}
 
-	// Response time
-	responseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#718096"))
-	responseLine := responseStyle.Render(fmt.Sprintf("⏱ %dms", server.ResponseTimeMs))
+	// Response time with sparkline
+	responseLine := d.renderResponseWithSparkline(server.ConnectionID, server.ResponseTimeMs, cardWidth-4)
 
 	var content string
 	if memoryLine != "" {
@@ -468,6 +539,34 @@ func (d *DashboardScreen) renderServerCard(server ServerStatus, selected bool, i
 	}
 
 	return cardStyle.Render(content)
+}
+
+func (d *DashboardScreen) renderResponseWithSparkline(connectionID string, currentMs int64, width int) string {
+	responseStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#718096"))
+	sparklineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#38B2AC"))
+
+	// Get ping history for this server
+	history, exists := d.pingHistory[connectionID]
+	if !exists || len(history.PingTimes) < 2 {
+		// Not enough data for sparkline
+		return responseStyle.Render(fmt.Sprintf("⏱ %dms", currentMs))
+	}
+
+	// Create sparkline
+	sparklineWidth := 15
+	if width < 50 {
+		sparklineWidth = 10
+	}
+
+	sl := sparkline.New(sparklineWidth, 1)
+	sl.PushAll(history.PingTimes)
+	sl.Draw()
+	sparklineStr := sl.View()
+
+	// Clean up the sparkline output (remove any newlines)
+	sparklineStr = strings.TrimSpace(sparklineStr)
+
+	return responseStyle.Render(fmt.Sprintf("⏱ %dms ", currentMs)) + sparklineStyle.Render(sparklineStr)
 }
 
 func (d *DashboardScreen) renderMemoryBar(percent float64, width int) string {

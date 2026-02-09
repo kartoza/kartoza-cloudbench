@@ -619,3 +619,51 @@ export async function getServerStatus(connectionId: string): Promise<ServerStatu
   const response = await fetch(`${API_BASE}/dashboard/server?id=${connectionId}`)
   return handleResponse<ServerStatus>(response)
 }
+
+// ============================================================================
+// Download API - Export resource configurations
+// ============================================================================
+
+export type DownloadResourceType = 'workspace' | 'datastore' | 'coveragestore' | 'layer' | 'style' | 'layergroup'
+export type DownloadDataType = 'shapefile' | 'geotiff'
+
+// Download a resource configuration (triggers browser file download)
+export function downloadResource(
+  connectionId: string,
+  resourceType: DownloadResourceType,
+  workspace: string,
+  name?: string
+): void {
+  let url = `${API_BASE}/download/${connectionId}/${resourceType}/${workspace}`
+  if (name) {
+    url += `/${name}`
+  }
+  // Trigger browser download
+  window.open(url, '_blank')
+}
+
+// Download layer data as shapefile (triggers browser file download)
+export function downloadShapefile(
+  connectionId: string,
+  workspace: string,
+  layerName: string
+): void {
+  const url = `${API_BASE}/download/${connectionId}/shapefile/${workspace}/${layerName}`
+  window.open(url, '_blank')
+}
+
+// Download coverage data as GeoTIFF (triggers browser file download)
+export function downloadGeoTiff(
+  connectionId: string,
+  workspace: string,
+  coverageName: string
+): void {
+  const url = `${API_BASE}/download/${connectionId}/geotiff/${workspace}/${coverageName}`
+  window.open(url, '_blank')
+}
+
+// Download sync task logs (triggers browser file download)
+export function downloadSyncLogs(taskId: string): void {
+  const url = `${API_BASE}/download/logs/${taskId}`
+  window.open(url, '_blank')
+}

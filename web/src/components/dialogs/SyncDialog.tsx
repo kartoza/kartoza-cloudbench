@@ -54,6 +54,7 @@ import {
   FiEdit3,
   FiPackage,
   FiActivity,
+  FiDownload,
   FiX,
 } from 'react-icons/fi'
 import * as api from '../../api/client'
@@ -464,6 +465,16 @@ function SyncLogPanel({ tasks }: SyncLogPanelProps) {
     }
   }, [allLogs.length])
 
+  const handleDownloadLogs = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Download logs for each task
+    tasks.forEach(task => {
+      if (task.id) {
+        api.downloadSyncLogs(task.id)
+      }
+    })
+  }
+
   if (tasks.length === 0) return null
 
   return (
@@ -481,7 +492,21 @@ function SyncLogPanel({ tasks }: SyncLogPanelProps) {
           <Text fontWeight="bold" fontSize="sm" color="white">Activity Log</Text>
           <Badge colorScheme="green" fontSize="xs">{allLogs.length} entries</Badge>
         </HStack>
-        <Icon as={isOpen ? FiChevronUp : FiChevronDown} color="white" />
+        <HStack>
+          {allLogs.length > 0 && (
+            <Tooltip label="Download Logs" fontSize="xs">
+              <IconButton
+                aria-label="Download logs"
+                icon={<FiDownload size={14} />}
+                size="xs"
+                variant="ghost"
+                colorScheme="green"
+                onClick={handleDownloadLogs}
+              />
+            </Tooltip>
+          )}
+          <Icon as={isOpen ? FiChevronUp : FiChevronDown} color="white" />
+        </HStack>
       </Flex>
 
       <Collapse in={isOpen}>
@@ -670,11 +695,50 @@ export function SyncDialog() {
   }
 
   const handleLoadConfig = (config: SyncConfiguration) => {
-    setSourceId(config.source_id)
-    setDestinationIds(config.destination_ids)
-    setOptions(config.options)
+    console.log('Loading sync config:', config)
+    console.log('Available connections:', connections.map(c => ({ id: c.id, name: c.name })))
+
+    // Set source - ensure it's a valid string or null
+    const newSourceId = config.source_id && config.source_id.trim() !== '' ? config.source_id : null
+    setSourceId(newSourceId)
+
+    // Set destinations - filter out empty strings
+    const newDestIds = (config.destination_ids || []).filter(id => id && id.trim() !== '')
+    setDestinationIds(newDestIds)
+
+    // Merge config options with defaults to ensure all fields exist
+    const defaultOptions: SyncOptions = {
+      workspaces: true,
+      datastores: true,
+      coveragestores: true,
+      layers: true,
+      styles: true,
+      layergroups: true,
+    }
+    setOptions({ ...defaultOptions, ...(config.options || {}) })
     setSelectedConfigId(config.id)
     setConfigName(config.name)
+
+    // Show toast if source/dest connections not found
+    const sourceConn = newSourceId ? connections.find(c => c.id === newSourceId) : null
+    const missingDests = newDestIds.filter(id => !connections.find(c => c.id === id))
+
+    if (newSourceId && !sourceConn) {
+      toast({
+        title: 'Source connection not found',
+        description: `The saved source connection (${newSourceId}) may have been deleted.`,
+        status: 'warning',
+        duration: 5000,
+      })
+    }
+    if (missingDests.length > 0) {
+      toast({
+        title: 'Some destination connections not found',
+        description: `${missingDests.length} destination(s) may have been deleted.`,
+        status: 'warning',
+        duration: 5000,
+      })
+    }
   }
 
   const handleAddDestination = (connId: string) => {

@@ -58,13 +58,15 @@ export default function ConnectionDialog() {
         setName(conn.name)
         setUrl(conn.url)
         setUsername(conn.username)
-        setPassword('')
+        setPassword(conn.password || '')
+        setShowPassword(false) // Reset to hidden when opening
       }
     } else if (isOpen && !isEditMode) {
       setName('')
       setUrl('')
       setUsername('')
       setPassword('')
+      setShowPassword(false)
     }
     setTestResult(null)
   }, [isOpen, isEditMode, connectionId, connections])
@@ -149,7 +151,7 @@ export default function ConnectionDialog() {
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={closeDialog} size="md" isCentered>
+    <Modal isOpen={isOpen} onClose={closeDialog} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header */}
@@ -219,12 +221,12 @@ export default function ConnectionDialog() {
                   placeholder={isEditMode ? '(unchanged)' : 'password'}
                   borderRadius="lg"
                 />
-                <InputRightElement>
+                <InputRightElement h="full">
                   <IconButton
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                     icon={showPassword ? <FiEyeOff /> : <FiEye />}
                     variant="ghost"
-                    size="sm"
+                    size="md"
                     onClick={() => setShowPassword(!showPassword)}
                   />
                 </InputRightElement>
@@ -257,6 +259,7 @@ export default function ConnectionDialog() {
             loadingText="Testing..."
             leftIcon={<FiCheck />}
             borderRadius="lg"
+            flexShrink={0}
           >
             Test Connection
           </Button>

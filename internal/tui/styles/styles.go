@@ -209,6 +209,11 @@ var (
 	ProgressTextStyle = lipgloss.NewStyle().
 		Foreground(Text).
 		Italic(true)
+
+	// Count badge style for tree view item counts
+	CountBadgeStyle = lipgloss.NewStyle().
+		Foreground(Muted).
+		Italic(true)
 )
 
 // Helper functions for building complex layouts

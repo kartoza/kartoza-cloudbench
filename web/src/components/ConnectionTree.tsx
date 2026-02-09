@@ -7,7 +7,12 @@ import {
   IconButton,
   Icon,
   Tooltip,
+  Badge,
   useColorModeValue,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
 } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -16,6 +21,7 @@ import {
   FiEdit2,
   FiTrash2,
   FiEye,
+  FiDownload,
   FiServer,
   FiFolder,
   FiDatabase,
@@ -23,6 +29,8 @@ import {
   FiLayers,
   FiDroplet,
   FiGrid,
+  FiFileText,
+  FiMap,
 } from 'react-icons/fi'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore, generateNodeId } from '../stores/treeStore'
@@ -135,7 +143,7 @@ function ConnectionNode({ connectionId, name }: ConnectionNodeProps) {
   const { data: workspaces, isLoading } = useQuery({
     queryKey: ['workspaces', connectionId],
     queryFn: () => api.getWorkspaces(connectionId),
-    enabled: isExpanded,
+    staleTime: 30000, // Cache for 30 seconds
   })
 
   const node: TreeNode = {
@@ -178,6 +186,7 @@ function ConnectionNode({ connectionId, name }: ConnectionNodeProps) {
         onEdit={handleEdit}
         onDelete={handleDelete}
         level={0}
+        count={workspaces?.length}
       />
       {isExpanded && workspaces && (
         <Box pl={4}>
@@ -237,6 +246,11 @@ function WorkspaceNode({ connectionId, workspace }: WorkspaceNodeProps) {
     })
   }
 
+  const handleDownloadConfig = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    api.downloadResource(connectionId, 'workspace', workspace)
+  }
+
   return (
     <Box>
       <TreeNodeRow
@@ -246,6 +260,7 @@ function WorkspaceNode({ connectionId, workspace }: WorkspaceNodeProps) {
         isLoading={false}
         onClick={handleClick}
         onEdit={handleEdit}
+        onDownloadConfig={handleDownloadConfig}
         onDelete={handleDelete}
         level={1}
       />
@@ -317,7 +332,7 @@ function CategoryNode({ connectionId, workspace, category, label }: CategoryNode
           return api.getLayerGroups(connectionId, workspace)
       }
     },
-    enabled: isExpanded,
+    staleTime: 30000, // Cache for 30 seconds
   })
 
   const node: TreeNode = {
@@ -359,6 +374,7 @@ function CategoryNode({ connectionId, workspace, category, label }: CategoryNode
         isLoading={isLoading}
         onClick={handleClick}
         level={2}
+        count={items?.length}
       />
       {isExpanded && items && (
         <Box pl={4}>
@@ -444,6 +460,39 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
     })
   }
 
+  const handleDownloadConfig = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Map NodeType to DownloadResourceType
+    const resourceTypeMap: Record<string, api.DownloadResourceType> = {
+      datastore: 'datastore',
+      coveragestore: 'coveragestore',
+      layer: 'layer',
+      style: 'style',
+      layergroup: 'layergroup',
+    }
+    const resourceType = resourceTypeMap[type]
+    if (resourceType) {
+      api.downloadResource(connectionId, resourceType, workspace, name)
+    }
+  }
+
+  const handleDownloadData = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (type === 'layer' || storeType === 'datastore') {
+      // Vector layer - download as shapefile
+      api.downloadShapefile(connectionId, workspace, name)
+    } else if (storeType === 'coveragestore') {
+      // Raster coverage - download as GeoTIFF
+      api.downloadGeoTiff(connectionId, workspace, name)
+    }
+  }
+
+  // Determine if download is available for this node type
+  const canDownloadConfig = ['datastore', 'coveragestore', 'layer', 'style', 'layergroup'].includes(type)
+  // Data download is only for layers (vector=shapefile, raster=geotiff)
+  const canDownloadData = type === 'layer'
+  const downloadDataLabel = storeType === 'coveragestore' ? 'GeoTIFF' : 'Shapefile'
+
   return (
     <TreeNodeRow
       node={node}
@@ -452,6 +501,9 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
       isLoading={false}
       onClick={handleClick}
       onPreview={type === 'layer' || type === 'datastore' || type === 'coveragestore' ? handlePreview : undefined}
+      onDownloadConfig={canDownloadConfig ? handleDownloadConfig : undefined}
+      onDownloadData={canDownloadData ? handleDownloadData : undefined}
+      downloadDataLabel={downloadDataLabel}
       onDelete={handleDelete}
       level={3}
       isLeaf
@@ -468,8 +520,12 @@ interface TreeNodeRowProps {
   onEdit?: (e: React.MouseEvent) => void
   onDelete?: (e: React.MouseEvent) => void
   onPreview?: (e: React.MouseEvent) => void
+  onDownloadConfig?: (e: React.MouseEvent) => void
+  onDownloadData?: (e: React.MouseEvent) => void
+  downloadDataLabel?: string // "Shapefile" or "GeoTIFF"
   level: number
   isLeaf?: boolean
+  count?: number
 }
 
 function TreeNodeRow({
@@ -481,8 +537,12 @@ function TreeNodeRow({
   onEdit,
   onDelete,
   onPreview,
+  onDownloadConfig,
+  onDownloadData,
+  downloadDataLabel,
   level,
   isLeaf,
+  count,
 }: TreeNodeRowProps) {
   const bgColor = useColorModeValue(
     isSelected ? 'kartoza.50' : 'transparent',
@@ -553,12 +613,53 @@ function TreeNodeRow({
       >
         {node.name}
       </Text>
+      {count !== undefined && count >= 0 && (
+        <Badge
+          colorScheme={nodeColor.split('.')[0]}
+          variant="subtle"
+          fontSize="xs"
+          borderRadius="full"
+          px={2}
+          mr={2}
+          fontWeight="600"
+        >
+          {count}
+        </Badge>
+      )}
       <Flex
         gap={1}
         opacity={0}
         _groupHover={{ opacity: 1 }}
         transition="opacity 0.15s"
       >
+        {(onDownloadConfig || onDownloadData) && (
+          <Menu isLazy placement="bottom-end">
+            <Tooltip label="Download" fontSize="xs">
+              <MenuButton
+                as={IconButton}
+                aria-label="Download"
+                icon={<FiDownload size={14} />}
+                size="xs"
+                variant="ghost"
+                colorScheme="kartoza"
+                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                _hover={{ bg: 'kartoza.100' }}
+              />
+            </Tooltip>
+            <MenuList minW="180px" fontSize="sm">
+              {onDownloadConfig && (
+                <MenuItem icon={<FiFileText />} onClick={onDownloadConfig}>
+                  Download Config (JSON)
+                </MenuItem>
+              )}
+              {onDownloadData && (
+                <MenuItem icon={<FiMap />} onClick={onDownloadData}>
+                  Download {downloadDataLabel || 'Data'}
+                </MenuItem>
+              )}
+            </MenuList>
+          </Menu>
+        )}
         {onPreview && (
           <Tooltip label="Preview" fontSize="xs">
             <IconButton

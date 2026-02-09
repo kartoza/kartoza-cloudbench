@@ -16,6 +16,7 @@ type ConnectionResponse struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
 	Username string `json:"username"`
+	Password string `json:"password"`
 	IsActive bool   `json:"isActive"`
 }
 
@@ -99,6 +100,7 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 			Name:     conn.Name,
 			URL:      conn.URL,
 			Username: conn.Username,
+			Password: conn.Password,
 			IsActive: conn.ID == s.config.ActiveConnection,
 		}
 	}
@@ -118,6 +120,7 @@ func (s *Server) getConnection(w http.ResponseWriter, r *http.Request, connID st
 		Name:     conn.Name,
 		URL:      conn.URL,
 		Username: conn.Username,
+		Password: conn.Password,
 		IsActive: conn.ID == s.config.ActiveConnection,
 	})
 }

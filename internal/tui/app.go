@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -954,6 +956,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Show settings wizard for the connection
 		return a, a.showSettingsWizard(msg.Node)
 
+	case components.TreeDownloadMsg:
+		// Download resource configuration
+		return a, a.downloadResource(msg.Node)
+
 	case components.CacheWizardAnimationMsg:
 		// Forward to cache wizard if we have one
 		if a.cacheWizard != nil && a.cacheWizard.IsVisible() {
@@ -1009,6 +1015,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.errorMsg = ""
 		} else {
 			a.errorMsg = fmt.Sprintf("Failed to save settings: %v", msg.err)
+		}
+
+	case downloadResourceMsg:
+		a.loading = false
+		if msg.success {
+			a.statusMsg = fmt.Sprintf("Downloaded to: %s", msg.filename)
+			a.errorMsg = ""
+			// Refresh file browser to show the new file
+			a.fileBrowser.Refresh()
+		} else {
+			a.errorMsg = fmt.Sprintf("Download failed: %v", msg.err)
 		}
 
 	case cacheOperationCompleteMsg:
@@ -1377,6 +1394,113 @@ func (a *App) saveSettings(connectionID string, contact *models.GeoServerContact
 		return settingsSavedMsg{
 			success: err == nil,
 			err:     err,
+		}
+	}
+}
+
+// downloadResourceMsg is sent after a download attempt
+type downloadResourceMsg struct {
+	filename string
+	success  bool
+	err      error
+}
+
+// downloadResource downloads the resource configuration to the current file browser directory
+func (a *App) downloadResource(node *models.TreeNode) tea.Cmd {
+	if node == nil {
+		return nil
+	}
+
+	client := a.getClientForNode(node)
+	if client == nil {
+		a.errorMsg = "Connection not found"
+		return nil
+	}
+
+	// Get the current directory from the file browser (capture before goroutine)
+	downloadDir := a.fileBrowser.CurrentPath()
+
+	a.loading = true
+	a.statusMsg = fmt.Sprintf("Downloading %s to %s...", node.Name, downloadDir)
+
+	return func() tea.Msg {
+		var data []byte
+		var filename string
+		var err error
+
+		switch node.Type {
+		case models.NodeTypeWorkspace:
+			data, err = client.DownloadWorkspace(node.Name)
+			filename = fmt.Sprintf("%s_workspace.json", node.Name)
+
+		case models.NodeTypeDataStore:
+			workspace := ""
+			if node.Parent != nil && node.Parent.Parent != nil {
+				workspace = node.Parent.Parent.Name
+			}
+			data, err = client.DownloadDataStore(workspace, node.Name)
+			filename = fmt.Sprintf("%s_%s_datastore.json", workspace, node.Name)
+
+		case models.NodeTypeCoverageStore:
+			workspace := ""
+			if node.Parent != nil && node.Parent.Parent != nil {
+				workspace = node.Parent.Parent.Name
+			}
+			data, err = client.DownloadCoverageStore(workspace, node.Name)
+			filename = fmt.Sprintf("%s_%s_coveragestore.json", workspace, node.Name)
+
+		case models.NodeTypeLayer:
+			workspace := ""
+			if node.Parent != nil && node.Parent.Parent != nil {
+				workspace = node.Parent.Parent.Name
+			}
+			data, err = client.DownloadLayer(workspace, node.Name)
+			filename = fmt.Sprintf("%s_%s_layer.json", workspace, node.Name)
+
+		case models.NodeTypeStyle:
+			workspace := ""
+			if node.Parent != nil && node.Parent.Parent != nil {
+				workspace = node.Parent.Parent.Name
+			}
+			var ext string
+			data, ext, err = client.DownloadStyle(workspace, node.Name)
+			filename = fmt.Sprintf("%s_%s%s", workspace, node.Name, ext)
+
+		case models.NodeTypeLayerGroup:
+			workspace := ""
+			if node.Parent != nil && node.Parent.Parent != nil {
+				workspace = node.Parent.Parent.Name
+			}
+			data, err = client.DownloadLayerGroup(workspace, node.Name)
+			filename = fmt.Sprintf("%s_%s_layergroup.json", workspace, node.Name)
+
+		default:
+			return downloadResourceMsg{
+				success: false,
+				err:     fmt.Errorf("download not supported for this resource type"),
+			}
+		}
+
+		if err != nil {
+			return downloadResourceMsg{
+				success: false,
+				err:     err,
+			}
+		}
+
+		// Write to file
+		filepath := filepath.Join(downloadDir, filename)
+		err = os.WriteFile(filepath, data, 0644)
+		if err != nil {
+			return downloadResourceMsg{
+				success: false,
+				err:     fmt.Errorf("failed to write file: %w", err),
+			}
+		}
+
+		return downloadResourceMsg{
+			filename: filepath,
+			success:  true,
 		}
 	}
 }

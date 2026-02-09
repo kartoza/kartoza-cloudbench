@@ -118,6 +118,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/dashboard", s.handleDashboard)
 	mux.HandleFunc("/api/dashboard/server", s.handleServerStatus)
 
+	// API routes - Download (export resources)
+	mux.HandleFunc("/api/download/logs/", s.handleDownloadLogs)
+	mux.HandleFunc("/api/download/", s.handleDownload)
+
 	// Serve static files (React app)
 	mux.HandleFunc("/", s.serveStatic)
 }

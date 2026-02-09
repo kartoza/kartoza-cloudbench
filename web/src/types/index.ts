@@ -4,6 +4,7 @@ export interface Connection {
   name: string
   url: string
   username: string
+  password: string
   isActive: boolean
 }
 
@@ -344,6 +345,8 @@ export interface GeoServerContact {
 }
 
 // Sync types
+export type DataStoreSyncStrategy = 'same_connection' | 'geopackage_copy' | 'skip'
+
 export interface SyncOptions {
   workspaces: boolean
   datastores: boolean
@@ -352,6 +355,7 @@ export interface SyncOptions {
   styles: boolean
   layergroups: boolean
   workspace_filter?: string[]
+  datastore_strategy?: DataStoreSyncStrategy
 }
 
 export interface SyncConfiguration {
@@ -417,4 +421,5 @@ export interface DashboardData {
   totalLayers: number
   totalStores: number
   alertServers: ServerStatus[]
+  pingIntervalSecs: number // Dashboard refresh interval from settings
 }

@@ -33,27 +33,42 @@ type SyncConfiguration struct {
 	LastSyncedAt string   `json:"last_synced_at,omitempty"`
 }
 
+// DataStoreSyncStrategy defines how datastores should be synced
+type DataStoreSyncStrategy string
+
+const (
+	// DataStoreSameConnection copies datastore config as-is (requires same DB access)
+	DataStoreSameConnection DataStoreSyncStrategy = "same_connection"
+	// DataStoreGeoPackageCopy exports data to GeoPackage and syncs as file store
+	DataStoreGeoPackageCopy DataStoreSyncStrategy = "geopackage_copy"
+	// DataStoreSkip skips datastore syncing entirely (default, just note it)
+	DataStoreSkip DataStoreSyncStrategy = "skip"
+)
+
 // SyncOptions configures what to sync
 type SyncOptions struct {
-	Workspaces   bool `json:"workspaces"`
-	DataStores   bool `json:"datastores"`
-	CoverageStores bool `json:"coveragestores"`
-	Layers       bool `json:"layers"`
-	Styles       bool `json:"styles"`
-	LayerGroups  bool `json:"layergroups"`
+	Workspaces      bool `json:"workspaces"`
+	DataStores      bool `json:"datastores"`
+	CoverageStores  bool `json:"coveragestores"`
+	Layers          bool `json:"layers"`
+	Styles          bool `json:"styles"`
+	LayerGroups     bool `json:"layergroups"`
 	// Filter options
 	WorkspaceFilter []string `json:"workspace_filter,omitempty"` // If set, only sync these workspaces
+	// Datastore sync strategy
+	DataStoreStrategy DataStoreSyncStrategy `json:"datastore_strategy,omitempty"` // How to sync datastores
 }
 
 // DefaultSyncOptions returns default sync options (sync everything)
 func DefaultSyncOptions() SyncOptions {
 	return SyncOptions{
-		Workspaces:     true,
-		DataStores:     true,
-		CoverageStores: true,
-		Layers:         true,
-		Styles:         true,
-		LayerGroups:    true,
+		Workspaces:        true,
+		DataStores:        true,
+		CoverageStores:    true,
+		Layers:            true,
+		Styles:            true,
+		LayerGroups:       true,
+		DataStoreStrategy: DataStoreSkip, // Default to skip for safety
 	}
 }
 
@@ -64,6 +79,26 @@ type Config struct {
 	LastLocalPath    string              `json:"last_local_path"`
 	Theme            string              `json:"theme"`
 	SyncConfigs      []SyncConfiguration `json:"sync_configs,omitempty"`
+	PingIntervalSecs int                 `json:"ping_interval_secs,omitempty"` // Dashboard refresh interval, default 60
+}
+
+// GetPingInterval returns the ping interval in seconds, with a default of 60
+func (c *Config) GetPingInterval() int {
+	if c.PingIntervalSecs <= 0 {
+		return 60
+	}
+	return c.PingIntervalSecs
+}
+
+// SetPingInterval sets the ping interval in seconds
+func (c *Config) SetPingInterval(seconds int) {
+	if seconds < 10 {
+		seconds = 10 // Minimum 10 seconds
+	}
+	if seconds > 600 {
+		seconds = 600 // Maximum 10 minutes
+	}
+	c.PingIntervalSecs = seconds
 }
 
 // DefaultConfig returns the default configuration

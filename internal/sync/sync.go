@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kartoza/kartoza-geoserver-client/internal/api"
+	"github.com/kartoza/kartoza-geoserver-client/internal/cache"
 	"github.com/kartoza/kartoza-geoserver-client/internal/config"
 )
 
@@ -227,6 +228,15 @@ func (t *Task) GetCurrentItem() string {
 	return t.CurrentItem
 }
 
+// GetLogs returns a copy of the log entries (thread-safe)
+func (t *Task) GetLogs() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	logs := make([]string, len(t.Log))
+	copy(logs, t.Log)
+	return logs
+}
+
 // runSync performs the actual sync operation
 func (m *Manager) runSync(task *Task, source, dest *config.Connection, options config.SyncOptions, stopChan chan struct{}) {
 	defer func() {
@@ -242,12 +252,24 @@ func (m *Manager) runSync(task *Task, source, dest *config.Connection, options c
 	sourceClient := api.NewClient(source)
 	destClient := api.NewClient(dest)
 
+	// Get or create cache manager
+	cacheManager := cache.DefaultManager
+	if cacheManager == nil {
+		var err error
+		cacheManager, err = cache.NewManager()
+		if err != nil {
+			task.AddLog(fmt.Sprintf("Warning: cache unavailable: %v", err))
+		}
+	}
+
 	executor := &Executor{
 		task:         task,
 		sourceClient: sourceClient,
 		destClient:   destClient,
 		options:      options,
 		stopChan:     stopChan,
+		sourceID:     source.ID,
+		cacheManager: cacheManager,
 	}
 
 	executor.Execute()

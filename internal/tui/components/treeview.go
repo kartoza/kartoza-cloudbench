@@ -32,6 +32,7 @@ type TreeViewKeyMap struct {
 	Publish  key.Binding
 	Cache    key.Binding
 	Settings key.Binding
+	Download key.Binding
 }
 
 // DefaultTreeViewKeyMap returns the default key bindings
@@ -113,6 +114,10 @@ func DefaultTreeViewKeyMap() TreeViewKeyMap {
 			key.WithKeys("s"),
 			key.WithHelp("s", "settings"),
 		),
+		Download: key.NewBinding(
+			key.WithKeys("w"),
+			key.WithHelp("w", "download"),
+		),
 	}
 }
 
@@ -149,6 +154,10 @@ type (
 	}
 	// TreeSettingsMsg is sent when user wants to edit service metadata/settings
 	TreeSettingsMsg struct {
+		Node *models.TreeNode
+	}
+	// TreeDownloadMsg is sent when user wants to download/export a resource
+	TreeDownloadMsg struct {
 		Node *models.TreeNode
 	}
 )
@@ -384,6 +393,19 @@ func (tv *TreeView) Update(msg tea.Msg) (*TreeView, tea.Cmd) {
 					}
 				}
 			}
+
+		case key.Matches(msg, tv.keyMap.Download):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				// Allow download for workspaces, stores, layers, styles, and layer groups
+				switch node.Type {
+				case models.NodeTypeWorkspace, models.NodeTypeDataStore, models.NodeTypeCoverageStore,
+					models.NodeTypeLayer, models.NodeTypeStyle, models.NodeTypeLayerGroup:
+					return tv, func() tea.Msg {
+						return TreeDownloadMsg{Node: node}
+					}
+				}
+			}
 		}
 	}
 
@@ -575,7 +597,19 @@ func (tv *TreeView) renderNode(fn FlatNode, selected bool) string {
 
 	// Icon and name
 	icon := node.Type.Icon()
-	name := tv.truncateName(node.Name, tv.width-fn.Depth*2-15)
+	name := tv.truncateName(node.Name, tv.width-fn.Depth*2-20) // Reduced to make room for count
+
+	// Count badge for nodes with children
+	var countBadge string
+	if len(node.Children) > 0 {
+		// Show count for category nodes and containers
+		switch node.Type {
+		case models.NodeTypeConnection, models.NodeTypeWorkspace,
+			models.NodeTypeDataStores, models.NodeTypeCoverageStores,
+			models.NodeTypeLayers, models.NodeTypeStyles, models.NodeTypeLayerGroups:
+			countBadge = styles.CountBadgeStyle.Render(fmt.Sprintf(" (%d)", len(node.Children)))
+		}
+	}
 
 	// Enabled status indicator (only for layers and stores)
 	var enabledIndicator string
@@ -587,7 +621,7 @@ func (tv *TreeView) renderNode(fn FlatNode, selected bool) string {
 		}
 	}
 
-	line := fmt.Sprintf("%s%s %s %s%s", indent.String(), indicator, icon, name, enabledIndicator)
+	line := fmt.Sprintf("%s%s %s %s%s%s", indent.String(), indicator, icon, name, countBadge, enabledIndicator)
 
 	// Apply style
 	var style lipgloss.Style

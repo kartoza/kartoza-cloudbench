@@ -1,3 +1,10 @@
+# github.com/NimbleMarkets/ntcharts v0.4.0
+## explicit; go 1.22.0
+github.com/NimbleMarkets/ntcharts/canvas
+github.com/NimbleMarkets/ntcharts/canvas/buffer
+github.com/NimbleMarkets/ntcharts/canvas/graph
+github.com/NimbleMarkets/ntcharts/canvas/runes
+github.com/NimbleMarkets/ntcharts/sparkline
 # github.com/atotto/clipboard v0.1.4
 ## explicit
 github.com/atotto/clipboard
@@ -37,6 +44,9 @@ github.com/google/uuid
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
+# github.com/lrstanley/bubblezone v0.0.0-20240914071701-b48c55a5e78e
+## explicit; go 1.19
+github.com/lrstanley/bubblezone
 # github.com/lucasb-eyer/go-colorful v1.2.0
 ## explicit; go 1.12
 github.com/lucasb-eyer/go-colorful
@@ -75,6 +85,6 @@ golang.org/x/sync/errgroup
 ## explicit; go 1.18
 golang.org/x/sys/unix
 golang.org/x/sys/windows
-# golang.org/x/text v0.3.8
-## explicit; go 1.17
+# golang.org/x/text v0.20.0
+## explicit; go 1.18
 golang.org/x/text/transform

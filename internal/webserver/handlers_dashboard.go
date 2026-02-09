@@ -32,12 +32,13 @@ type ServerStatusResponse struct {
 
 // DashboardResponse contains status for all servers
 type DashboardResponse struct {
-	Servers       []ServerStatusResponse `json:"servers"`
-	OnlineCount   int                    `json:"onlineCount"`
-	OfflineCount  int                    `json:"offlineCount"`
-	TotalLayers   int                    `json:"totalLayers"`
-	TotalStores   int                    `json:"totalStores"`
-	AlertServers  []ServerStatusResponse `json:"alertServers"` // Servers with errors
+	Servers          []ServerStatusResponse `json:"servers"`
+	OnlineCount      int                    `json:"onlineCount"`
+	OfflineCount     int                    `json:"offlineCount"`
+	TotalLayers      int                    `json:"totalLayers"`
+	TotalStores      int                    `json:"totalStores"`
+	AlertServers     []ServerStatusResponse `json:"alertServers"`     // Servers with errors
+	PingIntervalSecs int                    `json:"pingIntervalSecs"` // Dashboard refresh interval
 }
 
 // handleDashboard returns status for all configured servers
@@ -54,8 +55,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := DashboardResponse{
-		Servers:      make([]ServerStatusResponse, 0),
-		AlertServers: make([]ServerStatusResponse, 0),
+		Servers:          make([]ServerStatusResponse, 0),
+		AlertServers:     make([]ServerStatusResponse, 0),
+		PingIntervalSecs: cfg.GetPingInterval(),
 	}
 
 	// Fetch status for all servers concurrently

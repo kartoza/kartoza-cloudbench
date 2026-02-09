@@ -15,15 +15,15 @@ import (
 type SyncConfigRequest struct {
 	ID       string             `json:"id,omitempty"`
 	Name     string             `json:"name"`
-	SourceID string             `json:"sourceId"`
-	DestIDs  []string           `json:"destinationIds"`
+	SourceID string             `json:"source_id"`
+	DestIDs  []string           `json:"destination_ids"`
 	Options  config.SyncOptions `json:"options"`
 }
 
 // StartSyncRequest represents a request to start syncing
 type StartSyncRequest struct {
-	ConfigID string              `json:"configId,omitempty"` // Use saved config
-	SourceID string              `json:"sourceId,omitempty"` // Or specify inline
+	ConfigID string              `json:"configId,omitempty"`        // Use saved config
+	SourceID string              `json:"sourceId,omitempty"`        // Or specify inline
 	DestIDs  []string            `json:"destinationIds,omitempty"`
 	Options  *config.SyncOptions `json:"options,omitempty"`
 }

@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'react'
 import {
   Box,
   Flex,
@@ -56,6 +57,58 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+// Simple Sparkline component using SVG
+interface SparklineProps {
+  data: number[]
+  width?: number
+  height?: number
+  color?: string
+}
+
+function Sparkline({ data, width = 80, height = 20, color = '#38B2AC' }: SparklineProps) {
+  if (data.length < 2) return null
+
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+
+  const points = data.map((value, index) => {
+    const x = (index / (data.length - 1)) * width
+    const y = height - ((value - min) / range) * (height - 4) - 2
+    return `${x},${y}`
+  }).join(' ')
+
+  return (
+    <svg width={width} height={height} style={{ display: 'inline-block', marginLeft: '4px' }}>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+// Store ping history for sparklines
+const pingHistoryMap = new Map<string, number[]>()
+const MAX_PING_HISTORY = 30
+
+function addPingToHistory(connectionId: string, responseTimeMs: number) {
+  const history = pingHistoryMap.get(connectionId) || []
+  history.push(responseTimeMs)
+  if (history.length > MAX_PING_HISTORY) {
+    history.shift()
+  }
+  pingHistoryMap.set(connectionId, history)
+}
+
+function getPingHistory(connectionId: string): number[] {
+  return pingHistoryMap.get(connectionId) || []
+}
+
 interface ServerCardProps {
   server: ServerStatus
   isAlert?: boolean
@@ -66,6 +119,9 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
   const bgColor = isAlert ? 'red.50' : server.online ? 'white' : 'gray.50'
   const statusIcon = server.online ? FiCheckCircle : FiXCircle
   const statusColor = server.online ? 'green.500' : 'red.500'
+
+  // Get ping history for this server
+  const pingHistory = getPingHistory(server.connectionId)
 
   return (
     <Box
@@ -170,10 +226,13 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
               </Box>
             )}
 
-            {/* Response time */}
-            <HStack spacing={2} fontSize="xs" color="gray.500">
+            {/* Response time with sparkline */}
+            <HStack spacing={2} fontSize="xs" color="gray.500" w="100%">
               <Icon as={FiClock} boxSize={3} />
               <Text>Response: {server.responseTimeMs}ms</Text>
+              {pingHistory.length >= 2 && (
+                <Sparkline data={pingHistory} width={60} height={16} color="#38B2AC" />
+              )}
             </HStack>
           </>
         ) : (
@@ -192,11 +251,28 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
 }
 
 export default function Dashboard() {
+  const pingIntervalRef = useRef<number>(30)
+
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: api.getDashboard,
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: () => pingIntervalRef.current * 1000, // Use dynamic interval
   })
+
+  // Update ping history when data changes
+  useEffect(() => {
+    if (data?.servers) {
+      for (const server of data.servers) {
+        if (server.online) {
+          addPingToHistory(server.connectionId, server.responseTimeMs)
+        }
+      }
+      // Update ping interval from server response
+      if (data.pingIntervalSecs && data.pingIntervalSecs > 0) {
+        pingIntervalRef.current = data.pingIntervalSecs
+      }
+    }
+  }, [data])
 
   if (isLoading) {
     return (
@@ -267,6 +343,10 @@ export default function Dashboard() {
                 <Icon as={FiLayers} color="purple.500" />
                 <Text fontWeight="bold" color="purple.600">{data.totalLayers}</Text>
                 <Text color="gray.500">Layers</Text>
+              </HStack>
+              <HStack spacing={2}>
+                <Icon as={FiClock} color="gray.500" />
+                <Text color="gray.500">{data.pingIntervalSecs || 60}s</Text>
               </HStack>
             </HStack>
             <Tooltip label="Refresh status">
