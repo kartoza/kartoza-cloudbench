@@ -39,6 +39,8 @@ import {
   Alert,
   AlertIcon,
   Spinner,
+  Collapse,
+  useDisclosure,
 } from '@chakra-ui/react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
@@ -52,6 +54,9 @@ import {
   FiSquare,
   FiCircle,
   FiMinus,
+  FiGrid,
+  FiChevronDown,
+  FiChevronUp,
 } from 'react-icons/fi'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api/client'
@@ -95,6 +100,227 @@ const DEFAULT_CSS = `/* GeoServer CSS Style */
   stroke: #2266cc;
   stroke-width: 1;
 }`
+
+// Classification methods
+type ClassificationMethod = 'equal-interval' | 'quantile' | 'jenks' | 'pretty'
+
+// Color ramps for classification
+const COLOR_RAMPS: Record<string, string[]> = {
+  'blue-to-red': ['#2166ac', '#67a9cf', '#d1e5f0', '#fddbc7', '#ef8a62', '#b2182b'],
+  'green-to-red': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027'],
+  'viridis': ['#440154', '#443983', '#31688e', '#21918c', '#35b779', '#fde725'],
+  'spectral': ['#9e0142', '#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd', '#5e4fa2'],
+  'blues': ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594'],
+  'reds': ['#fff5f0', '#fee0d2', '#fcbba1', '#fc9272', '#fb6a4a', '#ef3b2c', '#cb181d', '#99000d'],
+  'greens': ['#f7fcf5', '#e5f5e0', '#c7e9c0', '#a1d99b', '#74c476', '#41ab5d', '#238b45', '#005a32'],
+}
+
+// Calculate equal interval breaks
+function equalIntervalBreaks(values: number[], numClasses: number): number[] {
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const interval = (max - min) / numClasses
+  const breaks: number[] = []
+  for (let i = 0; i <= numClasses; i++) {
+    breaks.push(min + i * interval)
+  }
+  return breaks
+}
+
+// Calculate quantile breaks
+function quantileBreaks(values: number[], numClasses: number): number[] {
+  const sorted = [...values].sort((a, b) => a - b)
+  const breaks: number[] = []
+  for (let i = 0; i <= numClasses; i++) {
+    const index = Math.floor((i / numClasses) * (sorted.length - 1))
+    breaks.push(sorted[index])
+  }
+  return breaks
+}
+
+// Calculate Jenks natural breaks (simplified Ckmeans approximation)
+function jenksBreaks(values: number[], numClasses: number): number[] {
+  // Simplified implementation - uses k-means-like approach
+  const sorted = [...values].sort((a, b) => a - b)
+  const n = sorted.length
+
+  if (n <= numClasses) {
+    return sorted
+  }
+
+  // Initialize breaks evenly
+  const breaks = equalIntervalBreaks(values, numClasses)
+
+  // Iteratively optimize (simplified version)
+  for (let iter = 0; iter < 10; iter++) {
+    // Assign each value to a class
+    const classMeans: number[] = []
+    for (let i = 0; i < numClasses; i++) {
+      const lower = breaks[i]
+      const upper = breaks[i + 1]
+      const classValues = sorted.filter(v => v >= lower && (i === numClasses - 1 ? v <= upper : v < upper))
+      if (classValues.length > 0) {
+        classMeans.push(classValues.reduce((a, b) => a + b, 0) / classValues.length)
+      } else {
+        classMeans.push((lower + upper) / 2)
+      }
+    }
+
+    // Update breaks as midpoints between class means
+    for (let i = 1; i < numClasses; i++) {
+      breaks[i] = (classMeans[i - 1] + classMeans[i]) / 2
+    }
+  }
+
+  return breaks
+}
+
+// Calculate pretty breaks (nice round numbers)
+function prettyBreaks(values: number[], numClasses: number): number[] {
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min
+
+  // Calculate a nice interval
+  const rawInterval = range / numClasses
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawInterval)))
+  const normalized = rawInterval / magnitude
+
+  let niceInterval: number
+  if (normalized <= 1) niceInterval = 1 * magnitude
+  else if (normalized <= 2) niceInterval = 2 * magnitude
+  else if (normalized <= 5) niceInterval = 5 * magnitude
+  else niceInterval = 10 * magnitude
+
+  const niceMin = Math.floor(min / niceInterval) * niceInterval
+  const breaks: number[] = []
+  for (let i = 0; i <= numClasses; i++) {
+    breaks.push(niceMin + i * niceInterval)
+  }
+
+  return breaks
+}
+
+// Calculate breaks based on method
+function calculateBreaks(values: number[], numClasses: number, method: ClassificationMethod): number[] {
+  switch (method) {
+    case 'equal-interval':
+      return equalIntervalBreaks(values, numClasses)
+    case 'quantile':
+      return quantileBreaks(values, numClasses)
+    case 'jenks':
+      return jenksBreaks(values, numClasses)
+    case 'pretty':
+      return prettyBreaks(values, numClasses)
+    default:
+      return equalIntervalBreaks(values, numClasses)
+  }
+}
+
+// Interpolate colors from a ramp
+function interpolateColors(ramp: string[], numColors: number): string[] {
+  if (numColors <= ramp.length) {
+    // Sample from the ramp
+    const result: string[] = []
+    for (let i = 0; i < numColors; i++) {
+      const index = Math.floor((i / (numColors - 1)) * (ramp.length - 1))
+      result.push(ramp[index])
+    }
+    return result
+  }
+  // Just return the ramp if we need more colors than available
+  return ramp.slice(0, numColors)
+}
+
+// Generate classified SLD
+function generateClassifiedSLD(
+  styleName: string,
+  attribute: string,
+  breaks: number[],
+  colors: string[],
+  geometryType: 'polygon' | 'line' | 'point'
+): string {
+  const rules = breaks.slice(0, -1).map((lower, i) => {
+    const upper = breaks[i + 1]
+    const color = colors[i] || colors[colors.length - 1]
+    const ruleName = `${lower.toFixed(2)} - ${upper.toFixed(2)}`
+
+    let symbolizer = ''
+    if (geometryType === 'polygon') {
+      symbolizer = `
+            <PolygonSymbolizer>
+              <Fill>
+                <CssParameter name="fill">${color}</CssParameter>
+                <CssParameter name="fill-opacity">0.8</CssParameter>
+              </Fill>
+              <Stroke>
+                <CssParameter name="stroke">#333333</CssParameter>
+                <CssParameter name="stroke-width">0.5</CssParameter>
+              </Stroke>
+            </PolygonSymbolizer>`
+    } else if (geometryType === 'line') {
+      symbolizer = `
+            <LineSymbolizer>
+              <Stroke>
+                <CssParameter name="stroke">${color}</CssParameter>
+                <CssParameter name="stroke-width">2</CssParameter>
+              </Stroke>
+            </LineSymbolizer>`
+    } else {
+      symbolizer = `
+            <PointSymbolizer>
+              <Graphic>
+                <Mark>
+                  <WellKnownName>circle</WellKnownName>
+                  <Fill>
+                    <CssParameter name="fill">${color}</CssParameter>
+                  </Fill>
+                  <Stroke>
+                    <CssParameter name="stroke">#333333</CssParameter>
+                    <CssParameter name="stroke-width">1</CssParameter>
+                  </Stroke>
+                </Mark>
+                <Size>8</Size>
+              </Graphic>
+            </PointSymbolizer>`
+    }
+
+    return `
+          <Rule>
+            <Name>${ruleName}</Name>
+            <Title>${ruleName}</Title>
+            <ogc:Filter>
+              <ogc:And>
+                <ogc:PropertyIsGreaterThanOrEqualTo>
+                  <ogc:PropertyName>${attribute}</ogc:PropertyName>
+                  <ogc:Literal>${lower}</ogc:Literal>
+                </ogc:PropertyIsGreaterThanOrEqualTo>
+                <ogc:PropertyIsLessThan>
+                  <ogc:PropertyName>${attribute}</ogc:PropertyName>
+                  <ogc:Literal>${upper}</ogc:Literal>
+                </ogc:PropertyIsLessThan>
+              </ogc:And>
+            </ogc:Filter>${symbolizer}
+          </Rule>`
+  }).join('')
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<StyledLayerDescriptor version="1.0.0"
+  xsi:schemaLocation="http://www.opengis.net/sld StyledLayerDescriptor.xsd"
+  xmlns="http://www.opengis.net/sld"
+  xmlns:ogc="http://www.opengis.net/ogc"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <NamedLayer>
+    <Name>${styleName}</Name>
+    <UserStyle>
+      <Title>${styleName} - Classified</Title>
+      <FeatureTypeStyle>${rules}
+      </FeatureTypeStyle>
+    </UserStyle>
+  </NamedLayer>
+</StyledLayerDescriptor>`
+}
 
 // Style rule interface for visual editor
 interface StyleRule {
@@ -582,6 +808,15 @@ export function StyleDialog() {
   const [validationError, setValidationError] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
+  // Classification wizard state
+  const { isOpen: classifyPanelOpen, onToggle: toggleClassifyPanel } = useDisclosure()
+  const [classifyAttribute, setClassifyAttribute] = useState('')
+  const [classifyMethod, setClassifyMethod] = useState<ClassificationMethod>('equal-interval')
+  const [classifyClasses, setClassifyClasses] = useState(5)
+  const [classifyColorRamp, setClassifyColorRamp] = useState('blue-to-red')
+  const [classifyGeomType, setClassifyGeomType] = useState<'polygon' | 'line' | 'point'>('polygon')
+  const [classifySampleValues, setClassifySampleValues] = useState('')
+
   const bgColor = useColorModeValue('gray.50', 'gray.900')
   const headerBg = useColorModeValue('linear-gradient(135deg, #3d9970 0%, #2d7a5a 100%)', 'linear-gradient(135deg, #2d7a5a 0%, #1d5a40 100%)')
 
@@ -766,6 +1001,51 @@ export function StyleDialog() {
     }
   }
 
+  // Generate classified style
+  const handleGenerateClassifiedStyle = () => {
+    // Parse sample values
+    const values = classifySampleValues
+      .split(',')
+      .map(s => parseFloat(s.trim()))
+      .filter(n => !isNaN(n))
+
+    if (values.length < 2) {
+      toast({
+        title: 'Need more sample values',
+        description: 'Please enter at least 2 numeric values separated by commas',
+        status: 'warning',
+        duration: 3000,
+      })
+      return
+    }
+
+    // Calculate breaks
+    const breaks = calculateBreaks(values, classifyClasses, classifyMethod)
+    const colors = interpolateColors(COLOR_RAMPS[classifyColorRamp], classifyClasses)
+
+    // Generate SLD
+    const sld = generateClassifiedSLD(
+      name || 'ClassifiedStyle',
+      classifyAttribute,
+      breaks,
+      colors,
+      classifyGeomType
+    )
+
+    setContent(sld)
+    setFormat('sld')
+    setRules(parseSLDRules(sld))
+    setHasChanges(true)
+    setActiveTab(1) // Switch to code editor to show result
+
+    toast({
+      title: 'Classified style generated',
+      description: `Created ${classifyClasses} classes using ${classifyMethod.replace('-', ' ')}`,
+      status: 'success',
+      duration: 3000,
+    })
+  }
+
   const extensions = useMemo(() => {
     return format === 'sld' ? [xml()] : [css()]
   }, [format])
@@ -882,6 +1162,116 @@ export function StyleDialog() {
                       >
                         Point Style
                       </Button>
+
+                      <Divider />
+
+                      <Text fontWeight="600">Classified Style</Text>
+                      <Button
+                        size="sm"
+                        leftIcon={<Icon as={FiGrid} />}
+                        rightIcon={<Icon as={classifyPanelOpen ? FiChevronUp : FiChevronDown} />}
+                        variant="outline"
+                        colorScheme="kartoza"
+                        onClick={toggleClassifyPanel}
+                      >
+                        Choropleth Wizard
+                      </Button>
+
+                      <Collapse in={classifyPanelOpen} animateOpacity>
+                        <VStack spacing={3} p={3} bg="gray.50" borderRadius="md" align="stretch">
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Attribute</FormLabel>
+                            <Input
+                              size="sm"
+                              value={classifyAttribute}
+                              onChange={(e) => setClassifyAttribute(e.target.value)}
+                              placeholder="population"
+                            />
+                          </FormControl>
+
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Method</FormLabel>
+                            <Select
+                              size="sm"
+                              value={classifyMethod}
+                              onChange={(e) => setClassifyMethod(e.target.value as ClassificationMethod)}
+                            >
+                              <option value="equal-interval">Equal Interval</option>
+                              <option value="quantile">Quantile</option>
+                              <option value="jenks">Jenks Natural Breaks</option>
+                              <option value="pretty">Pretty Breaks</option>
+                            </Select>
+                          </FormControl>
+
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Classes: {classifyClasses}</FormLabel>
+                            <Slider
+                              value={classifyClasses}
+                              onChange={(v) => setClassifyClasses(v)}
+                              min={3}
+                              max={10}
+                              step={1}
+                            >
+                              <SliderTrack>
+                                <SliderFilledTrack bg="kartoza.500" />
+                              </SliderTrack>
+                              <SliderThumb />
+                            </Slider>
+                          </FormControl>
+
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Color Ramp</FormLabel>
+                            <Select
+                              size="sm"
+                              value={classifyColorRamp}
+                              onChange={(e) => setClassifyColorRamp(e.target.value)}
+                            >
+                              {Object.keys(COLOR_RAMPS).map((rampName) => (
+                                <option key={rampName} value={rampName}>
+                                  {rampName.replace(/-/g, ' ')}
+                                </option>
+                              ))}
+                            </Select>
+                            <HStack mt={1} spacing={1}>
+                              {interpolateColors(COLOR_RAMPS[classifyColorRamp], classifyClasses).map((color, i) => (
+                                <Box key={i} w="16px" h="12px" bg={color} borderRadius="sm" />
+                              ))}
+                            </HStack>
+                          </FormControl>
+
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Geometry Type</FormLabel>
+                            <Select
+                              size="sm"
+                              value={classifyGeomType}
+                              onChange={(e) => setClassifyGeomType(e.target.value as 'polygon' | 'line' | 'point')}
+                            >
+                              <option value="polygon">Polygon</option>
+                              <option value="line">Line</option>
+                              <option value="point">Point</option>
+                            </Select>
+                          </FormControl>
+
+                          <FormControl size="sm">
+                            <FormLabel fontSize="xs">Sample Values (comma separated)</FormLabel>
+                            <Input
+                              size="sm"
+                              value={classifySampleValues}
+                              onChange={(e) => setClassifySampleValues(e.target.value)}
+                              placeholder="10, 25, 50, 100, 200"
+                            />
+                          </FormControl>
+
+                          <Button
+                            size="sm"
+                            colorScheme="kartoza"
+                            onClick={handleGenerateClassifiedStyle}
+                            isDisabled={!classifyAttribute || !classifySampleValues}
+                          >
+                            Generate Style
+                          </Button>
+                        </VStack>
+                      </Collapse>
                     </>
                   )}
 
