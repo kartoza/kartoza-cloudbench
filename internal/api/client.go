@@ -1129,6 +1129,65 @@ func (c *Client) UploadGeoPackage(workspace, storeName, filePath string) error {
 	return nil
 }
 
+// parseOWSException extracts a human-readable error message from OWS/OGC XML exception responses
+func parseOWSException(data []byte, fallbackPrefix string) error {
+	content := string(data)
+
+	// Common error patterns and their user-friendly messages
+	errorMappings := map[string]string{
+		"idle-session timeout":           "The database connection timed out. Please try again.",
+		"terminating connection":         "The database connection was lost. Please try again.",
+		"Could not find layer":           "Layer not found. It may have been deleted or renamed.",
+		"No such feature type":           "This layer type cannot be downloaded as a shapefile.",
+		"Feature type not found":         "Layer not found on the server.",
+		"Unknown coverage":               "Coverage not found on the server.",
+		"InvalidParameterValue":          "Invalid request parameters.",
+		"MissingParameterValue":          "Missing required parameters.",
+		"OperationNotSupported":          "This operation is not supported for this layer.",
+		"java.lang.OutOfMemoryError":     "The server ran out of memory. The dataset may be too large to download.",
+		"Connection refused":             "Cannot connect to the database server.",
+		"authentication failed":          "Database authentication failed.",
+		"does not exist":                 "The requested resource does not exist.",
+		"permission denied":              "Permission denied. Check your credentials.",
+		"WFS is not enabled":             "WFS service is not enabled for this layer.",
+		"WCS is not enabled":             "WCS service is not enabled for this coverage.",
+	}
+
+	// Check for known error patterns
+	for pattern, message := range errorMappings {
+		if strings.Contains(strings.ToLower(content), strings.ToLower(pattern)) {
+			return fmt.Errorf("%s", message)
+		}
+	}
+
+	// Try to extract ExceptionText from OWS XML
+	if strings.Contains(content, "ExceptionText") {
+		start := strings.Index(content, "<ows:ExceptionText>")
+		if start == -1 {
+			start = strings.Index(content, "<ExceptionText>")
+		}
+		if start != -1 {
+			// Find the text content
+			textStart := strings.Index(content[start:], ">") + start + 1
+			end := strings.Index(content[textStart:], "</")
+			if end != -1 {
+				exceptionText := content[textStart : textStart+end]
+				// Clean up the exception text
+				exceptionText = strings.ReplaceAll(exceptionText, "\n", " ")
+				exceptionText = strings.TrimSpace(exceptionText)
+				// Truncate if too long
+				if len(exceptionText) > 200 {
+					exceptionText = exceptionText[:200] + "..."
+				}
+				return fmt.Errorf("%s: %s", fallbackPrefix, exceptionText)
+			}
+		}
+	}
+
+	// Fallback: just return a generic message
+	return fmt.Errorf("%s: Server returned an error. Please check the layer configuration.", fallbackPrefix)
+}
+
 // DownloadLayerAsShapefile downloads a layer's data via WFS as a zipped shapefile
 // Returns the shapefile data as bytes
 func (c *Client) DownloadLayerAsShapefile(workspace, layerName string) ([]byte, error) {
@@ -1151,12 +1210,24 @@ func (c *Client) DownloadLayerAsShapefile(workspace, layerName string) ([]byte, 
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("WFS request failed (%d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, parseOWSException(bodyBytes, fmt.Sprintf("WFS request failed (%d)", resp.StatusCode))
+	}
+
+	// Check content type - GeoServer returns application/xml for errors even with 200 OK
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "xml") || strings.Contains(contentType, "text/") {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, parseOWSException(bodyBytes, "WFS download failed")
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Verify we got a ZIP file (first 2 bytes should be PK)
+	if len(data) < 4 || data[0] != 'P' || data[1] != 'K' {
+		return nil, parseOWSException(data, "Invalid shapefile response")
 	}
 
 	return data, nil
@@ -1191,7 +1262,7 @@ func (c *Client) UploadShapefileData(workspace, storeName string, data []byte) e
 // DownloadCoverageAsGeoTIFF downloads a coverage via WCS as GeoTIFF
 // Returns the GeoTIFF data as bytes
 func (c *Client) DownloadCoverageAsGeoTIFF(workspace, coverageName string) ([]byte, error) {
-	// Build WCS GetCoverage URL
+	// Build WCS GetCoverage URL - use workspace__coveragename format for CoverageId
 	wcsURL := fmt.Sprintf("%s/wcs?service=WCS&version=2.0.1&request=GetCoverage&CoverageId=%s__%s&format=image/geotiff",
 		c.baseURL, workspace, coverageName)
 
@@ -1210,12 +1281,24 @@ func (c *Client) DownloadCoverageAsGeoTIFF(workspace, coverageName string) ([]by
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("WCS request failed (%d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, parseOWSException(bodyBytes, fmt.Sprintf("WCS request failed (%d)", resp.StatusCode))
+	}
+
+	// Check content type - GeoServer returns application/xml for errors even with 200 OK
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "xml") || strings.Contains(contentType, "text/") {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, parseOWSException(bodyBytes, "WCS download failed")
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Verify we got a TIFF file (first 2 bytes should be II or MM for little/big endian)
+	if len(data) < 4 || !((data[0] == 'I' && data[1] == 'I') || (data[0] == 'M' && data[1] == 'M')) {
+		return nil, parseOWSException(data, "Invalid GeoTIFF response")
 	}
 
 	return data, nil
