@@ -327,6 +327,25 @@ Press `e` to edit resources:
 - Toggle enabled state
 - Edit description
 
+#### Style Edit (TUI)
+- Edit style name (create mode only)
+- Select style format (SLD or CSS)
+- Edit style content in text area
+- Keyboard shortcuts: `Enter` to edit field, `Ctrl+S` to save, `Tab` to navigate fields
+
+#### Style Edit (Web UI)
+- Visual Editor: Graphical rule editing with color pickers and sliders
+  - Geometry type selection (Polygon, Line, Point)
+  - Fill color and opacity controls
+  - Stroke color, width, and opacity controls
+  - Point symbol shape and size (for point styles)
+  - Visual preview swatch
+  - Multiple rules with Add/Delete functionality
+- Code Editor: CodeMirror-based SLD/CSS editing with syntax highlighting
+- Format switching between SLD and CSS
+- Quick Actions for common style templates (Polygon, Line, Point)
+- Real-time validation of XML/CSS content
+
 ### Delete Operations
 
 Press `d` to delete resources:
@@ -603,7 +622,7 @@ Used for layer preview:
 ### Planned Features
 
 1. **GeoJSON Upload**: Support for uploading GeoJSON files
-2. **Style Editor**: In-TUI style editing with preview
+2. ~~**Style Editor**: In-TUI style editing with preview~~ (Implemented in v0.5.0)
 3. **Bulk Operations**: Multi-select for tree operations
 4. **Search/Filter**: Filter files and tree nodes
 5. **Keyring Integration**: Secure password storage
@@ -628,6 +647,7 @@ Used for layer preview:
 | 0.2.0 | 2024 | Added CRUD operations and wizard forms |
 | 0.3.0 | 2024 | Multi-connection support, layer preview |
 | 0.4.0 | 2025 | Server info dialog, code reorganization |
+| 0.5.0 | 2025 | Style Editor with visual/code editing (TUI + Web UI) |
 
 ---
 

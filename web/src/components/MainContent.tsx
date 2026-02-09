@@ -511,15 +511,28 @@ function StylesDashboard({
         </CardBody>
       </Card>
 
-      <Button
-        size="lg"
-        variant="accent"
-        leftIcon={<FiUpload />}
-        onClick={() => openDialog('upload', { mode: 'create', data: { connectionId, workspace } })}
-        py={8}
-      >
-        Upload SLD / CSS Style
-      </Button>
+      <HStack spacing={4}>
+        <Button
+          size="lg"
+          variant="accent"
+          leftIcon={<FiPlus />}
+          onClick={() => openDialog('style', { mode: 'create', data: { connectionId, workspace } })}
+          py={8}
+          flex={1}
+        >
+          Create Style
+        </Button>
+        <Button
+          size="lg"
+          variant="outline"
+          leftIcon={<FiUpload />}
+          onClick={() => openDialog('upload', { mode: 'create', data: { connectionId, workspace } })}
+          py={8}
+          flex={1}
+        >
+          Upload SLD / CSS
+        </Button>
+      </HStack>
 
       {styles && styles.length > 0 && (
         <Card bg={cardBg}>
@@ -529,7 +542,15 @@ function StylesDashboard({
               <Divider />
               <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
                 {styles.map((style) => (
-                  <Card key={style.name} variant="outline" size="sm">
+                  <Card
+                    key={style.name}
+                    variant="outline"
+                    size="sm"
+                    cursor="pointer"
+                    _hover={{ shadow: 'md', borderColor: 'kartoza.300' }}
+                    transition="all 0.2s"
+                    onClick={() => openDialog('style', { mode: 'edit', data: { connectionId, workspace, name: style.name } })}
+                  >
                     <CardBody py={3} px={4}>
                       <HStack>
                         <Icon as={FiEdit3} color="kartoza.500" />

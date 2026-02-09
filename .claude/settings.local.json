@@ -5,7 +5,9 @@
       "Bash(nix develop:*)",
       "Bash(curl:*)",
       "Bash(npm run build:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npm install:*)",
+      "Bash(go build:*)"
     ],
     "deny": [],
     "ask": []

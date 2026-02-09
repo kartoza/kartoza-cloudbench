@@ -450,6 +450,21 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
     })
   }
 
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (type === 'style') {
+      openDialog('style', {
+        mode: 'edit',
+        data: { connectionId, workspace, name },
+      })
+    } else if (type === 'layer') {
+      openDialog('layer', {
+        mode: 'edit',
+        data: { connectionId, workspace, layerName: name, storeType },
+      })
+    }
+  }
+
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation()
     openDialog('confirm', {
@@ -492,6 +507,8 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
   // Data download is only for layers (vector=shapefile, raster=geotiff)
   const canDownloadData = type === 'layer'
   const downloadDataLabel = storeType === 'coveragestore' ? 'GeoTIFF' : 'Shapefile'
+  // Edit is available for styles and layers
+  const canEdit = type === 'style' || type === 'layer'
 
   return (
     <TreeNodeRow
@@ -500,6 +517,7 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
       isSelected={isSelected}
       isLoading={false}
       onClick={handleClick}
+      onEdit={canEdit ? handleEdit : undefined}
       onPreview={type === 'layer' || type === 'datastore' || type === 'coveragestore' ? handlePreview : undefined}
       onDownloadConfig={canDownloadConfig ? handleDownloadConfig : undefined}
       onDownloadData={canDownloadData ? handleDownloadData : undefined}

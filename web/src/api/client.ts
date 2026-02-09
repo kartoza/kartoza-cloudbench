@@ -250,6 +250,49 @@ export async function deleteStyle(connId: string, workspace: string, name: strin
   return handleResponse<void>(response)
 }
 
+// Style content for editor
+export interface StyleContent {
+  name: string
+  workspace: string
+  format: 'sld' | 'css' | 'mbstyle'
+  content: string
+}
+
+export async function getStyleContent(connId: string, workspace: string, name: string): Promise<StyleContent> {
+  const response = await fetch(`${API_BASE}/styles/${connId}/${workspace}/${name}`)
+  return handleResponse<StyleContent>(response)
+}
+
+export async function updateStyleContent(
+  connId: string,
+  workspace: string,
+  name: string,
+  content: string,
+  format: 'sld' | 'css' | 'mbstyle' = 'sld'
+): Promise<StyleContent> {
+  const response = await fetch(`${API_BASE}/styles/${connId}/${workspace}/${name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, format }),
+  })
+  return handleResponse<StyleContent>(response)
+}
+
+export async function createStyle(
+  connId: string,
+  workspace: string,
+  name: string,
+  content: string,
+  format: 'sld' | 'css' | 'mbstyle' = 'sld'
+): Promise<StyleContent> {
+  const response = await fetch(`${API_BASE}/styles/${connId}/${workspace}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, content, format }),
+  })
+  return handleResponse<StyleContent>(response)
+}
+
 // Layer Group API
 export async function getLayerGroups(connId: string, workspace: string): Promise<LayerGroup[]> {
   const response = await fetch(`${API_BASE}/layergroups/${connId}/${workspace}`)

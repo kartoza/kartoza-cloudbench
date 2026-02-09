@@ -106,6 +106,28 @@ func (a *App) showCreateDialog(contextNode *models.TreeNode, nodeType models.Nod
 		)
 		return a.storeWizard.Init()
 
+	case models.NodeTypeStyle:
+		// Use style wizard for creating styles
+		if workspace == "" {
+			a.errorMsg = "Select a workspace first"
+			return nil
+		}
+		a.styleWizard = components.NewStyleWizard(workspace)
+		a.styleWizard.SetSize(a.width, a.height)
+		a.crudNode = contextNode
+		a.crudOperation = CRUDCreate
+		a.crudNodeType = nodeType
+
+		a.styleWizard.SetCallbacks(
+			func(result components.StyleWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeStyleCreate(workspace, result)
+				}
+			},
+			func() {},
+		)
+		return a.styleWizard.Init()
+
 	default:
 		a.errorMsg = "Cannot create this type of item"
 		return nil
@@ -151,6 +173,14 @@ func (a *App) showEditDialog(node *models.TreeNode) tea.Cmd {
 		a.crudNodeType = node.Type
 		a.loading = true
 		return a.loadLayerConfigAndShowWizard(node.Workspace, node.Name)
+
+	case models.NodeTypeStyle:
+		// For styles, fetch content and show style wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadStyleContentAndShowWizard(node.Workspace, node.Name)
 
 	default:
 		a.errorMsg = "Cannot edit this type of item"
@@ -530,6 +560,94 @@ func (a *App) executeCRUDDelete() tea.Cmd {
 			err = client.DeleteLayerGroup(workspace, nodeName)
 		}
 
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// styleContentLoadedMsg is sent when style content is loaded for editing
+type styleContentLoadedMsg struct {
+	name    string
+	content string
+	format  string
+	err     error
+}
+
+// loadStyleContentAndShowWizard loads style content and shows the edit wizard
+func (a *App) loadStyleContentAndShowWizard(workspace, styleName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return styleContentLoadedMsg{err: fmt.Errorf("no client for node")}
+		}
+
+		// First get style info to determine format
+		styles, err := client.GetStyles(workspace)
+		if err != nil {
+			return styleContentLoadedMsg{err: err}
+		}
+
+		format := "sld" // Default
+		for _, style := range styles {
+			if style.Name == styleName {
+				if style.Format != "" {
+					format = style.Format
+				}
+				break
+			}
+		}
+
+		// Get the content
+		content, err := client.GetStyleContent(workspace, styleName, format)
+		if err != nil {
+			return styleContentLoadedMsg{err: err}
+		}
+
+		return styleContentLoadedMsg{
+			name:    styleName,
+			content: content,
+			format:  format,
+			err:     nil,
+		}
+	}
+}
+
+// executeStyleCreate executes the style creation
+func (a *App) executeStyleCreate(workspace string, result components.StyleWizardResult) tea.Cmd {
+	name := strings.TrimSpace(result.Name)
+	if name == "" {
+		a.errorMsg = "Style name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation
+	a.newlyCreatedPath = workspace + "/Styles/" + name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Create style '%s'", name)
+		err := client.CreateStyle(workspace, name, result.Content, result.Format.String())
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeStyleEdit executes the style update
+func (a *App) executeStyleEdit(workspace, styleName string, result components.StyleWizardResult) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Update style '%s'", styleName)
+		err := client.UpdateStyleContent(workspace, styleName, result.Content, result.Format.String())
 		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
 	}
 }

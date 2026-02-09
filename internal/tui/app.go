@@ -201,6 +201,9 @@ type App struct {
 
 	// Settings wizard state
 	settingsWizard *components.SettingsWizard
+
+	// Style wizard state
+	styleWizard *components.StyleWizard
 }
 
 // NewApp creates a new TUI application
@@ -374,6 +377,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if wizard was closed
 			if !a.settingsWizard.IsVisible() {
 				a.settingsWizard = nil
+			}
+			return a, tea.Batch(cmds...)
+		}
+
+		// If we have a style wizard open, forward keys there first
+		if a.styleWizard != nil && a.styleWizard.IsVisible() {
+			var cmd tea.Cmd
+			a.styleWizard, cmd = a.styleWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed
+			if !a.styleWizard.IsVisible() {
+				a.styleWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
 			}
 			return a, tea.Batch(cmds...)
 		}
@@ -751,6 +773,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		return a, a.resourceWizard.Init()
 
+	case styleContentLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load style content: %v", msg.err)
+			return a, nil
+		}
+		// Show the style wizard with loaded content
+		var format components.StyleFormat
+		if msg.format == "css" {
+			format = components.StyleFormatCSS
+		} else {
+			format = components.StyleFormatSLD
+		}
+		workspace := ""
+		if a.crudNode != nil {
+			workspace = a.crudNode.Workspace
+		}
+		a.styleWizard = components.NewStyleWizardForEdit(workspace, msg.name, msg.content, format)
+		a.styleWizard.SetSize(a.width, a.height)
+		a.styleWizard.SetCallbacks(
+			func(result components.StyleWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeStyleEdit(workspace, msg.name, result)
+				}
+			},
+			func() {},
+		)
+		return a, a.styleWizard.Init()
+
 	case components.TreeNewMsg:
 		// Show create dialog based on node type
 		return a, a.showCreateDialog(msg.Node, msg.NodeType)
@@ -988,6 +1039,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case components.StyleWizardAnimationMsg:
+		// Forward to style wizard if we have one
+		if a.styleWizard != nil && a.styleWizard.IsVisible() {
+			var cmd tea.Cmd
+			a.styleWizard, cmd = a.styleWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed during animation
+			if !a.styleWizard.IsVisible() {
+				a.styleWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+		}
+
 	case settingsLoadedMsg:
 		a.loading = false
 		if msg.err != nil {
@@ -1132,6 +1202,12 @@ func (a *App) View() string {
 	if a.settingsWizard != nil && a.settingsWizard.IsVisible() {
 		a.settingsWizard.SetSize(a.width, a.height)
 		content = a.settingsWizard.View()
+	}
+
+	// Render style wizard overlay
+	if a.styleWizard != nil && a.styleWizard.IsVisible() {
+		a.styleWizard.SetSize(a.width, a.height)
+		content = a.styleWizard.View()
 	}
 
 	// Render progress dialog overlay (highest priority)

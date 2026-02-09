@@ -15,6 +15,27 @@ type StyleResponse struct {
 	Format    string `json:"format,omitempty"`
 }
 
+// StyleContentResponse represents style content for editing
+type StyleContentResponse struct {
+	Name      string `json:"name"`
+	Workspace string `json:"workspace"`
+	Format    string `json:"format"`
+	Content   string `json:"content"`
+}
+
+// StyleContentRequest represents a style content update request
+type StyleContentRequest struct {
+	Content string `json:"content"`
+	Format  string `json:"format"` // "sld" or "css"
+}
+
+// StyleCreateRequest represents a style creation request
+type StyleCreateRequest struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Format  string `json:"format"` // "sld" or "css"
+}
+
 // handleStyles handles style related requests
 // Pattern: /api/styles/{connId}/{workspace} or /api/styles/{connId}/{workspace}/{style}
 func (s *Server) handleStyles(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +57,8 @@ func (s *Server) handleStyles(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.listStyles(w, r, client, workspace)
+		case http.MethodPost:
+			s.createStyle(w, r, client, workspace)
 		case http.MethodOptions:
 			s.handleCORS(w)
 		default:
@@ -44,6 +67,10 @@ func (s *Server) handleStyles(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Operating on a specific style
 		switch r.Method {
+		case http.MethodGet:
+			s.getStyleContent(w, r, client, workspace, style)
+		case http.MethodPut:
+			s.updateStyleContent(w, r, client, workspace, style)
 		case http.MethodDelete:
 			s.deleteStyle(w, r, client, workspace, style)
 		case http.MethodOptions:
@@ -83,6 +110,107 @@ func (s *Server) deleteStyle(w http.ResponseWriter, r *http.Request, client *api
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// getStyleContent returns the content of a style (SLD or CSS)
+func (s *Server) getStyleContent(w http.ResponseWriter, r *http.Request, client *api.Client, workspace, styleName string) {
+	// First get style info to determine format
+	styles, err := client.GetStyles(workspace)
+	if err != nil {
+		s.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var format string
+	for _, style := range styles {
+		if style.Name == styleName {
+			format = style.Format
+			break
+		}
+	}
+	if format == "" {
+		format = "sld" // Default to SLD if not found
+	}
+
+	// Get the content based on format
+	content, err := client.GetStyleContent(workspace, styleName, format)
+	if err != nil {
+		s.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.jsonResponse(w, StyleContentResponse{
+		Name:      styleName,
+		Workspace: workspace,
+		Format:    format,
+		Content:   content,
+	})
+}
+
+// updateStyleContent updates the content of an existing style
+func (s *Server) updateStyleContent(w http.ResponseWriter, r *http.Request, client *api.Client, workspace, styleName string) {
+	var req StyleContentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Content == "" {
+		s.jsonError(w, "Style content is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Format == "" {
+		req.Format = "sld" // Default to SLD
+	}
+
+	if err := client.UpdateStyleContent(workspace, styleName, req.Content, req.Format); err != nil {
+		s.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.jsonResponse(w, StyleContentResponse{
+		Name:      styleName,
+		Workspace: workspace,
+		Format:    req.Format,
+		Content:   req.Content,
+	})
+}
+
+// createStyle creates a new style
+func (s *Server) createStyle(w http.ResponseWriter, r *http.Request, client *api.Client, workspace string) {
+	var req StyleCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		s.jsonError(w, "Style name is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Content == "" {
+		s.jsonError(w, "Style content is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Format == "" {
+		req.Format = "sld" // Default to SLD
+	}
+
+	if err := client.CreateStyle(workspace, req.Name, req.Content, req.Format); err != nil {
+		s.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	s.jsonResponse(w, StyleContentResponse{
+		Name:      req.Name,
+		Workspace: workspace,
+		Format:    req.Format,
+		Content:   req.Content,
+	})
 }
 
 // LayerGroupResponse represents a layer group in API responses

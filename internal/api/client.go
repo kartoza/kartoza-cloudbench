@@ -677,6 +677,164 @@ func (c *Client) CreateOrUpdateStyle(workspace, styleName, sldContent string) er
 	return nil
 }
 
+// GetStyleContent fetches the content of a style (SLD or CSS)
+func (c *Client) GetStyleContent(workspace, styleName, format string) (string, error) {
+	var path string
+	var extension string
+	var acceptHeader string
+
+	switch format {
+	case "css":
+		extension = ".css"
+		acceptHeader = "application/vnd.geoserver.geocss+css"
+	case "mbstyle":
+		extension = ".json"
+		acceptHeader = "application/vnd.geoserver.mbstyle+json"
+	default: // sld
+		extension = ".sld"
+		acceptHeader = "application/vnd.ogc.sld+xml"
+	}
+
+	if workspace == "" {
+		path = fmt.Sprintf("/styles/%s%s", styleName, extension)
+	} else {
+		path = fmt.Sprintf("/workspaces/%s/styles/%s%s", workspace, styleName, extension)
+	}
+
+	url := c.baseURL + "/rest" + path
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Accept", acceptHeader)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to get style content: %s", string(body))
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read style content: %w", err)
+	}
+
+	return string(content), nil
+}
+
+// UpdateStyleContent updates the content of an existing style
+func (c *Client) UpdateStyleContent(workspace, styleName, content, format string) error {
+	var path string
+	var contentType string
+
+	switch format {
+	case "css":
+		contentType = "application/vnd.geoserver.geocss+css"
+	case "mbstyle":
+		contentType = "application/vnd.geoserver.mbstyle+json"
+	default: // sld
+		contentType = "application/vnd.ogc.sld+xml"
+	}
+
+	if workspace == "" {
+		path = fmt.Sprintf("/styles/%s", styleName)
+	} else {
+		path = fmt.Sprintf("/workspaces/%s/styles/%s", workspace, styleName)
+	}
+
+	url := c.baseURL + "/rest" + path
+	req, err := http.NewRequest("PUT", url, strings.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to update style: %s", string(body))
+	}
+
+	return nil
+}
+
+// CreateStyle creates a new style with content
+func (c *Client) CreateStyle(workspace, styleName, content, format string) error {
+	var basePath string
+	var contentType string
+	var extension string
+
+	switch format {
+	case "css":
+		contentType = "application/vnd.geoserver.geocss+css"
+		extension = ".css"
+	case "mbstyle":
+		contentType = "application/vnd.geoserver.mbstyle+json"
+		extension = ".json"
+	default: // sld
+		contentType = "application/vnd.ogc.sld+xml"
+		extension = ".sld"
+	}
+
+	if workspace == "" {
+		basePath = "/styles"
+	} else {
+		basePath = fmt.Sprintf("/workspaces/%s/styles", workspace)
+	}
+
+	// First create the style definition
+	styleBody := map[string]interface{}{
+		"style": map[string]interface{}{
+			"name":     styleName,
+			"filename": styleName + extension,
+		},
+	}
+	resp, err := c.doJSONRequest("POST", basePath, styleBody)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to create style definition: status %d", resp.StatusCode)
+	}
+
+	// Now upload the style content
+	uploadPath := basePath + "/" + styleName
+	url := c.baseURL + "/rest" + uploadPath
+	req, err := http.NewRequest("PUT", url, strings.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", contentType)
+
+	uploadResp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer uploadResp.Body.Close()
+
+	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated && uploadResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(uploadResp.Body)
+		return fmt.Errorf("failed to upload style content: %s", string(body))
+	}
+
+	return nil
+}
+
 // GetLayerGroups fetches all layer groups (global or workspace-specific)
 func (c *Client) GetLayerGroups(workspace string) ([]models.LayerGroup, error) {
 	var path string

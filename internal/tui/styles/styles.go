@@ -214,6 +214,72 @@ var (
 	CountBadgeStyle = lipgloss.NewStyle().
 		Foreground(Muted).
 		Italic(true)
+
+	// Dialog box style with background overlay effect
+	DialogBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(Primary).
+		Background(Surface).
+		Padding(1, 2)
+
+	// Dialog label style
+	DialogLabelStyle = lipgloss.NewStyle().
+		Foreground(Text).
+		Bold(true)
+
+	// Dialog selected label style
+	DialogSelectedLabelStyle = lipgloss.NewStyle().
+		Foreground(Selected).
+		Bold(true)
+
+	// Dialog option style
+	DialogOptionStyle = lipgloss.NewStyle().
+		Foreground(Text)
+
+	// Dialog selected option style
+	DialogSelectedOptionStyle = lipgloss.NewStyle().
+		Foreground(TextBright).
+		Background(SurfaceHigh).
+		Bold(true)
+
+	// Dialog description style
+	DialogDescStyle = lipgloss.NewStyle().
+		Foreground(Muted).
+		Italic(true)
+
+	// Dialog help style
+	DialogHelpStyle = lipgloss.NewStyle().
+		Foreground(Muted).
+		Align(lipgloss.Center)
+
+	// Accent text style
+	AccentStyle = lipgloss.NewStyle().
+		Foreground(Accent).
+		Bold(true)
+
+	// Input field styles for forms
+	InputSelectedStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Selected).
+		Padding(0, 1)
+
+	InputFocusedStyle = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(Primary).
+		Padding(0, 1)
+
+	// Textarea styles
+	TextAreaStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Border)
+
+	TextAreaSelectedStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Selected)
+
+	TextAreaFocusedStyle = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(Primary)
 )
 
 // Helper functions for building complex layouts

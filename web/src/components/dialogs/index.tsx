@@ -8,6 +8,7 @@ import LayerDialog from './LayerDialog'
 import StoreDialog from './StoreDialog'
 import { SettingsDialog } from './SettingsDialog'
 import { SyncDialog } from './SyncDialog'
+import { StyleDialog } from './StyleDialog'
 
 export default function Dialogs() {
   return (
@@ -21,8 +22,9 @@ export default function Dialogs() {
       <LayerDialog />
       <StoreDialog />
       <SyncDialog />
+      <StyleDialog />
     </>
   )
 }
 
-export { SettingsDialog, SyncDialog }
+export { SettingsDialog, SyncDialog, StyleDialog }
