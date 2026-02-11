@@ -322,12 +322,19 @@ type LayerGroup struct {
 	Workspace string `json:"-"`
 }
 
+// LayerStyleAssignment represents a layer with its assigned style for layer groups
+type LayerStyleAssignment struct {
+	LayerName string `json:"layerName"` // Layer name (workspace:layer format)
+	StyleName string `json:"styleName"` // Style name (empty for default)
+}
+
 // LayerGroupCreate represents the data needed to create a layer group
 type LayerGroupCreate struct {
-	Name   string   `json:"name"`
-	Title  string   `json:"title,omitempty"`
-	Mode   string   `json:"mode,omitempty"` // SINGLE, NAMED, CONTAINER, EO
-	Layers []string `json:"layers"`         // List of layer names (workspace:layername format)
+	Name        string                 `json:"name"`
+	Title       string                 `json:"title,omitempty"`
+	Mode        string                 `json:"mode,omitempty"` // SINGLE, NAMED, CONTAINER, EO
+	Layers      []string               `json:"layers"`         // List of layer names (workspace:layername format)
+	LayerStyles []LayerStyleAssignment `json:"-"`              // Layer style assignments (used internally)
 }
 
 // LayerGroupDetails contains detailed information about a layer group
@@ -361,10 +368,11 @@ type Bounds struct {
 
 // LayerGroupUpdate represents the data for updating a layer group
 type LayerGroupUpdate struct {
-	Title   string   `json:"title,omitempty"`
-	Mode    string   `json:"mode,omitempty"`
-	Layers  []string `json:"layers,omitempty"`
-	Enabled bool     `json:"enabled"`
+	Title       string                 `json:"title,omitempty"`
+	Mode        string                 `json:"mode,omitempty"`
+	Layers      []string               `json:"layers,omitempty"`
+	LayerStyles []LayerStyleAssignment `json:"-"` // Layer style assignments (used internally)
+	Enabled     bool                   `json:"enabled"`
 }
 
 // FeatureType represents a GeoServer feature type

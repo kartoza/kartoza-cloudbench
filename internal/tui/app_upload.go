@@ -425,25 +425,83 @@ func (a *App) fetchLayerStylesForPreview(node *models.TreeNode) tea.Cmd {
 	return func() tea.Msg {
 		var metadataMsg components.MapPreviewMetadataMsg
 
-		// Try to get layer styles
-		layerStyles, err := client.GetLayerStyles(node.Workspace, node.Name)
-		if err == nil {
-			styles := []string{}
-			if layerStyles.DefaultStyle != "" {
-				styles = append(styles, layerStyles.DefaultStyle)
-			}
-			styles = append(styles, layerStyles.AdditionalStyles...)
-			metadataMsg.Styles = styles
-		}
+		// Check if this is a layer group
+		if node.Type == models.NodeTypeLayerGroup {
+			// Fetch layer group details
+			groupDetails, err := client.GetLayerGroup(node.Workspace, node.Name)
+			if err == nil {
+				metadataMsg.IsLayerGroup = true
+				metadataMsg.LayerGroupMode = groupDetails.Mode
 
-		// Try to get layer metadata for bounds
-		metadata, err := client.GetLayerMetadata(node.Workspace, node.Name)
-		if err == nil && metadata.LatLonBoundingBox != nil {
-			metadataMsg.Bounds = &[4]float64{
-				metadata.LatLonBoundingBox.MinX,
-				metadata.LatLonBoundingBox.MinY,
-				metadata.LatLonBoundingBox.MaxX,
-				metadata.LatLonBoundingBox.MaxY,
+				// Extract layer info from the group, including styles
+				layerInfos := []components.LayerGroupLayerInfo{}
+				for _, item := range groupDetails.Layers {
+					if item.Type == "layer" {
+						info := components.LayerGroupLayerInfo{
+							Name:         item.Name,
+							DefaultStyle: item.StyleName,
+						}
+
+						// Try to get available styles for this layer
+						// Extract workspace and layer name from the full name (workspace:layername)
+						layerName := item.Name
+						layerWorkspace := node.Workspace
+						if idx := strings.Index(item.Name, ":"); idx > 0 {
+							layerWorkspace = item.Name[:idx]
+							layerName = item.Name[idx+1:]
+						}
+
+						layerStyles, err := client.GetLayerStyles(layerWorkspace, layerName)
+						if err == nil {
+							availStyles := []string{}
+							if layerStyles.DefaultStyle != "" {
+								availStyles = append(availStyles, layerStyles.DefaultStyle)
+							}
+							availStyles = append(availStyles, layerStyles.AdditionalStyles...)
+							info.AvailableStyles = availStyles
+
+							// If no default style was set in the group, use the layer's default
+							if info.DefaultStyle == "" && layerStyles.DefaultStyle != "" {
+								info.DefaultStyle = layerStyles.DefaultStyle
+							}
+						}
+
+						layerInfos = append(layerInfos, info)
+					}
+				}
+				metadataMsg.GroupLayers = layerInfos
+
+				// Get bounds from layer group
+				if groupDetails.Bounds != nil {
+					metadataMsg.Bounds = &[4]float64{
+						groupDetails.Bounds.MinX,
+						groupDetails.Bounds.MinY,
+						groupDetails.Bounds.MaxX,
+						groupDetails.Bounds.MaxY,
+					}
+				}
+			}
+		} else {
+			// Try to get layer styles
+			layerStyles, err := client.GetLayerStyles(node.Workspace, node.Name)
+			if err == nil {
+				styles := []string{}
+				if layerStyles.DefaultStyle != "" {
+					styles = append(styles, layerStyles.DefaultStyle)
+				}
+				styles = append(styles, layerStyles.AdditionalStyles...)
+				metadataMsg.Styles = styles
+			}
+
+			// Try to get layer metadata for bounds
+			metadata, err := client.GetLayerMetadata(node.Workspace, node.Name)
+			if err == nil && metadata.LatLonBoundingBox != nil {
+				metadataMsg.Bounds = &[4]float64{
+					metadata.LatLonBoundingBox.MinX,
+					metadata.LatLonBoundingBox.MinY,
+					metadata.LatLonBoundingBox.MaxX,
+					metadata.LatLonBoundingBox.MaxY,
+				}
 			}
 		}
 

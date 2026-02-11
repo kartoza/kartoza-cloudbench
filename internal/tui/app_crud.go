@@ -202,6 +202,10 @@ func (a *App) showEditDialog(node *models.TreeNode) tea.Cmd {
 
 	case models.NodeTypeLayerGroup:
 		// For layer groups, fetch details and show layer group wizard
+		if node.Workspace == "" {
+			a.errorMsg = "Layer group has no workspace set"
+			return nil
+		}
 		a.crudOperation = CRUDEdit
 		a.crudNode = node
 		a.crudNodeType = node.Type
@@ -683,15 +687,17 @@ func (a *App) executeStyleEdit(workspace, styleName string, result components.St
 
 // layerGroupDetailsLoadedMsg is sent when layer group details are loaded for editing
 type layerGroupDetailsLoadedMsg struct {
-	details *models.LayerGroupDetails
-	layers  []models.Layer // Available layers in workspace
-	err     error
+	details     *models.LayerGroupDetails
+	layers      []models.Layer          // Available layers in workspace
+	layerStyles map[string][]string     // layer name -> available styles
+	err         error
 }
 
 // layersForLayerGroupLoadedMsg is sent when layers are loaded for the layer group wizard
 type layersForLayerGroupLoadedMsg struct {
-	layers []models.Layer
-	err    error
+	layers      []models.Layer
+	layerStyles map[string][]string // layer name -> available styles
+	err         error
 }
 
 // loadLayersForLayerGroupWizard loads available layers for the layer group wizard
@@ -702,7 +708,26 @@ func (a *App) loadLayersForLayerGroupWizard(contextNode *models.TreeNode, worksp
 			return layersForLayerGroupLoadedMsg{err: fmt.Errorf("no client for node")}
 		}
 		layers, err := client.GetLayers(workspace)
-		return layersForLayerGroupLoadedMsg{layers: layers, err: err}
+		if err != nil {
+			return layersForLayerGroupLoadedMsg{err: err}
+		}
+
+		// Fetch styles for each layer
+		layerStyles := make(map[string][]string)
+		for _, layer := range layers {
+			layerKey := workspace + ":" + layer.Name
+			styles, err := client.GetLayerStyles(workspace, layer.Name)
+			if err == nil {
+				allStyles := []string{}
+				if styles.DefaultStyle != "" {
+					allStyles = append(allStyles, styles.DefaultStyle)
+				}
+				allStyles = append(allStyles, styles.AdditionalStyles...)
+				layerStyles[layerKey] = allStyles
+			}
+		}
+
+		return layersForLayerGroupLoadedMsg{layers: layers, layerStyles: layerStyles, err: nil}
 	}
 }
 
@@ -726,10 +751,26 @@ func (a *App) loadLayerGroupDetailsAndShowWizard(workspace, groupName string) te
 			return layerGroupDetailsLoadedMsg{details: details, err: err}
 		}
 
+		// Fetch styles for each layer
+		layerStyles := make(map[string][]string)
+		for _, layer := range layers {
+			layerKey := workspace + ":" + layer.Name
+			styles, err := client.GetLayerStyles(workspace, layer.Name)
+			if err == nil {
+				allStyles := []string{}
+				if styles.DefaultStyle != "" {
+					allStyles = append(allStyles, styles.DefaultStyle)
+				}
+				allStyles = append(allStyles, styles.AdditionalStyles...)
+				layerStyles[layerKey] = allStyles
+			}
+		}
+
 		return layerGroupDetailsLoadedMsg{
-			details: details,
-			layers:  layers,
-			err:     nil,
+			details:     details,
+			layers:      layers,
+			layerStyles: layerStyles,
+			err:         nil,
 		}
 	}
 }
@@ -756,11 +797,21 @@ func (a *App) executeLayerGroupCreate(workspace string, result components.LayerG
 	// Set path to navigate to after creation
 	a.newlyCreatedPath = workspace + "/Layer Groups/" + name
 
+	// Convert layer style assignments to models format
+	layerStyles := make([]models.LayerStyleAssignment, len(result.LayerStyles))
+	for i, ls := range result.LayerStyles {
+		layerStyles[i] = models.LayerStyleAssignment{
+			LayerName: ls.LayerName,
+			StyleName: ls.StyleName,
+		}
+	}
+
 	config := models.LayerGroupCreate{
-		Name:   name,
-		Title:  result.Title,
-		Mode:   result.Mode,
-		Layers: result.Layers,
+		Name:        name,
+		Title:       result.Title,
+		Mode:        result.Mode,
+		Layers:      result.Layers,
+		LayerStyles: layerStyles,
 	}
 
 	a.loading = true
@@ -784,11 +835,21 @@ func (a *App) executeLayerGroupEdit(workspace, groupName string, result componen
 		return nil
 	}
 
+	// Convert layer style assignments to models format
+	layerStyles := make([]models.LayerStyleAssignment, len(result.LayerStyles))
+	for i, ls := range result.LayerStyles {
+		layerStyles[i] = models.LayerStyleAssignment{
+			LayerName: ls.LayerName,
+			StyleName: ls.StyleName,
+		}
+	}
+
 	update := models.LayerGroupUpdate{
-		Title:   result.Title,
-		Mode:    result.Mode,
-		Layers:  result.Layers,
-		Enabled: true,
+		Title:       result.Title,
+		Mode:        result.Mode,
+		Layers:      result.Layers,
+		LayerStyles: layerStyles,
+		Enabled:     true,
 	}
 
 	a.loading = true

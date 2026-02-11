@@ -882,9 +882,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.errorMsg = fmt.Sprintf("Failed to load layers: %v", msg.err)
 			return a, nil
 		}
-		// Set the available layers in the wizard
+		// Set the available layers and their styles in the wizard
 		if a.layerGroupWizard != nil {
 			a.layerGroupWizard.SetAvailableLayers(msg.layers)
+			// Set available styles for each layer
+			for layerKey, styles := range msg.layerStyles {
+				a.layerGroupWizard.SetLayerStyles(layerKey, styles)
+			}
 			workspace := ""
 			if a.crudNode != nil {
 				workspace = a.crudNode.Workspace
@@ -913,6 +917,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.layerGroupWizard = components.NewLayerGroupWizardForEdit(workspace, msg.details)
 		a.layerGroupWizard.SetAvailableLayers(msg.layers)
+		// Set available styles for each layer
+		for layerKey, styles := range msg.layerStyles {
+			a.layerGroupWizard.SetLayerStyles(layerKey, styles)
+		}
 		a.layerGroupWizard.SetSize(a.width, a.height)
 		a.layerGroupWizard.SetCallbacks(
 			func(result components.LayerGroupWizardResult) {
@@ -1280,6 +1288,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case components.MapPreviewMetadataMsg:
 		// Forward metadata to map preview - this triggers the initial map fetch
+		if a.mapPreview != nil {
+			var cmd tea.Cmd
+			a.mapPreview, cmd = a.mapPreview.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case components.LegendMsg:
+		// Forward legend response to map preview
+		if a.mapPreview != nil {
+			var cmd tea.Cmd
+			a.mapPreview, cmd = a.mapPreview.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case components.FeatureInfoMsg:
+		// Forward feature info response to map preview
 		if a.mapPreview != nil {
 			var cmd tea.Cmd
 			a.mapPreview, cmd = a.mapPreview.Update(msg)

@@ -70,13 +70,21 @@ const (
 	LayerGroupStepReview
 )
 
+// LayerStyleAssignment represents a layer with its assigned style
+type LayerStyleAssignment struct {
+	LayerName       string   // Layer name (workspace:layer format)
+	StyleName       string   // Selected style name (empty for default)
+	AvailableStyles []string // Available styles for this layer
+}
+
 // LayerGroupWizardResult represents the wizard result
 type LayerGroupWizardResult struct {
-	Confirmed bool
-	Name      string
-	Title     string
-	Mode      string
-	Layers    []string // Selected layer names in workspace:layer format
+	Confirmed    bool
+	Name         string
+	Title        string
+	Mode         string
+	Layers       []string                // Selected layer names in workspace:layer format
+	LayerStyles  []LayerStyleAssignment  // Layer style assignments
 }
 
 // LayerGroupWizardAnimationMsg is sent to update animation state
@@ -106,9 +114,11 @@ type LayerGroupWizard struct {
 
 	// Available layers
 	availableLayers []models.Layer
-	selectedLayers  map[string]bool // layer name -> selected
+	selectedLayers  map[string]bool              // layer name -> selected
+	layerStyles     map[string]*LayerStyleAssignment // layer name -> style assignment
 	layerListOffset int
 	layerCursor     int
+	editingStyle    bool  // Whether we're in style selection mode for current layer
 
 	// Input fields
 	nameInput   textinput.Model
@@ -148,6 +158,7 @@ func NewLayerGroupWizard(workspace string) *LayerGroupWizard {
 		selectedModeIdx: 0,
 		groupMode:      LayerGroupModeSingle,
 		selectedLayers: make(map[string]bool),
+		layerStyles:    make(map[string]*LayerStyleAssignment),
 		nameInput:      nameInput,
 		titleInput:     titleInput,
 		spring:         harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5),
@@ -186,9 +197,13 @@ func NewLayerGroupWizardForEdit(workspace string, details *models.LayerGroupDeta
 		w.selectedModeIdx = 3
 	}
 
-	// Mark existing layers as selected
+	// Mark existing layers as selected and store their styles
 	for _, item := range details.Layers {
 		w.selectedLayers[item.Name] = true
+		w.layerStyles[item.Name] = &LayerStyleAssignment{
+			LayerName: item.Name,
+			StyleName: item.StyleName,
+		}
 	}
 
 	return w
@@ -197,6 +212,18 @@ func NewLayerGroupWizardForEdit(workspace string, details *models.LayerGroupDeta
 // SetAvailableLayers sets the layers available for selection
 func (w *LayerGroupWizard) SetAvailableLayers(layers []models.Layer) {
 	w.availableLayers = layers
+}
+
+// SetLayerStyles sets the available styles for a specific layer
+func (w *LayerGroupWizard) SetLayerStyles(layerName string, styles []string) {
+	if assignment, ok := w.layerStyles[layerName]; ok {
+		assignment.AvailableStyles = styles
+	} else {
+		w.layerStyles[layerName] = &LayerStyleAssignment{
+			LayerName:       layerName,
+			AvailableStyles: styles,
+		}
+	}
 }
 
 // SetSize sets the wizard size
@@ -430,6 +457,12 @@ func (w *LayerGroupWizard) updateLayerSelection(msg tea.KeyMsg) (*LayerGroupWiza
 				w.layerListOffset = w.layerCursor - maxVisible + 1
 			}
 		}
+	case "left", "h":
+		// Cycle style backwards for currently selected layer
+		w.cycleLayerStyle(-1)
+	case "right", "l":
+		// Cycle style forwards for currently selected layer
+		w.cycleLayerStyle(1)
 	case " ", "space":
 		// Toggle selection
 		if w.layerCursor < len(w.availableLayers) {
@@ -439,6 +472,13 @@ func (w *LayerGroupWizard) updateLayerSelection(msg tea.KeyMsg) (*LayerGroupWiza
 				delete(w.selectedLayers, layerKey)
 			} else {
 				w.selectedLayers[layerKey] = true
+				// Initialize style assignment if not exists
+				if _, ok := w.layerStyles[layerKey]; !ok {
+					w.layerStyles[layerKey] = &LayerStyleAssignment{
+						LayerName: layerKey,
+						StyleName: "", // Use default
+					}
+				}
 			}
 		}
 	case "a":
@@ -446,6 +486,13 @@ func (w *LayerGroupWizard) updateLayerSelection(msg tea.KeyMsg) (*LayerGroupWiza
 		for _, layer := range w.availableLayers {
 			layerKey := w.workspace + ":" + layer.Name
 			w.selectedLayers[layerKey] = true
+			// Initialize style assignment if not exists
+			if _, ok := w.layerStyles[layerKey]; !ok {
+				w.layerStyles[layerKey] = &LayerStyleAssignment{
+					LayerName: layerKey,
+					StyleName: "", // Use default
+				}
+			}
 		}
 	case "n":
 		// Select none
@@ -459,6 +506,53 @@ func (w *LayerGroupWizard) updateLayerSelection(msg tea.KeyMsg) (*LayerGroupWiza
 	}
 
 	return w, nil
+}
+
+// cycleLayerStyle cycles through available styles for the current layer
+func (w *LayerGroupWizard) cycleLayerStyle(direction int) {
+	if w.layerCursor >= len(w.availableLayers) {
+		return
+	}
+
+	layer := w.availableLayers[w.layerCursor]
+	layerKey := w.workspace + ":" + layer.Name
+
+	// Only allow style cycling for selected layers
+	if !w.selectedLayers[layerKey] {
+		return
+	}
+
+	assignment, ok := w.layerStyles[layerKey]
+	if !ok || len(assignment.AvailableStyles) == 0 {
+		return
+	}
+
+	styles := assignment.AvailableStyles
+	currentIdx := -1 // -1 means "default" (empty string)
+
+	// Find current style index
+	if assignment.StyleName != "" {
+		for i, s := range styles {
+			if s == assignment.StyleName {
+				currentIdx = i
+				break
+			}
+		}
+	}
+
+	// Cycle to next/prev style
+	newIdx := currentIdx + direction
+	if newIdx < -1 {
+		newIdx = len(styles) - 1 // Wrap to last
+	} else if newIdx >= len(styles) {
+		newIdx = -1 // Wrap to default
+	}
+
+	if newIdx == -1 {
+		assignment.StyleName = "" // Default
+	} else {
+		assignment.StyleName = styles[newIdx]
+	}
 }
 
 // updateReview handles key presses in review step
@@ -493,16 +587,28 @@ func (w *LayerGroupWizard) validate() bool {
 // buildResult creates the result from the current state
 func (w *LayerGroupWizard) buildResult() LayerGroupWizardResult {
 	layers := make([]string, 0, len(w.selectedLayers))
+	layerStyles := make([]LayerStyleAssignment, 0, len(w.selectedLayers))
+
 	for layerName := range w.selectedLayers {
 		layers = append(layers, layerName)
+		// Include style assignment if available
+		if assignment, ok := w.layerStyles[layerName]; ok {
+			layerStyles = append(layerStyles, *assignment)
+		} else {
+			layerStyles = append(layerStyles, LayerStyleAssignment{
+				LayerName: layerName,
+				StyleName: "", // Use default
+			})
+		}
 	}
 
 	return LayerGroupWizardResult{
-		Confirmed: true,
-		Name:      strings.TrimSpace(w.nameInput.Value()),
-		Title:     strings.TrimSpace(w.titleInput.Value()),
-		Mode:      w.groupMode.String(),
-		Layers:    layers,
+		Confirmed:   true,
+		Name:        strings.TrimSpace(w.nameInput.Value()),
+		Title:       strings.TrimSpace(w.titleInput.Value()),
+		Mode:        w.groupMode.String(),
+		Layers:      layers,
+		LayerStyles: layerStyles,
 	}
 }
 
@@ -731,7 +837,26 @@ func (w *LayerGroupWizard) renderLayerSelection(width, height int) string {
 			checkbox = "[" + styles.SuccessStyle.Render("\u2713") + "]"
 		}
 
-		sb.WriteString(style.Render(cursor + checkbox + " " + layer.Name))
+		// Build layer line with style info
+		layerLine := cursor + checkbox + " " + layer.Name
+
+		// Show style selection if layer is selected and has styles
+		if w.selectedLayers[layerKey] {
+			if assignment, ok := w.layerStyles[layerKey]; ok && len(assignment.AvailableStyles) > 0 {
+				styleName := assignment.StyleName
+				if styleName == "" {
+					styleName = "(default)"
+				}
+				// Show style with arrows indicating cycling is available
+				styleNameStyle := lipgloss.NewStyle().Foreground(styles.KartozaBlueLight)
+				styleIndicator := styles.AccentStyle.Render(" \u25c0 ") +
+					styleNameStyle.Render(styleName) +
+					styles.AccentStyle.Render(" \u25b6")
+				layerLine += styleIndicator
+			}
+		}
+
+		sb.WriteString(style.Render(layerLine))
 		sb.WriteString("\n")
 	}
 
@@ -769,17 +894,26 @@ func (w *LayerGroupWizard) renderReview(width int) string {
 	sb.WriteString(styles.AccentStyle.Render(w.groupMode.String()))
 	sb.WriteString("\n\n")
 
-	// Layers
+	// Layers with styles
 	sb.WriteString(styles.MutedStyle.Render("Layers (" + string(rune('0'+len(w.selectedLayers))) + "):"))
 	sb.WriteString("\n")
 
 	for layerName := range w.selectedLayers {
 		sb.WriteString("  " + styles.SuccessStyle.Render("\u2713") + " " + layerName)
+		// Show assigned style if not default
+		if assignment, ok := w.layerStyles[layerName]; ok && assignment.StyleName != "" {
+			sb.WriteString(styles.MutedStyle.Render(" \u2192 "))
+			sb.WriteString(styles.AccentStyle.Render(assignment.StyleName))
+		}
 		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(styles.DialogSelectedOptionStyle.Render("[ Press Enter to Create Layer Group ]"))
+	actionText := "Create"
+	if w.mode == LayerGroupWizardModeEdit {
+		actionText = "Update"
+	}
+	sb.WriteString(styles.DialogSelectedOptionStyle.Render("[ Press Enter to " + actionText + " Layer Group ]"))
 
 	return sb.String()
 }
@@ -797,7 +931,7 @@ func (w *LayerGroupWizard) renderFooter() string {
 	case LayerGroupStepSelectMode:
 		help = "\u2191/\u2193: select  enter: confirm  esc: back"
 	case LayerGroupStepSelectLayers:
-		help = "\u2191/\u2193: navigate  space: toggle  a: all  n: none  enter: continue  esc: back"
+		help = "\u2191/\u2193: navigate  space: toggle  \u25c0/\u25b6: style  a: all  n: none  enter: continue  esc: back"
 	case LayerGroupStepReview:
 		help = "enter: create  esc: back"
 	}

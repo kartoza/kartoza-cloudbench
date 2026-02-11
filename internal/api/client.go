@@ -864,6 +864,14 @@ func (c *Client) GetLayerGroups(workspace string) ([]models.LayerGroup, error) {
 func (c *Client) CreateLayerGroup(workspace string, config models.LayerGroupCreate) error {
 	path := fmt.Sprintf("/workspaces/%s/layergroups", workspace)
 
+	// Build a map of layer styles for quick lookup
+	layerStyleMap := make(map[string]string)
+	for _, ls := range config.LayerStyles {
+		if ls.StyleName != "" {
+			layerStyleMap[ls.LayerName] = ls.StyleName
+		}
+	}
+
 	// Build the publishables array with layer references
 	publishables := make([]map[string]interface{}, len(config.Layers))
 	styles := make([]map[string]interface{}, len(config.Layers))
@@ -874,8 +882,14 @@ func (c *Client) CreateLayerGroup(workspace string, config models.LayerGroupCrea
 			"@type": "layer",
 			"name":  layerName,
 		}
-		// Use empty style (default) for each layer
-		styles[i] = map[string]interface{}{}
+		// Use assigned style if available, otherwise empty (default)
+		if styleName, ok := layerStyleMap[layerName]; ok && styleName != "" {
+			styles[i] = map[string]interface{}{
+				"name": styleName,
+			}
+		} else {
+			styles[i] = map[string]interface{}{}
+		}
 	}
 
 	mode := config.Mode
@@ -1637,15 +1651,10 @@ func (c *Client) GetLayerGroup(workspace, name string) (*models.LayerGroupDetail
 				Name string `json:"name"`
 			} `json:"workspace"`
 			Publishables struct {
-				Published []struct {
-					Type string `json:"@type"`
-					Name string `json:"name"`
-				} `json:"published"`
+				Published json.RawMessage `json:"published"`
 			} `json:"publishables"`
 			Styles struct {
-				Style []struct {
-					Name string `json:"name"`
-				} `json:"style"`
+				Style json.RawMessage `json:"style"`
 			} `json:"styles"`
 			Bounds struct {
 				MinX float64 `json:"minx"`
@@ -1657,7 +1666,12 @@ func (c *Client) GetLayerGroup(workspace, name string) (*models.LayerGroupDetail
 		} `json:"layerGroup"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode layer group: %w", err)
 	}
 
@@ -1671,15 +1685,65 @@ func (c *Client) GetLayerGroup(workspace, name string) (*models.LayerGroupDetail
 		Advertised: true,
 	}
 
-	// Parse layers
-	for i, pub := range result.LayerGroup.Publishables.Published {
+	// Parse publishables - can be single object or array
+	type publishedItem struct {
+		Type string `json:"@type"`
+		Name string `json:"name"`
+	}
+	var publishedItems []publishedItem
+	if len(result.LayerGroup.Publishables.Published) > 0 {
+		// Try array first
+		if err := json.Unmarshal(result.LayerGroup.Publishables.Published, &publishedItems); err != nil {
+			// Try single object
+			var single publishedItem
+			if err := json.Unmarshal(result.LayerGroup.Publishables.Published, &single); err == nil {
+				publishedItems = []publishedItem{single}
+			}
+		}
+	}
+
+	// Parse styles - can be single string, single object, array of strings, or array of objects
+	type styleItem struct {
+		Name string `json:"name"`
+	}
+	var styleNames []string
+	if len(result.LayerGroup.Styles.Style) > 0 {
+		// Try array of objects first
+		var styleObjects []styleItem
+		if err := json.Unmarshal(result.LayerGroup.Styles.Style, &styleObjects); err == nil {
+			for _, s := range styleObjects {
+				styleNames = append(styleNames, s.Name)
+			}
+		} else {
+			// Try array of strings
+			var styleStrings []string
+			if err := json.Unmarshal(result.LayerGroup.Styles.Style, &styleStrings); err == nil {
+				styleNames = styleStrings
+			} else {
+				// Try single object
+				var singleObj styleItem
+				if err := json.Unmarshal(result.LayerGroup.Styles.Style, &singleObj); err == nil {
+					styleNames = []string{singleObj.Name}
+				} else {
+					// Try single string
+					var singleStr string
+					if err := json.Unmarshal(result.LayerGroup.Styles.Style, &singleStr); err == nil {
+						styleNames = []string{singleStr}
+					}
+				}
+			}
+		}
+	}
+
+	// Build layers list
+	for i, pub := range publishedItems {
 		item := models.LayerGroupItem{
 			Type: pub.Type,
 			Name: pub.Name,
 		}
 		// Match with style if available
-		if i < len(result.LayerGroup.Styles.Style) {
-			item.StyleName = result.LayerGroup.Styles.Style[i].Name
+		if i < len(styleNames) {
+			item.StyleName = styleNames[i]
 		}
 		details.Layers = append(details.Layers, item)
 	}
@@ -1707,6 +1771,14 @@ func (c *Client) UpdateLayerGroup(workspace, name string, update models.LayerGro
 		path = fmt.Sprintf("/workspaces/%s/layergroups/%s", workspace, name)
 	}
 
+	// Build a map of layer styles for quick lookup
+	layerStyleMap := make(map[string]string)
+	for _, ls := range update.LayerStyles {
+		if ls.StyleName != "" {
+			layerStyleMap[ls.LayerName] = ls.StyleName
+		}
+	}
+
 	// Build the publishables array with layer references
 	publishables := make([]map[string]interface{}, len(update.Layers))
 	styles := make([]map[string]interface{}, len(update.Layers))
@@ -1716,8 +1788,14 @@ func (c *Client) UpdateLayerGroup(workspace, name string, update models.LayerGro
 			"@type": "layer",
 			"name":  layerName,
 		}
-		// Use empty style (default) for each layer
-		styles[i] = map[string]interface{}{}
+		// Use assigned style if available, otherwise empty (default)
+		if styleName, ok := layerStyleMap[layerName]; ok && styleName != "" {
+			styles[i] = map[string]interface{}{
+				"name": styleName,
+			}
+		} else {
+			styles[i] = map[string]interface{}{}
+		}
 	}
 
 	body := map[string]interface{}{
