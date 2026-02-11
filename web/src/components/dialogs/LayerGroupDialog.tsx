@@ -100,18 +100,35 @@ export default function LayerGroupDialog() {
       // Format layer names as workspace:layer
       const formattedLayers = selectedLayers.map((layer) => `${workspace}:${layer}`)
 
-      await api.createLayerGroup(connectionId, workspace, {
-        name: name.trim(),
-        title: title.trim() || undefined,
-        mode,
-        layers: formattedLayers,
-      })
+      if (isEditMode) {
+        // Update existing layer group
+        await api.updateLayerGroup(connectionId, workspace, name, {
+          title: title.trim() || undefined,
+          mode,
+          layers: formattedLayers,
+          enabled: true,
+        })
 
-      toast({
-        title: `Layer group "${name}" created successfully`,
-        status: 'success',
-        duration: 3000,
-      })
+        toast({
+          title: `Layer group "${name}" updated successfully`,
+          status: 'success',
+          duration: 3000,
+        })
+      } else {
+        // Create new layer group
+        await api.createLayerGroup(connectionId, workspace, {
+          name: name.trim(),
+          title: title.trim() || undefined,
+          mode,
+          layers: formattedLayers,
+        })
+
+        toast({
+          title: `Layer group "${name}" created successfully`,
+          status: 'success',
+          duration: 3000,
+        })
+      }
 
       // Invalidate layer groups query to refresh the list
       queryClient.invalidateQueries({ queryKey: ['layergroups', connectionId, workspace] })
@@ -119,7 +136,7 @@ export default function LayerGroupDialog() {
       closeDialog()
     } catch (err) {
       toast({
-        title: 'Failed to create layer group',
+        title: isEditMode ? 'Failed to update layer group' : 'Failed to create layer group',
         description: err instanceof Error ? err.message : 'Unknown error',
         status: 'error',
         duration: 5000,

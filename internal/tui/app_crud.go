@@ -128,6 +128,24 @@ func (a *App) showCreateDialog(contextNode *models.TreeNode, nodeType models.Nod
 		)
 		return a.styleWizard.Init()
 
+	case models.NodeTypeLayerGroup:
+		// Use layer group wizard for creating layer groups
+		if workspace == "" {
+			a.errorMsg = "Select a workspace first"
+			return nil
+		}
+		a.layerGroupWizard = components.NewLayerGroupWizard(workspace)
+		a.layerGroupWizard.SetSize(a.width, a.height)
+		a.crudNode = contextNode
+		a.crudOperation = CRUDCreate
+		a.crudNodeType = nodeType
+
+		// Load available layers for selection
+		return tea.Batch(
+			a.layerGroupWizard.Init(),
+			a.loadLayersForLayerGroupWizard(contextNode, workspace),
+		)
+
 	default:
 		a.errorMsg = "Cannot create this type of item"
 		return nil
@@ -181,6 +199,14 @@ func (a *App) showEditDialog(node *models.TreeNode) tea.Cmd {
 		a.crudNodeType = node.Type
 		a.loading = true
 		return a.loadStyleContentAndShowWizard(node.Workspace, node.Name)
+
+	case models.NodeTypeLayerGroup:
+		// For layer groups, fetch details and show layer group wizard
+		a.crudOperation = CRUDEdit
+		a.crudNode = node
+		a.crudNodeType = node.Type
+		a.loading = true
+		return a.loadLayerGroupDetailsAndShowWizard(node.Workspace, node.Name)
 
 	default:
 		a.errorMsg = "Cannot edit this type of item"
@@ -651,6 +677,124 @@ func (a *App) executeStyleEdit(workspace, styleName string, result components.St
 	return func() tea.Msg {
 		operation := fmt.Sprintf("Update style '%s'", styleName)
 		err := client.UpdateStyleContent(workspace, styleName, result.Content, result.Format.String())
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// layerGroupDetailsLoadedMsg is sent when layer group details are loaded for editing
+type layerGroupDetailsLoadedMsg struct {
+	details *models.LayerGroupDetails
+	layers  []models.Layer // Available layers in workspace
+	err     error
+}
+
+// layersForLayerGroupLoadedMsg is sent when layers are loaded for the layer group wizard
+type layersForLayerGroupLoadedMsg struct {
+	layers []models.Layer
+	err    error
+}
+
+// loadLayersForLayerGroupWizard loads available layers for the layer group wizard
+func (a *App) loadLayersForLayerGroupWizard(contextNode *models.TreeNode, workspace string) tea.Cmd {
+	client := a.getClientForNode(contextNode)
+	return func() tea.Msg {
+		if client == nil {
+			return layersForLayerGroupLoadedMsg{err: fmt.Errorf("no client for node")}
+		}
+		layers, err := client.GetLayers(workspace)
+		return layersForLayerGroupLoadedMsg{layers: layers, err: err}
+	}
+}
+
+// loadLayerGroupDetailsAndShowWizard loads layer group details and shows the edit wizard
+func (a *App) loadLayerGroupDetailsAndShowWizard(workspace, groupName string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	return func() tea.Msg {
+		if client == nil {
+			return layerGroupDetailsLoadedMsg{err: fmt.Errorf("no client for node")}
+		}
+
+		// Get layer group details
+		details, err := client.GetLayerGroup(workspace, groupName)
+		if err != nil {
+			return layerGroupDetailsLoadedMsg{err: err}
+		}
+
+		// Also get available layers
+		layers, err := client.GetLayers(workspace)
+		if err != nil {
+			return layerGroupDetailsLoadedMsg{details: details, err: err}
+		}
+
+		return layerGroupDetailsLoadedMsg{
+			details: details,
+			layers:  layers,
+			err:     nil,
+		}
+	}
+}
+
+// executeLayerGroupCreate executes the layer group creation
+func (a *App) executeLayerGroupCreate(workspace string, result components.LayerGroupWizardResult) tea.Cmd {
+	name := strings.TrimSpace(result.Name)
+	if name == "" {
+		a.errorMsg = "Layer group name is required"
+		return nil
+	}
+
+	if len(result.Layers) == 0 {
+		a.errorMsg = "At least one layer must be selected"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation
+	a.newlyCreatedPath = workspace + "/Layer Groups/" + name
+
+	config := models.LayerGroupCreate{
+		Name:   name,
+		Title:  result.Title,
+		Mode:   result.Mode,
+		Layers: result.Layers,
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Create layer group '%s'", name)
+		err := client.CreateLayerGroup(workspace, config)
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// executeLayerGroupEdit executes the layer group update
+func (a *App) executeLayerGroupEdit(workspace, groupName string, result components.LayerGroupWizardResult) tea.Cmd {
+	if len(result.Layers) == 0 {
+		a.errorMsg = "At least one layer must be selected"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	update := models.LayerGroupUpdate{
+		Title:   result.Title,
+		Mode:    result.Mode,
+		Layers:  result.Layers,
+		Enabled: true,
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Update layer group '%s'", groupName)
+		err := client.UpdateLayerGroup(workspace, groupName, update)
 		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
 	}
 }

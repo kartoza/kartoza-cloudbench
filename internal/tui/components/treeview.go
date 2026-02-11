@@ -429,10 +429,20 @@ func (tv *TreeView) getNewItemType(node *models.TreeNode) models.NodeType {
 		return models.NodeTypeDataStore
 	case models.NodeTypeCoverageStores:
 		return models.NodeTypeCoverageStore
+	case models.NodeTypeStyles:
+		return models.NodeTypeStyle
+	case models.NodeTypeLayers:
+		return models.NodeTypeLayer
+	case models.NodeTypeLayerGroups:
+		return models.NodeTypeLayerGroup
 	case models.NodeTypeDataStore:
 		return models.NodeTypeDataStore // Create sibling
 	case models.NodeTypeCoverageStore:
 		return models.NodeTypeCoverageStore // Create sibling
+	case models.NodeTypeStyle:
+		return models.NodeTypeStyle // Create sibling
+	case models.NodeTypeLayerGroup:
+		return models.NodeTypeLayerGroup // Create sibling
 	default:
 		return models.NodeTypeRoot // Not a valid new target
 	}
@@ -441,7 +451,8 @@ func (tv *TreeView) getNewItemType(node *models.TreeNode) models.NodeType {
 // canEdit returns true if the node can be edited
 func (tv *TreeView) canEdit(node *models.TreeNode) bool {
 	switch node.Type {
-	case models.NodeTypeWorkspace, models.NodeTypeDataStore, models.NodeTypeCoverageStore, models.NodeTypeLayer:
+	case models.NodeTypeWorkspace, models.NodeTypeDataStore, models.NodeTypeCoverageStore,
+		models.NodeTypeLayer, models.NodeTypeStyle, models.NodeTypeLayerGroup:
 		return true
 	default:
 		return false
@@ -692,6 +703,15 @@ func (tv *TreeView) SelectedNode() *models.TreeNode {
 // Refresh rebuilds the flat node list
 func (tv *TreeView) Refresh() {
 	tv.flattenTree()
+	// Ensure cursor is within bounds after refresh
+	if tv.cursor >= len(tv.flatNodes) {
+		if len(tv.flatNodes) > 0 {
+			tv.cursor = len(tv.flatNodes) - 1
+		} else {
+			tv.cursor = 0
+		}
+	}
+	tv.ensureVisible()
 }
 
 // ExpandSelected expands the selected node

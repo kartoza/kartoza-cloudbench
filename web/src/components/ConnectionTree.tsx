@@ -524,7 +524,7 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
     })
   }
 
-  const handleEdit = (e: React.MouseEvent) => {
+  const handleEdit = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (type === 'style') {
       openDialog('style', {
@@ -536,6 +536,29 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
         mode: 'edit',
         data: { connectionId, workspace, layerName: name, storeType },
       })
+    } else if (type === 'layergroup') {
+      // Fetch layer group details for edit mode
+      try {
+        const details = await api.getLayerGroup(connectionId, workspace, name)
+        // Extract layer names without workspace prefix
+        const layerNames = details.layers?.map((l) => {
+          const parts = l.name.split(':')
+          return parts.length > 1 ? parts[1] : l.name
+        }) || []
+        openDialog('layergroup', {
+          mode: 'edit',
+          data: {
+            connectionId,
+            workspace,
+            name: details.name,
+            title: details.title || '',
+            mode: details.mode,
+            layers: layerNames,
+          },
+        })
+      } catch (err) {
+        useUIStore.getState().setError((err as Error).message)
+      }
     }
   }
 
@@ -581,8 +604,8 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
   // Data download is only for layers (vector=shapefile, raster=geotiff)
   const canDownloadData = type === 'layer'
   const downloadDataLabel = storeType === 'coveragestore' ? 'GeoTIFF' : 'Shapefile'
-  // Edit is available for styles and layers
-  const canEdit = type === 'style' || type === 'layer'
+  // Edit is available for styles, layers, and layer groups
+  const canEdit = type === 'style' || type === 'layer' || type === 'layergroup'
 
   // Combine published and available feature types count
   const totalCount = type === 'datastore'

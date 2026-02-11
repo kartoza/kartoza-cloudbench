@@ -210,6 +210,9 @@ type App struct {
 	// Style wizard state
 	styleWizard *components.StyleWizard
 
+	// Layer group wizard state
+	layerGroupWizard *components.LayerGroupWizard
+
 	// Map preview state
 	mapPreview *components.MapPreview
 
@@ -402,6 +405,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if wizard was closed
 			if !a.styleWizard.IsVisible() {
 				a.styleWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+			return a, tea.Batch(cmds...)
+		}
+
+		// If we have a layer group wizard open and active, forward keys there first
+		if a.layerGroupWizard != nil && a.layerGroupWizard.IsActive() {
+			var cmd tea.Cmd
+			a.layerGroupWizard, cmd = a.layerGroupWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed
+			if !a.layerGroupWizard.IsVisible() {
+				a.layerGroupWizard = nil
 				// Execute pending CRUD command if any
 				if a.pendingCRUDCmd != nil {
 					cmds = append(cmds, a.pendingCRUDCmd)
@@ -736,6 +758,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Refresh the tree - rebuild with all connections
 			a.buildConnectionsTree()
 			a.treeView.Refresh()
+			// If we have a newly created item, navigate to it
+			if a.newlyCreatedPath != "" {
+				a.treeView.NavigateToPath(a.newlyCreatedPath)
+				a.newlyCreatedPath = ""
+			} else if a.savedTreeState.CursorPath != "" || len(a.savedTreeState.ExpandedPaths) > 0 {
+				// Restore tree state if we have saved state
+				a.treeView.RestoreState(a.savedTreeState)
+				a.savedTreeState = components.TreeState{}
+			}
 		} else {
 			a.errorMsg = fmt.Sprintf("%s failed: %v", msg.operation, msg.err)
 		}
@@ -844,6 +875,54 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			func() {},
 		)
 		return a, a.styleWizard.Init()
+
+	case layersForLayerGroupLoadedMsg:
+		// Layers loaded for layer group creation wizard
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load layers: %v", msg.err)
+			return a, nil
+		}
+		// Set the available layers in the wizard
+		if a.layerGroupWizard != nil {
+			a.layerGroupWizard.SetAvailableLayers(msg.layers)
+			workspace := ""
+			if a.crudNode != nil {
+				workspace = a.crudNode.Workspace
+			}
+			a.layerGroupWizard.SetCallbacks(
+				func(result components.LayerGroupWizardResult) {
+					if result.Confirmed {
+						a.pendingCRUDCmd = a.executeLayerGroupCreate(workspace, result)
+					}
+				},
+				func() {},
+			)
+		}
+		return a, nil
+
+	case layerGroupDetailsLoadedMsg:
+		a.loading = false
+		if msg.err != nil {
+			a.errorMsg = fmt.Sprintf("Failed to load layer group details: %v", msg.err)
+			return a, nil
+		}
+		// Show the layer group wizard with loaded details
+		workspace := ""
+		if a.crudNode != nil {
+			workspace = a.crudNode.Workspace
+		}
+		a.layerGroupWizard = components.NewLayerGroupWizardForEdit(workspace, msg.details)
+		a.layerGroupWizard.SetAvailableLayers(msg.layers)
+		a.layerGroupWizard.SetSize(a.width, a.height)
+		a.layerGroupWizard.SetCallbacks(
+			func(result components.LayerGroupWizardResult) {
+				if result.Confirmed {
+					a.pendingCRUDCmd = a.executeLayerGroupEdit(workspace, msg.details.Name, result)
+				}
+			},
+			func() {},
+		)
+		return a, a.layerGroupWizard.Init()
 
 	case components.TreeNewMsg:
 		// Show create dialog based on node type
@@ -1101,6 +1180,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case components.LayerGroupWizardAnimationMsg:
+		// Forward to layer group wizard if we have one
+		if a.layerGroupWizard != nil && a.layerGroupWizard.IsVisible() {
+			var cmd tea.Cmd
+			a.layerGroupWizard, cmd = a.layerGroupWizard.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if wizard was closed during animation
+			if !a.layerGroupWizard.IsVisible() {
+				a.layerGroupWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+		}
+
 	case settingsLoadedMsg:
 		a.loading = false
 		if msg.err != nil {
@@ -1295,6 +1393,12 @@ func (a *App) View() string {
 	if a.styleWizard != nil && a.styleWizard.IsVisible() {
 		a.styleWizard.SetSize(a.width, a.height)
 		content = a.styleWizard.View()
+	}
+
+	// Render layer group wizard overlay
+	if a.layerGroupWizard != nil && a.layerGroupWizard.IsVisible() {
+		a.layerGroupWizard.SetSize(a.width, a.height)
+		content = a.layerGroupWizard.View()
 	}
 
 	// Render map preview overlay

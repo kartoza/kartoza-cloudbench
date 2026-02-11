@@ -2,11 +2,11 @@ package components
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"image"
 	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -116,7 +116,7 @@ type MapPreview struct {
 	// Map state
 	centerX    float64 // Center longitude
 	centerY    float64 // Center latitude
-	zoomLevel  int     // Zoom level (higher = more zoomed in)
+	zoomLevel  float64 // Zoom level (higher = more zoomed in)
 	bbox       [4]float64 // Current bounding box [minX, minY, maxX, maxY]
 
 	// Image rendering
@@ -163,7 +163,7 @@ func NewMapPreview(geoserverURL, username, password, workspace, layerName string
 		currentStyle: 0,
 		visible:      true,
 		loading:      true,
-		zoomLevel:    2,
+		zoomLevel:    2.0,
 		centerX:      0,
 		centerY:      0,
 		bbox:         [4]float64{-180, -90, 180, 90}, // World extent
@@ -240,43 +240,60 @@ func (m *MapPreview) Update(msg tea.Msg) (*MapPreview, tea.Cmd) {
 			if m.onClose != nil {
 				m.onClose()
 			}
-			return m, nil
+			return m, tea.ClearScreen
 
 		case key.Matches(msg, m.keyMap.ZoomIn):
 			m.zoomIn()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.ZoomOut):
 			m.zoomOut()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.PanUp):
 			m.panUp()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.PanDown):
 			m.panDown()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.PanLeft):
 			m.panLeft()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.PanRight):
 			m.panRight()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.Refresh):
 			m.loading = true
-			return m, m.fetchMap()
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.NextStyle):
 			m.nextStyle()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 
 		case key.Matches(msg, m.keyMap.PrevStyle):
 			m.prevStyle()
-			return m, m.fetchMap()
+			m.loading = true
+			m.renderedImage = "" // Clear old image
+			return m, tea.Batch(tea.ClearScreen, m.fetchMap())
 		}
 
 	case spinner.TickMsg:
@@ -312,185 +329,64 @@ func (m *MapPreview) Update(msg tea.Msg) (*MapPreview, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View renders the component
+// View renders the component with controls at top, map image below
 func (m *MapPreview) View() string {
 	if !m.visible {
 		return ""
 	}
 
-	// Build the preview panel
 	var content strings.Builder
 
-	// Title
+	// Title bar
+	title := styles.DialogTitleStyle.Render(fmt.Sprintf(" Layer Preview: %s:%s ", m.workspace, m.layerName))
+	content.WriteString(title)
+	content.WriteString("\n\n")
+
+	// Compact control bar - all controls on one line
 	styleName := "default"
 	if len(m.styles) > 0 && m.currentStyle < len(m.styles) {
 		styleName = m.styles[m.currentStyle]
 	}
-	title := styles.DialogTitleStyle.Render(fmt.Sprintf(" Layer Preview: %s:%s ", m.workspace, m.layerName))
-	content.WriteString(title)
-	content.WriteString("\n")
 
-	// Style info bar
-	styleInfo := styles.MutedStyle.Render(fmt.Sprintf("Style: %s  |  Zoom: %d  |  Protocol: %s",
-		styleName, m.zoomLevel, m.protocolName()))
-	content.WriteString(styleInfo)
+	// Build control sections inline
+	zoomSection := fmt.Sprintf("Zoom: %s %.1f %s",
+		m.renderKey("-"), m.zoomLevel, m.renderKey("+"))
+
+	panSection := fmt.Sprintf("Pan: %s %s %s %s",
+		m.renderKey("←"), m.renderKey("↑"), m.renderKey("↓"), m.renderKey("→"))
+
+	styleSection := fmt.Sprintf("Style: %s", styleName)
+
+	actionSection := fmt.Sprintf("%s refresh  %s close",
+		m.renderKey("r"), m.renderKey("esc"))
+
+	controlBar := fmt.Sprintf("%s  │  %s  │  %s  │  %s",
+		zoomSection, panSection, styleSection, actionSection)
+	content.WriteString(styles.MutedStyle.Render(controlBar))
 	content.WriteString("\n\n")
 
-	// Main content area with image and controls
-	imagePanel := m.renderImagePanel()
-	controlsPanel := m.renderControlsPanel()
-
-	// Join image and controls horizontally
-	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, imagePanel, controlsPanel)
-	content.WriteString(mainContent)
-	content.WriteString("\n")
-
-	// Status bar
+	// Status/loading indicator
 	if m.errorMsg != "" {
 		content.WriteString(styles.ErrorStyle.Render("Error: " + m.errorMsg))
+		content.WriteString("\n")
 	} else if m.loading {
 		content.WriteString(m.spinner.View() + " Loading map...")
-	} else {
-		bbox := fmt.Sprintf("Bounds: [%.2f, %.2f, %.2f, %.2f]", m.bbox[0], m.bbox[1], m.bbox[2], m.bbox[3])
-		content.WriteString(styles.MutedStyle.Render(bbox))
-	}
-	content.WriteString("\n")
-
-	// Help bar
-	helpItems := []string{
-		styles.RenderHelpKey("arrows", "pan"),
-		styles.RenderHelpKey("+/-", "zoom"),
-		styles.RenderHelpKey("s/S", "style"),
-		styles.RenderHelpKey("r", "refresh"),
-		styles.RenderHelpKey("esc", "close"),
-	}
-	content.WriteString(strings.Join(helpItems, "  "))
-
-	// Wrap in dialog box
-	dialogWidth := m.width - 4
-	if dialogWidth > 120 {
-		dialogWidth = 120
+		content.WriteString("\n")
 	}
 
-	dialog := styles.DialogBoxStyle.Width(dialogWidth).Render(content.String())
+	// Map image - render directly without border wrapper to avoid conflicts
+	if !m.loading && m.renderedImage != "" {
+		content.WriteString(m.renderedImage)
+	}
 
-	return styles.Center(m.width, m.height, dialog)
+	return content.String()
 }
 
-// renderImagePanel renders the image area
-func (m *MapPreview) renderImagePanel() string {
-	// Calculate available image display size
-	imgDisplayWidth := m.width - 30
-	if imgDisplayWidth > 80 {
-		imgDisplayWidth = 80
-	}
-	if imgDisplayWidth < 40 {
-		imgDisplayWidth = 40
-	}
-
-	imgDisplayHeight := m.height - 15
-	if imgDisplayHeight > 30 {
-		imgDisplayHeight = 30
-	}
-	if imgDisplayHeight < 15 {
-		imgDisplayHeight = 15
-	}
-
-	var imageContent string
-	if m.loading {
-		imageContent = styles.Center(imgDisplayWidth, imgDisplayHeight,
-			m.spinner.View()+" Loading...")
-	} else if m.errorMsg != "" {
-		imageContent = styles.Center(imgDisplayWidth, imgDisplayHeight,
-			styles.ErrorStyle.Render("Failed to load"))
-	} else if m.renderedImage != "" {
-		imageContent = m.renderedImage
-	} else {
-		imageContent = styles.Center(imgDisplayWidth, imgDisplayHeight,
-			styles.MutedStyle.Render("[No image data]"))
-	}
-
-	// Wrap in a border
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.Border).
-		Width(imgDisplayWidth).
-		Height(imgDisplayHeight)
-
-	return panelStyle.Render(imageContent)
-}
-
-// renderControlsPanel renders the pan/zoom controls
-func (m *MapPreview) renderControlsPanel() string {
-	var controls strings.Builder
-
-	// Zoom controls
-	controls.WriteString(styles.DialogLabelStyle.Render(" Zoom"))
-	controls.WriteString("\n")
-	controls.WriteString(fmt.Sprintf("  %s\n", m.renderButton("+", "Zoom In", m.zoomLevel < 20)))
-	controls.WriteString(fmt.Sprintf("  %s\n", m.renderButton("-", "Zoom Out", m.zoomLevel > 0)))
-	controls.WriteString(fmt.Sprintf("  Level: %d\n", m.zoomLevel))
-	controls.WriteString("\n")
-
-	// Pan controls
-	controls.WriteString(styles.DialogLabelStyle.Render(" Pan"))
-	controls.WriteString("\n")
-	controls.WriteString(fmt.Sprintf("     %s\n", m.renderButton("^", "Up", true)))
-	controls.WriteString(fmt.Sprintf("  %s  %s  %s\n",
-		m.renderButton("<", "Left", true),
-		m.renderButton("o", "Center", true),
-		m.renderButton(">", "Right", true)))
-	controls.WriteString(fmt.Sprintf("     %s\n", m.renderButton("v", "Down", true)))
-	controls.WriteString("\n")
-
-	// Style selector
-	controls.WriteString(styles.DialogLabelStyle.Render(" Style"))
-	controls.WriteString("\n")
-	if len(m.styles) > 0 {
-		for i, style := range m.styles {
-			prefix := "  "
-			if i == m.currentStyle {
-				prefix = "> "
-				controls.WriteString(styles.AccentStyle.Render(prefix + style))
-			} else {
-				controls.WriteString(styles.MutedStyle.Render(prefix + style))
-			}
-			controls.WriteString("\n")
-		}
-	} else {
-		controls.WriteString(styles.MutedStyle.Render("  (default)\n"))
-	}
-	controls.WriteString("\n")
-
-	// Actions
-	controls.WriteString(styles.DialogLabelStyle.Render(" Actions"))
-	controls.WriteString("\n")
-	controls.WriteString(fmt.Sprintf("  %s\n", m.renderButton("r", "Refresh", true)))
-	controls.WriteString(fmt.Sprintf("  %s\n", m.renderButton("q", "Close", true)))
-
-	// Wrap in panel style
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.Border).
-		Width(18).
-		Padding(0, 1)
-
-	return panelStyle.Render(controls.String())
-}
-
-// renderButton renders a control button
-func (m *MapPreview) renderButton(key, _ string, enabled bool) string {
-	if enabled {
-		return lipgloss.NewStyle().
-			Background(styles.SurfaceHigh).
-			Foreground(styles.TextBright).
-			Padding(0, 1).
-			Render(key)
-	}
+// renderKey renders a key hint in a compact style
+func (m *MapPreview) renderKey(key string) string {
 	return lipgloss.NewStyle().
-		Background(styles.Surface).
-		Foreground(styles.Muted).
-		Padding(0, 1).
+		Foreground(styles.Accent).
+		Bold(true).
 		Render(key)
 }
 
@@ -556,37 +452,60 @@ func (m *MapPreview) renderImage() string {
 	}
 }
 
-// renderKitty renders using Kitty graphics protocol
+// renderKitty renders for Kitty terminal using chafa with kitty protocol
 func (m *MapPreview) renderKitty() string {
-	// Kitty protocol: ESC_cs; payload ESC\
-	// a=T for transmit, f=100 for PNG format
-	encoded := base64.StdEncoding.EncodeToString(m.imageData)
+	// Calculate display size - use most of screen since controls are at top
+	displayWidth := m.width - 4
+	if displayWidth > 120 {
+		displayWidth = 120
+	}
+	if displayWidth < 40 {
+		displayWidth = 40
+	}
+	displayHeight := m.height - 8 // Leave room for title and control bar
+	if displayHeight > 50 {
+		displayHeight = 50
+	}
+	if displayHeight < 15 {
+		displayHeight = 15
+	}
 
-	// Split into chunks of 4096 bytes for transmission
-	var result strings.Builder
-	chunkSize := 4096
-	for i := 0; i < len(encoded); i += chunkSize {
-		end := i + chunkSize
-		if end > len(encoded) {
-			end = len(encoded)
-		}
-		chunk := encoded[i:end]
+	// Create temp file for image
+	tmpFile, err := os.CreateTemp("", "geoserver-preview-*.png")
+	if err != nil {
+		return m.renderASCII()
+	}
+	defer os.Remove(tmpFile.Name())
 
-		// m=1 for more chunks, m=0 for last chunk
-		more := 1
-		if end >= len(encoded) {
-			more = 0
-		}
+	if _, err := tmpFile.Write(m.imageData); err != nil {
+		tmpFile.Close()
+		return m.renderASCII()
+	}
+	tmpFile.Close()
 
-		if i == 0 {
-			// First chunk includes action and format
-			result.WriteString(fmt.Sprintf("\x1b_Ga=T,f=100,m=%d;%s\x1b\\", more, chunk))
-		} else {
-			result.WriteString(fmt.Sprintf("\x1b_Gm=%d;%s\x1b\\", more, chunk))
+	// Use chafa with kitty format for best quality in Kitty terminal
+	cmd := exec.Command("chafa",
+		"--format", "kitty",
+		"--size", fmt.Sprintf("%dx%d", displayWidth, displayHeight),
+		"--colors", "full",
+		"--color-space", "rgb",
+		tmpFile.Name())
+
+	output, err := cmd.Output()
+	if err != nil {
+		// Fallback to symbols format if kitty format fails
+		cmd = exec.Command("chafa",
+			"--format", "symbols",
+			"--size", fmt.Sprintf("%dx%d", displayWidth, displayHeight),
+			"--colors", "full",
+			tmpFile.Name())
+		output, err = cmd.Output()
+		if err != nil {
+			return m.renderASCII()
 		}
 	}
 
-	return result.String()
+	return string(output)
 }
 
 // renderSixel renders using Sixel graphics
@@ -605,14 +524,20 @@ func (m *MapPreview) renderSixel() string {
 
 // renderChafa renders using chafa
 func (m *MapPreview) renderChafa() string {
-	// Calculate display size in characters
-	displayWidth := m.width - 30
-	if displayWidth > 80 {
-		displayWidth = 80
+	// Calculate display size - use most of screen since controls are at top
+	displayWidth := m.width - 4
+	if displayWidth > 120 {
+		displayWidth = 120
 	}
-	displayHeight := m.height - 15
-	if displayHeight > 30 {
-		displayHeight = 30
+	if displayWidth < 40 {
+		displayWidth = 40
+	}
+	displayHeight := m.height - 8
+	if displayHeight > 50 {
+		displayHeight = 50
+	}
+	if displayHeight < 15 {
+		displayHeight = 15
 	}
 
 	// Create temp file for image
@@ -652,20 +577,20 @@ func (m *MapPreview) renderASCII() string {
 
 	bounds := img.Bounds()
 
-	// Calculate ASCII size
-	asciiWidth := m.width - 32
-	if asciiWidth > 60 {
-		asciiWidth = 60
+	// Calculate ASCII size - use most of screen since controls are at top
+	asciiWidth := m.width - 4
+	if asciiWidth > 100 {
+		asciiWidth = 100
 	}
-	if asciiWidth < 20 {
-		asciiWidth = 20
+	if asciiWidth < 40 {
+		asciiWidth = 40
 	}
-	asciiHeight := m.height - 16
-	if asciiHeight > 25 {
-		asciiHeight = 25
+	asciiHeight := m.height - 8
+	if asciiHeight > 40 {
+		asciiHeight = 40
 	}
-	if asciiHeight < 10 {
-		asciiHeight = 10
+	if asciiHeight < 15 {
+		asciiHeight = 15
 	}
 
 	// Sample pixels and convert to ASCII art
@@ -706,39 +631,39 @@ func (m *MapPreview) renderASCII() string {
 // Pan and zoom methods
 func (m *MapPreview) zoomIn() {
 	if m.zoomLevel < 20 {
-		m.zoomLevel++
+		m.zoomLevel += 0.5 // Zoom in by half a level
 		m.updateBBox()
 	}
 }
 
 func (m *MapPreview) zoomOut() {
 	if m.zoomLevel > 0 {
-		m.zoomLevel--
+		m.zoomLevel -= 0.5 // Zoom out by half a level
 		m.updateBBox()
 	}
 }
 
 func (m *MapPreview) panUp() {
 	height := m.bbox[3] - m.bbox[1]
-	m.centerY += height * 0.25
+	m.centerY += height * 0.125 // Move by 12.5% of view
 	m.updateBBox()
 }
 
 func (m *MapPreview) panDown() {
 	height := m.bbox[3] - m.bbox[1]
-	m.centerY -= height * 0.25
+	m.centerY -= height * 0.125 // Move by 12.5% of view
 	m.updateBBox()
 }
 
 func (m *MapPreview) panLeft() {
 	width := m.bbox[2] - m.bbox[0]
-	m.centerX -= width * 0.25
+	m.centerX -= width * 0.125 // Move by 12.5% of view
 	m.updateBBox()
 }
 
 func (m *MapPreview) panRight() {
 	width := m.bbox[2] - m.bbox[0]
-	m.centerX += width * 0.25
+	m.centerX += width * 0.125 // Move by 12.5% of view
 	m.updateBBox()
 }
 
@@ -748,7 +673,8 @@ func (m *MapPreview) updateBBox() {
 	worldWidth := 360.0
 	worldHeight := 180.0
 
-	scale := 1.0 / float64(int(1)<<m.zoomLevel)
+	// Use math.Pow for fractional zoom levels
+	scale := 1.0 / math.Pow(2, m.zoomLevel)
 	width := worldWidth * scale
 	height := worldHeight * scale
 
