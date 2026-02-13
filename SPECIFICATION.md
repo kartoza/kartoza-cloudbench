@@ -308,6 +308,21 @@ Wizard with type selection:
 5. **ArcGrid**: Path to .asc file
 6. **GeoPackage (Raster)**: Path to file
 
+#### Style Creation
+Press `n` on Styles folder to create a new style. A selection dialog offers two options:
+
+**Visual Editor (WYSIWYG)**:
+- Creates styles using a visual interface
+- Requires at least one layer in the workspace for preview
+- Default style name: "NewStyle" (editable)
+- Real-time preview while designing
+- Generates SLD format on save
+
+**Code Editor (SLD/CSS)**:
+- Creates styles using text-based SLD or CSS input
+- Style name and format selection
+- Syntax-aware editing
+
 ### Edit Operations
 
 Press `e` to edit resources:
@@ -328,10 +343,24 @@ Press `e` to edit resources:
 - Edit description
 
 #### Style Edit (TUI)
+
+**Text-based Editor** (press `e` on a style):
 - Edit style name (create mode only)
 - Select style format (SLD or CSS)
 - Edit style content in text area
 - Keyboard shortcuts: `Enter` to edit field, `Ctrl+S` to save, `Tab` to navigate fields
+
+**WYSIWYG Visual Editor** (press `v` on a style):
+- Split-view layout: properties panel on left, live preview on right
+- Geometry-aware symbolizers:
+  - **Point**: shape (circle, square, triangle, star, cross, etc.), size, fill color/opacity, stroke color/width, rotation
+  - **Line**: stroke color/width/opacity, dash patterns (solid, dash, dot, dash-dot), line cap/join styles
+  - **Polygon**: fill color/opacity/pattern, stroke color/width/opacity
+  - **Text**: font family/size/weight/style, color, halo settings, label placement
+- Rule management: add/delete/reorder rules, rule names and titles
+- Real-time WMS preview using SLD_BODY parameter
+- Keyboard shortcuts: `↑↓/jk` navigate, `←→/hl` adjust values, `Enter` edit field, `Ctrl+S` save, `Ctrl+P` refresh preview, `Ctrl+A` add rule, `Esc` cancel
+- Color picker with presets, RGB sliders, and hex input modes
 
 #### Style Edit (Web UI)
 - Visual Editor: Graphical rule editing with color pickers and sliders

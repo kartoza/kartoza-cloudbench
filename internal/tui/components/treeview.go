@@ -13,26 +13,27 @@ import (
 
 // TreeViewKeyMap defines the key bindings for the tree view
 type TreeViewKeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Enter    key.Binding
-	Back     key.Binding
-	Expand   key.Binding
-	Collapse key.Binding
-	Home     key.Binding
-	End      key.Binding
-	PageUp   key.Binding
-	PageDown key.Binding
-	Refresh  key.Binding
-	New      key.Binding
-	Edit     key.Binding
-	Delete   key.Binding
-	Info     key.Binding
-	Preview  key.Binding
-	Publish  key.Binding
-	Cache    key.Binding
-	Settings key.Binding
-	Download key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Enter      key.Binding
+	Back       key.Binding
+	Expand     key.Binding
+	Collapse   key.Binding
+	Home       key.Binding
+	End        key.Binding
+	PageUp     key.Binding
+	PageDown   key.Binding
+	Refresh    key.Binding
+	New        key.Binding
+	Edit       key.Binding
+	Delete     key.Binding
+	Info       key.Binding
+	Preview    key.Binding
+	Publish    key.Binding
+	Cache      key.Binding
+	Settings   key.Binding
+	Download   key.Binding
+	VisualEdit key.Binding
 }
 
 // DefaultTreeViewKeyMap returns the default key bindings
@@ -118,6 +119,10 @@ func DefaultTreeViewKeyMap() TreeViewKeyMap {
 			key.WithKeys("w"),
 			key.WithHelp("w", "download"),
 		),
+		VisualEdit: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "visual edit"),
+		),
 	}
 }
 
@@ -158,6 +163,10 @@ type (
 	}
 	// TreeDownloadMsg is sent when user wants to download/export a resource
 	TreeDownloadMsg struct {
+		Node *models.TreeNode
+	}
+	// TreeVisualEditMsg is sent when user wants to open WYSIWYG style editor
+	TreeVisualEditMsg struct {
 		Node *models.TreeNode
 	}
 )
@@ -403,6 +412,17 @@ func (tv *TreeView) Update(msg tea.Msg) (*TreeView, tea.Cmd) {
 					models.NodeTypeLayer, models.NodeTypeStyle, models.NodeTypeLayerGroup:
 					return tv, func() tea.Msg {
 						return TreeDownloadMsg{Node: node}
+					}
+				}
+			}
+
+		case key.Matches(msg, tv.keyMap.VisualEdit):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				// Allow visual edit only for styles
+				if node.Type == models.NodeTypeStyle {
+					return tv, func() tea.Msg {
+						return TreeVisualEditMsg{Node: node}
 					}
 				}
 			}

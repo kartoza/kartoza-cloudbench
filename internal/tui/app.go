@@ -210,6 +210,9 @@ type App struct {
 	// Style wizard state
 	styleWizard *components.StyleWizard
 
+	// WYSIWYG Style editor state
+	styleEditor *components.StyleEditor
+
 	// Layer group wizard state
 	layerGroupWizard *components.LayerGroupWizard
 
@@ -405,6 +408,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check if wizard was closed
 			if !a.styleWizard.IsVisible() {
 				a.styleWizard = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			}
+			return a, tea.Batch(cmds...)
+		}
+
+		// If we have a WYSIWYG style editor open, forward keys there first
+		if a.styleEditor != nil && a.styleEditor.IsVisible() {
+			var cmd tea.Cmd
+			a.styleEditor, cmd = a.styleEditor.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Check if editor was closed
+			if !a.styleEditor.IsVisible() {
+				a.styleEditor = nil
 				// Execute pending CRUD command if any
 				if a.pendingCRUDCmd != nil {
 					cmds = append(cmds, a.pendingCRUDCmd)
@@ -1141,6 +1163,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Download resource configuration
 		return a, a.downloadResource(msg.Node)
 
+	case components.TreeVisualEditMsg:
+		// Open WYSIWYG style editor
+		return a, a.showVisualStyleEditor(msg.Node)
+
 	case components.CacheWizardAnimationMsg:
 		// Forward to cache wizard if we have one
 		if a.cacheWizard != nil && a.cacheWizard.IsVisible() {
@@ -1316,6 +1342,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case components.StylePreviewMsg:
+		// Forward style preview response to style editor
+		if a.styleEditor != nil {
+			var cmd tea.Cmd
+			a.styleEditor, cmd = a.styleEditor.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case components.StyleEditorMsg:
+		// Handle style editor save/cancel
+		if a.styleEditor != nil {
+			if msg.Type == "save" && msg.Style != nil {
+				// Save the style to GeoServer
+				a.statusMsg = "Style saved"
+				a.styleEditor.Hide()
+				a.styleEditor = nil
+				// Execute pending CRUD command if any
+				if a.pendingCRUDCmd != nil {
+					cmds = append(cmds, a.pendingCRUDCmd)
+					a.pendingCRUDCmd = nil
+				}
+			} else if msg.Type == "cancel" {
+				a.styleEditor.Hide()
+				a.styleEditor = nil
+			}
+		}
+
 	case components.SearchAnimationMsg:
 		// Forward to search modal if we have one
 		if a.searchModal != nil && a.searchModal.IsVisible() {
@@ -1421,6 +1476,12 @@ func (a *App) View() string {
 	if a.styleWizard != nil && a.styleWizard.IsVisible() {
 		a.styleWizard.SetSize(a.width, a.height)
 		content = a.styleWizard.View()
+	}
+
+	// Render WYSIWYG style editor overlay
+	if a.styleEditor != nil && a.styleEditor.IsVisible() {
+		a.styleEditor.SetSize(a.width, a.height)
+		content = a.styleEditor.View()
 	}
 
 	// Render layer group wizard overlay
@@ -1532,6 +1593,8 @@ func (a *App) renderHelpBar() string {
 			case models.NodeTypeDataStore, models.NodeTypeCoverageStore:
 				items = append(items, styles.RenderHelpKey("o", "preview"))
 				items = append(items, styles.RenderHelpKey("p", "publish"))
+			case models.NodeTypeStyle:
+				items = append(items, styles.RenderHelpKey("v", "visual"))
 			}
 		}
 	}

@@ -18,12 +18,15 @@ const (
 	DialogTypeNone DialogType = iota
 	DialogTypeInput
 	DialogTypeConfirm
+	DialogTypeSelect
 )
 
 // DialogResult represents the result of a dialog
 type DialogResult struct {
-	Confirmed bool
-	Values    map[string]string
+	Confirmed     bool
+	Values        map[string]string
+	SelectedIndex int    // For select dialogs
+	SelectedValue string // For select dialogs
 }
 
 // DialogField represents a field in an input dialog
@@ -38,6 +41,12 @@ type DialogField struct {
 // DialogAnimationMsg is sent to update animation state
 type DialogAnimationMsg struct {
 	ID string
+}
+
+// SelectOption represents an option in a select dialog
+type SelectOption struct {
+	Value string
+	Label string
 }
 
 // Dialog is a modal dialog component with harmonica physics
@@ -55,6 +64,10 @@ type Dialog struct {
 	visible      bool
 	onConfirm    func(DialogResult)
 	onCancel     func()
+
+	// Select dialog options
+	options        []SelectOption
+	selectedOption int
 
 	// Harmonica physics for smooth animations
 	spring        harmonica.Spring
@@ -107,6 +120,25 @@ func NewConfirmDialog(title, message string) *Dialog {
 		dialogType:    DialogTypeConfirm,
 		title:         title,
 		message:       message,
+		visible:       true,
+		spring:        harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5),
+		animScale:     0.0,
+		animOpacity:   0.0,
+		targetScale:   1.0,
+		targetOpacity: 1.0,
+		animating:     true,
+	}
+}
+
+// NewSelectDialog creates a new selection dialog
+func NewSelectDialog(title, message string, options []SelectOption) *Dialog {
+	return &Dialog{
+		id:             title,
+		dialogType:    DialogTypeSelect,
+		title:         title,
+		message:       message,
+		options:       options,
+		selectedOption: 0,
 		visible:       true,
 		spring:        harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5),
 		animScale:     0.0,
@@ -194,10 +226,14 @@ func (d *Dialog) Update(msg tea.Msg) (*Dialog, tea.Cmd) {
 			return d, nil
 		}
 
-		if d.dialogType == DialogTypeConfirm {
+		switch d.dialogType {
+		case DialogTypeConfirm:
 			return d.updateConfirm(msg)
+		case DialogTypeSelect:
+			return d.updateSelect(msg)
+		default:
+			return d.updateInput(msg)
 		}
-		return d.updateInput(msg)
 	}
 
 	return d, nil
@@ -260,6 +296,37 @@ func (d *Dialog) updateConfirm(msg tea.KeyMsg) (*Dialog, tea.Cmd) {
 		}
 		return d, d.StartCloseAnimation()
 	case "n", "N", "esc":
+		if d.onCancel != nil {
+			d.onCancel()
+		}
+		return d, d.StartCloseAnimation()
+	}
+	return d, nil
+}
+
+// updateSelect handles key presses for select dialog
+func (d *Dialog) updateSelect(msg tea.KeyMsg) (*Dialog, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if d.selectedOption > 0 {
+			d.selectedOption--
+		}
+		return d, nil
+	case "down", "j":
+		if d.selectedOption < len(d.options)-1 {
+			d.selectedOption++
+		}
+		return d, nil
+	case "enter":
+		if d.onConfirm != nil && len(d.options) > 0 {
+			d.onConfirm(DialogResult{
+				Confirmed:     true,
+				SelectedIndex: d.selectedOption,
+				SelectedValue: d.options[d.selectedOption].Value,
+			})
+		}
+		return d, d.StartCloseAnimation()
+	case "esc":
 		if d.onCancel != nil {
 			d.onCancel()
 		}
@@ -355,11 +422,34 @@ func (d *Dialog) View() string {
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
-	if d.dialogType == DialogTypeConfirm {
+	switch d.dialogType {
+	case DialogTypeConfirm:
 		b.WriteString(d.message)
 		b.WriteString("\n\n")
 		b.WriteString(styles.HelpTextStyle.Render("y:yes  n:no  Esc:cancel"))
-	} else {
+	case DialogTypeSelect:
+		if d.message != "" {
+			b.WriteString(d.message)
+			b.WriteString("\n\n")
+		}
+		// Render options
+		for i, opt := range d.options {
+			var indicator string
+			var style lipgloss.Style
+			if i == d.selectedOption {
+				indicator = styles.ConnectedStyle.Render("\uf0da ") // fa-caret-right
+				style = styles.SelectedItemStyle
+			} else {
+				indicator = "  "
+				style = styles.ItemStyle
+			}
+			b.WriteString(indicator)
+			b.WriteString(style.Render(opt.Label))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(styles.HelpTextStyle.Render("j/k:navigate  Enter:select  Esc:cancel"))
+	default:
 		// Render input fields
 		for i, field := range d.fields {
 			var indicator string

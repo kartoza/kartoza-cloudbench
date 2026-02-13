@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kartoza/kartoza-geoserver-client/internal/config"
 	"github.com/kartoza/kartoza-geoserver-client/internal/models"
 	"github.com/kartoza/kartoza-geoserver-client/internal/tui/components"
 )
@@ -107,26 +108,41 @@ func (a *App) showCreateDialog(contextNode *models.TreeNode, nodeType models.Nod
 		return a.storeWizard.Init()
 
 	case models.NodeTypeStyle:
-		// Use style wizard for creating styles
+		// Show a selection dialog to choose editor type
 		if workspace == "" {
 			a.errorMsg = "Select a workspace first"
 			return nil
 		}
-		a.styleWizard = components.NewStyleWizard(workspace)
-		a.styleWizard.SetSize(a.width, a.height)
 		a.crudNode = contextNode
 		a.crudOperation = CRUDCreate
 		a.crudNodeType = nodeType
 
-		a.styleWizard.SetCallbacks(
-			func(result components.StyleWizardResult) {
+		// Create selection dialog for editor type
+		options := []components.SelectOption{
+			{Value: "visual", Label: "Visual Editor (WYSIWYG)"},
+			{Value: "code", Label: "Code Editor (SLD/CSS)"},
+		}
+		a.crudDialog = components.NewSelectDialog(
+			"Create Style",
+			"Choose how to create the style:",
+			options,
+		)
+		a.crudDialog.SetSize(a.width, a.height)
+		a.crudDialog.SetCallbacks(
+			func(result components.DialogResult) {
 				if result.Confirmed {
-					a.pendingCRUDCmd = a.executeStyleCreate(workspace, result)
+					if result.SelectedValue == "visual" {
+						// Launch visual style editor
+						a.pendingCRUDCmd = a.showVisualStyleEditorForCreate(workspace, contextNode)
+					} else {
+						// Launch code-based style wizard
+						a.pendingCRUDCmd = a.showCodeStyleWizardForCreate(workspace, contextNode)
+					}
 				}
 			},
 			func() {},
 		)
-		return a.styleWizard.Init()
+		return a.crudDialog.Init()
 
 	case models.NodeTypeLayerGroup:
 		// Use layer group wizard for creating layer groups
@@ -858,4 +874,205 @@ func (a *App) executeLayerGroupEdit(workspace, groupName string, result componen
 		err := client.UpdateLayerGroup(workspace, groupName, update)
 		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
 	}
+}
+
+// showVisualStyleEditor opens the WYSIWYG style editor for a style
+func (a *App) showVisualStyleEditor(node *models.TreeNode) tea.Cmd {
+	if node == nil || node.Type != models.NodeTypeStyle {
+		a.errorMsg = "Please select a style to edit visually"
+		return nil
+	}
+
+	// Find the connection for this node
+	var conn *config.Connection
+	for i := range a.config.Connections {
+		if a.config.Connections[i].ID == node.ConnectionID {
+			conn = &a.config.Connections[i]
+			break
+		}
+	}
+
+	if conn == nil {
+		a.errorMsg = "No connection found for this style"
+		return nil
+	}
+
+	workspace := node.Workspace
+
+	// For the style editor to work, we need a layer to preview.
+	// Try to find the first available layer in the same workspace
+	client := a.clients[conn.ID]
+	if client == nil {
+		a.errorMsg = "No client for this connection"
+		return nil
+	}
+
+	// Get layers in the workspace to use for preview
+	layers, err := client.GetLayers(workspace)
+	if err != nil || len(layers) == 0 {
+		a.errorMsg = "No layers found in workspace for preview. Please add a layer first."
+		return nil
+	}
+
+	// Use the first layer for preview
+	previewLayer := layers[0].Name
+
+	// Create the style editor
+	a.styleEditor = components.NewStyleEditor(
+		conn.URL,
+		conn.Username,
+		conn.Password,
+		workspace,
+		previewLayer,
+	)
+	a.styleEditor.SetSize(a.width, a.height)
+
+	// Set the style name to the existing style name
+	a.styleEditor.SetStyleName(node.Name)
+
+	// Store the style info for saving later
+	a.crudNode = node
+	a.crudOperation = CRUDEdit
+	a.crudNodeType = models.NodeTypeStyle
+
+	// Set callbacks to handle save/cancel
+	styleName := node.Name
+	a.styleEditor.SetCallbacks(
+		func(sld string) {
+			// Update the style content on GeoServer
+			a.pendingCRUDCmd = a.executeVisualStyleEdit(workspace, styleName, sld)
+		},
+		func() {
+			// Cancel - editor will be hidden
+		},
+	)
+
+	return a.styleEditor.Init()
+}
+
+// executeVisualStyleEdit updates an existing style from the WYSIWYG editor's SLD output
+func (a *App) executeVisualStyleEdit(workspace, styleName, sld string) tea.Cmd {
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Update style '%s'", styleName)
+		err := client.UpdateStyleContent(workspace, styleName, sld, "sld")
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// showVisualStyleEditorForCreate opens the WYSIWYG style editor for creating a new style
+func (a *App) showVisualStyleEditorForCreate(workspace string, contextNode *models.TreeNode) tea.Cmd {
+	// Find the connection for this node
+	var conn *config.Connection
+	connectionID := ""
+	if contextNode != nil {
+		connectionID = contextNode.ConnectionID
+	}
+	for i := range a.config.Connections {
+		if a.config.Connections[i].ID == connectionID {
+			conn = &a.config.Connections[i]
+			break
+		}
+	}
+
+	if conn == nil {
+		a.errorMsg = "No connection found"
+		return nil
+	}
+
+	client := a.clients[conn.ID]
+	if client == nil {
+		a.errorMsg = "No client for this connection"
+		return nil
+	}
+
+	// Get layers in the workspace to use for preview
+	layers, err := client.GetLayers(workspace)
+	if err != nil || len(layers) == 0 {
+		a.errorMsg = "No layers found in workspace for preview. Please add a layer first."
+		return nil
+	}
+
+	// Use the first layer for preview
+	previewLayer := layers[0].Name
+
+	// Create the style editor for a new style
+	a.styleEditor = components.NewStyleEditor(
+		conn.URL,
+		conn.Username,
+		conn.Password,
+		workspace,
+		previewLayer,
+	)
+	a.styleEditor.SetSize(a.width, a.height)
+
+	// Store context for saving later
+	a.crudNode = contextNode
+	a.crudOperation = CRUDCreate
+	a.crudNodeType = models.NodeTypeStyle
+
+	// Set callbacks to handle save/cancel
+	a.styleEditor.SetCallbacks(
+		func(sld string) {
+			// Get the style name from the editor
+			styleName := a.styleEditor.GetStyleName()
+			ws := a.styleEditor.GetWorkspace()
+			a.pendingCRUDCmd = a.executeVisualStyleCreate(ws, styleName, sld)
+		},
+		func() {
+			// Cancel - editor will be hidden
+		},
+	)
+
+	return a.styleEditor.Init()
+}
+
+// executeVisualStyleCreate creates a new style from the WYSIWYG editor's SLD output
+func (a *App) executeVisualStyleCreate(workspace, styleName, sld string) tea.Cmd {
+	name := strings.TrimSpace(styleName)
+	if name == "" {
+		a.errorMsg = "Style name is required"
+		return nil
+	}
+
+	client := a.getClientForNode(a.crudNode)
+	if client == nil {
+		a.errorMsg = "No connection for node"
+		return nil
+	}
+
+	// Set path to navigate to after creation
+	a.newlyCreatedPath = workspace + "/Styles/" + name
+
+	a.loading = true
+	return func() tea.Msg {
+		operation := fmt.Sprintf("Create style '%s'", name)
+		err := client.CreateStyle(workspace, name, sld, "sld")
+		return crudCompleteMsg{success: err == nil, err: err, operation: operation}
+	}
+}
+
+// showCodeStyleWizardForCreate opens the code-based style wizard for creating a new style
+func (a *App) showCodeStyleWizardForCreate(workspace string, contextNode *models.TreeNode) tea.Cmd {
+	a.styleWizard = components.NewStyleWizard(workspace)
+	a.styleWizard.SetSize(a.width, a.height)
+	a.crudNode = contextNode
+	a.crudOperation = CRUDCreate
+	a.crudNodeType = models.NodeTypeStyle
+
+	a.styleWizard.SetCallbacks(
+		func(result components.StyleWizardResult) {
+			if result.Confirmed {
+				a.pendingCRUDCmd = a.executeStyleCreate(workspace, result)
+			}
+		},
+		func() {},
+	)
+	return a.styleWizard.Init()
 }
