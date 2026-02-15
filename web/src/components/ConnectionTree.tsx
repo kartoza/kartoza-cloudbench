@@ -42,6 +42,7 @@ import {
   FiTable,
   FiColumns,
   FiCode,
+  FiRefreshCw,
 } from 'react-icons/fi'
 import { SiPostgresql } from 'react-icons/si'
 import { useConnectionStore } from '../stores/connectionStore'
@@ -428,20 +429,18 @@ function PGServiceNode({ service }: PGServiceNodeProps) {
     })
   }
 
-  const handleDashboard = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    openDialog('pgdashboard', {
-      mode: 'view',
-      data: { serviceName: service.name },
-    })
-  }
-
   const handleUpload = (e: React.MouseEvent) => {
     e.stopPropagation()
     openDialog('pgupload', {
       mode: 'create',
       data: { serviceName: service.name },
     })
+  }
+
+  const handleRefresh = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Re-parse the service to refresh schema data
+    queryClient.invalidateQueries({ queryKey: ['pgschemas', service.name] })
   }
 
   const subtitle = service.host ? `${service.host}:${service.port || '5432'}/${service.dbname || ''}` : ''
@@ -456,8 +455,8 @@ function PGServiceNode({ service }: PGServiceNodeProps) {
         onClick={handleClick}
         onDelete={handleDelete}
         onQuery={service.is_parsed ? handleQuery : undefined}
-        onPreview={handleDashboard}
         onUpload={handleUpload}
+        onRefresh={service.is_parsed ? handleRefresh : undefined}
         level={2}
         count={schemaData?.schemas?.length}
       />
@@ -509,6 +508,7 @@ function PGSchemaNode({ serviceName, schema }: PGSchemaNodeProps) {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
+  const queryClient = useQueryClient()
 
   const node: TreeNode = {
     id: nodeId,
@@ -533,6 +533,12 @@ function PGSchemaNode({ serviceName, schema }: PGSchemaNodeProps) {
     })
   }
 
+  const handleRefresh = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Refresh schemas for the parent service
+    queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
+  }
+
   return (
     <Box>
       <TreeNodeRow
@@ -542,6 +548,7 @@ function PGSchemaNode({ serviceName, schema }: PGSchemaNodeProps) {
         isLoading={false}
         onClick={handleClick}
         onUpload={handleUpload}
+        onRefresh={handleRefresh}
         level={3}
         count={schema.tables.length}
       />
@@ -1653,6 +1660,7 @@ interface TreeNodeRowProps {
   onQuery?: (e: React.MouseEvent) => void
   onShowData?: (e: React.MouseEvent) => void
   onUpload?: (e: React.MouseEvent) => void
+  onRefresh?: (e: React.MouseEvent) => void
   onDownloadConfig?: (e: React.MouseEvent) => void
   onDownloadData?: (e: React.MouseEvent) => void
   downloadDataLabel?: string // "Shapefile" or "GeoTIFF"
@@ -1675,6 +1683,7 @@ function TreeNodeRow({
   onQuery,
   onShowData,
   onUpload,
+  onRefresh,
   onDownloadConfig,
   onDownloadData,
   downloadDataLabel,
@@ -1823,6 +1832,19 @@ function TreeNodeRow({
               colorScheme="kartoza"
               onClick={onPreview}
               _hover={{ bg: 'kartoza.100' }}
+            />
+          </Tooltip>
+        )}
+        {onRefresh && (
+          <Tooltip label="Refresh" fontSize="xs">
+            <IconButton
+              aria-label="Refresh"
+              icon={<FiRefreshCw size={14} />}
+              size="xs"
+              variant="ghost"
+              colorScheme="cyan"
+              onClick={onRefresh}
+              _hover={{ bg: 'cyan.50' }}
             />
           </Tooltip>
         )}

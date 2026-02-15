@@ -44,28 +44,28 @@ type ImportResult struct {
 
 // LayerInfo contains information about a layer in a data source
 type LayerInfo struct {
-	Name          string
-	GeometryType  string
-	FeatureCount  int
-	SRID          int
-	Fields        []FieldInfo
-	Extent        *Extent
+	Name         string      `json:"name"`
+	GeometryType string      `json:"geometry_type"`
+	FeatureCount int         `json:"feature_count"`
+	SRID         int         `json:"srid"`
+	Fields       []FieldInfo `json:"fields"`
+	Extent       *Extent     `json:"extent,omitempty"`
 }
 
 // FieldInfo contains information about a field in a layer
 type FieldInfo struct {
-	Name     string
-	Type     string
-	Width    int
-	Nullable bool
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Width    int    `json:"width"`
+	Nullable bool   `json:"nullable"`
 }
 
 // Extent represents a spatial extent
 type Extent struct {
-	MinX float64
-	MinY float64
-	MaxX float64
-	MaxY float64
+	MinX float64 `json:"min_x"`
+	MinY float64 `json:"min_y"`
+	MaxX float64 `json:"max_x"`
+	MaxY float64 `json:"max_y"`
 }
 
 // ProgressCallback is called with progress updates during import

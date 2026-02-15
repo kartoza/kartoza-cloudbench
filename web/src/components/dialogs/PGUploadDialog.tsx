@@ -224,14 +224,33 @@ export default function PGUploadDialog() {
             )
 
             // Add to selected layers
-            const newSelectedLayers = layers.map((l) => ({
-              name: l.name,
-              selected: true,
-              tableName: l.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-            }))
-            setSelectedLayers((prev) => [...prev, ...newSelectedLayers])
+            if (layers.length > 0) {
+              const newSelectedLayers = layers.map((l) => ({
+                name: l.name,
+                selected: true,
+                tableName: l.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+              }))
+              setSelectedLayers((prev) => [...prev, ...newSelectedLayers])
+            } else {
+              // Fallback: use filename as layer name when no layers detected
+              const baseName = files[i].file.name.replace(/\.[^/.]+$/, '')
+              const tableName = baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+              setSelectedLayers((prev) => [...prev, {
+                name: baseName,
+                selected: true,
+                tableName,
+              }])
+            }
           } catch (err) {
             console.error('Failed to detect layers:', err)
+            // Fallback: use filename as layer name on error
+            const baseName = files[i].file.name.replace(/\.[^/.]+$/, '')
+            const tableName = baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+            setSelectedLayers((prev) => [...prev, {
+              name: baseName,
+              selected: true,
+              tableName,
+            }])
           } finally {
             setLoadingLayers(false)
           }
@@ -337,7 +356,7 @@ export default function PGUploadDialog() {
     }
 
     // Invalidate queries to refresh the tree
-    queryClient.invalidateQueries({ queryKey: ['pgschema', serviceName] })
+    queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
 
     const successCount = files.filter((f) => f.status === 'success').length
     if (successCount > 0) {
@@ -385,7 +404,7 @@ export default function PGUploadDialog() {
     }
 
     // Refresh after all jobs complete
-    queryClient.invalidateQueries({ queryKey: ['pgschema', serviceName] })
+    queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
   }
 
   const toggleLayerSelection = (layerName: string) => {
@@ -633,10 +652,37 @@ export default function PGUploadDialog() {
                       <Icon as={FiLayers} color="purple.500" />
                       <Text fontWeight="600">Layers to Import</Text>
                     </HStack>
-                    <Badge colorScheme="purple">{selectedLayerCount} selected</Badge>
+                    <HStack spacing={2}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorScheme="purple"
+                        onClick={() => {
+                          setSelectedLayers((prev) =>
+                            prev.map((layer) => ({ ...layer, selected: true }))
+                          )
+                        }}
+                        isDisabled={selectedLayers.every((l) => l.selected)}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedLayers((prev) =>
+                            prev.map((layer) => ({ ...layer, selected: false }))
+                          )
+                        }}
+                        isDisabled={selectedLayers.every((l) => !l.selected)}
+                      >
+                        Deselect All
+                      </Button>
+                      <Badge colorScheme="purple">{selectedLayerCount} selected</Badge>
+                    </HStack>
                   </HStack>
                   <Text fontSize="sm" color="gray.500" mb={3}>
-                    Select which layers to import and set target table names:
+                    All {selectedLayers.length} layer(s) detected in the file. Adjust table names if needed:
                   </Text>
                   <VStack align="stretch" spacing={2} maxH="200px" overflowY="auto">
                     {selectedLayers.map((layer) => (

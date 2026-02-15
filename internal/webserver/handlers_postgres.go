@@ -177,6 +177,14 @@ func (s *Server) handlePGServiceByName(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
+	case "schemastats":
+		// Returns schema statistics for the schema dashboard
+		// URL: /api/pg/services/{name}/schemastats?schema=schemaname
+		if r.Method == http.MethodGet {
+			s.handleGetPGSchemaStats(w, r, name)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
 	case "":
 		// No action - DELETE the service
 		if r.Method == http.MethodDelete {
@@ -483,6 +491,35 @@ func (s *Server) handleGetPGServiceStats(w http.ResponseWriter, r *http.Request,
 	stats, err := svc.GetServerStats()
 	if err != nil {
 		http.Error(w, "Failed to get server stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(stats)
+}
+
+// handleGetPGSchemaStats returns comprehensive statistics for a specific schema
+func (s *Server) handleGetPGSchemaStats(w http.ResponseWriter, r *http.Request, serviceName string) {
+	schemaName := r.URL.Query().Get("schema")
+	if schemaName == "" {
+		http.Error(w, "Schema name is required (use ?schema=schemaname)", http.StatusBadRequest)
+		return
+	}
+
+	services, err := postgres.ParsePGServiceFile()
+	if err != nil {
+		http.Error(w, "Failed to parse pg_service.conf", http.StatusInternalServerError)
+		return
+	}
+
+	svc, err := postgres.GetServiceByName(services, serviceName)
+	if err != nil {
+		http.Error(w, "Service not found", http.StatusNotFound)
+		return
+	}
+
+	stats, err := svc.GetSchemaStats(schemaName)
+	if err != nil {
+		http.Error(w, "Failed to get schema stats: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

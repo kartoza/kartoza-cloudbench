@@ -571,3 +571,228 @@ func (s *ServiceEntry) GetServerStats() (*ServerStats, error) {
 
 	return stats, nil
 }
+
+// SchemaStats represents statistics about a PostgreSQL schema
+type SchemaStats struct {
+	Name         string `json:"name"`
+	Owner        string `json:"owner"`
+	DatabaseName string `json:"database_name"`
+
+	// Object counts
+	TableCount    int `json:"table_count"`
+	ViewCount     int `json:"view_count"`
+	IndexCount    int `json:"index_count"`
+	FunctionCount int `json:"function_count"`
+	SequenceCount int `json:"sequence_count"`
+	TriggerCount  int `json:"trigger_count"`
+
+	// Size info
+	TotalSize      string `json:"total_size"`
+	TotalSizeBytes int64  `json:"total_size_bytes"`
+
+	// Table stats
+	TotalRows   int64  `json:"total_rows"`
+	DeadTuples  int64  `json:"dead_tuples"`
+	TableUsage  string `json:"table_usage"`
+
+	// Tables with details
+	Tables []TableStats `json:"tables"`
+
+	// Views
+	Views []ViewStats `json:"views"`
+
+	// PostGIS specific
+	HasPostGIS      bool `json:"has_postgis"`
+	GeometryColumns int  `json:"geometry_columns"`
+	RasterColumns   int  `json:"raster_columns"`
+}
+
+// TableStats represents statistics about a single table
+type TableStats struct {
+	Name           string `json:"name"`
+	RowCount       int64  `json:"row_count"`
+	Size           string `json:"size"`
+	SizeBytes      int64  `json:"size_bytes"`
+	DeadTuples     int64  `json:"dead_tuples"`
+	LastVacuum     string `json:"last_vacuum,omitempty"`
+	LastAutoVacuum string `json:"last_autovacuum,omitempty"`
+	IndexCount     int    `json:"index_count"`
+	HasPrimaryKey  bool   `json:"has_primary_key"`
+	HasGeometry    bool   `json:"has_geometry"`
+	GeometryType   string `json:"geometry_type,omitempty"`
+	SRID           int    `json:"srid,omitempty"`
+}
+
+// ViewStats represents statistics about a single view
+type ViewStats struct {
+	Name        string `json:"name"`
+	Definition  string `json:"definition,omitempty"`
+	IsMaterialized bool `json:"is_materialized"`
+}
+
+// GetSchemaStats retrieves comprehensive statistics about a specific schema
+func (s *ServiceEntry) GetSchemaStats(schemaName string) (*SchemaStats, error) {
+	db, err := s.Connect()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	stats := &SchemaStats{
+		Name:         schemaName,
+		DatabaseName: s.DBName,
+		Tables:       []TableStats{},
+		Views:        []ViewStats{},
+	}
+
+	// Get schema owner
+	db.QueryRow(`
+		SELECT pg_catalog.pg_get_userbyid(nspowner)
+		FROM pg_catalog.pg_namespace
+		WHERE nspname = $1
+	`, schemaName).Scan(&stats.Owner)
+
+	// Get object counts
+	db.QueryRow(`SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1`, schemaName).Scan(&stats.TableCount)
+	db.QueryRow(`SELECT COUNT(*) FROM pg_views WHERE schemaname = $1`, schemaName).Scan(&stats.ViewCount)
+	db.QueryRow(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = $1`, schemaName).Scan(&stats.IndexCount)
+	db.QueryRow(`
+		SELECT COUNT(*) FROM pg_proc p
+		JOIN pg_namespace n ON p.pronamespace = n.oid
+		WHERE n.nspname = $1 AND p.prokind = 'f'
+	`, schemaName).Scan(&stats.FunctionCount)
+	db.QueryRow(`
+		SELECT COUNT(*) FROM pg_class c
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = $1 AND c.relkind = 'S'
+	`, schemaName).Scan(&stats.SequenceCount)
+	db.QueryRow(`
+		SELECT COUNT(*) FROM pg_trigger t
+		JOIN pg_class c ON t.tgrelid = c.oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = $1 AND NOT t.tgisinternal
+	`, schemaName).Scan(&stats.TriggerCount)
+
+	// Get total schema size
+	var totalSizeBytes sql.NullInt64
+	db.QueryRow(`
+		SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)
+		FROM pg_class c
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = $1 AND c.relkind IN ('r', 'm')
+	`, schemaName).Scan(&totalSizeBytes)
+	if totalSizeBytes.Valid {
+		stats.TotalSizeBytes = totalSizeBytes.Int64
+		db.QueryRow(`SELECT pg_size_pretty($1::bigint)`, stats.TotalSizeBytes).Scan(&stats.TotalSize)
+	}
+
+	// Get total rows and dead tuples for the schema
+	db.QueryRow(`
+		SELECT
+			COALESCE(SUM(n_live_tup), 0),
+			COALESCE(SUM(n_dead_tup), 0)
+		FROM pg_stat_user_tables
+		WHERE schemaname = $1
+	`, schemaName).Scan(&stats.TotalRows, &stats.DeadTuples)
+
+	// Check if PostGIS is available
+	var postgisAvailable int
+	db.QueryRow(`SELECT COUNT(*) FROM pg_extension WHERE extname = 'postgis'`).Scan(&postgisAvailable)
+	stats.HasPostGIS = postgisAvailable > 0
+
+	if stats.HasPostGIS {
+		// Count geometry columns in this schema
+		db.QueryRow(`
+			SELECT COUNT(*) FROM geometry_columns
+			WHERE f_table_schema = $1
+		`, schemaName).Scan(&stats.GeometryColumns)
+		db.QueryRow(`
+			SELECT COUNT(*) FROM raster_columns
+			WHERE r_table_schema = $1
+		`, schemaName).Scan(&stats.RasterColumns)
+	}
+
+	// Get detailed table stats
+	tableRows, err := db.Query(`
+		SELECT
+			t.tablename,
+			COALESCE(s.n_live_tup, 0) as row_count,
+			COALESCE(pg_total_relation_size(c.oid), 0) as size_bytes,
+			COALESCE(s.n_dead_tup, 0) as dead_tuples,
+			COALESCE(s.last_vacuum::text, '') as last_vacuum,
+			COALESCE(s.last_autovacuum::text, '') as last_autovacuum,
+			(SELECT COUNT(*) FROM pg_indexes WHERE schemaname = $1 AND tablename = t.tablename) as index_count,
+			EXISTS(
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class cls ON con.conrelid = cls.oid
+				JOIN pg_namespace ns ON cls.relnamespace = ns.oid
+				WHERE ns.nspname = $1 AND cls.relname = t.tablename AND con.contype = 'p'
+			) as has_primary_key
+		FROM pg_tables t
+		LEFT JOIN pg_stat_user_tables s ON t.schemaname = s.schemaname AND t.tablename = s.relname
+		LEFT JOIN pg_class c ON c.relname = t.tablename
+		LEFT JOIN pg_namespace n ON c.relnamespace = n.oid AND n.nspname = t.schemaname
+		WHERE t.schemaname = $1
+		ORDER BY size_bytes DESC
+	`, schemaName)
+	if err == nil {
+		defer tableRows.Close()
+		for tableRows.Next() {
+			var tbl TableStats
+			var sizeBytes int64
+			tableRows.Scan(
+				&tbl.Name,
+				&tbl.RowCount,
+				&sizeBytes,
+				&tbl.DeadTuples,
+				&tbl.LastVacuum,
+				&tbl.LastAutoVacuum,
+				&tbl.IndexCount,
+				&tbl.HasPrimaryKey,
+			)
+			tbl.SizeBytes = sizeBytes
+			db.QueryRow(`SELECT pg_size_pretty($1::bigint)`, sizeBytes).Scan(&tbl.Size)
+
+			// Check for geometry if PostGIS is available
+			if stats.HasPostGIS {
+				var geomType, geomSRID sql.NullString
+				err := db.QueryRow(`
+					SELECT type, srid::text FROM geometry_columns
+					WHERE f_table_schema = $1 AND f_table_name = $2
+					LIMIT 1
+				`, schemaName, tbl.Name).Scan(&geomType, &geomSRID)
+				if err == nil && geomType.Valid {
+					tbl.HasGeometry = true
+					tbl.GeometryType = geomType.String
+					if geomSRID.Valid {
+						fmt.Sscanf(geomSRID.String, "%d", &tbl.SRID)
+					}
+				}
+			}
+
+			stats.Tables = append(stats.Tables, tbl)
+		}
+	}
+
+	// Get view information
+	viewRows, err := db.Query(`
+		SELECT viewname, false as is_materialized
+		FROM pg_views
+		WHERE schemaname = $1
+		UNION ALL
+		SELECT matviewname, true as is_materialized
+		FROM pg_matviews
+		WHERE schemaname = $1
+		ORDER BY 1
+	`, schemaName)
+	if err == nil {
+		defer viewRows.Close()
+		for viewRows.Next() {
+			var v ViewStats
+			viewRows.Scan(&v.Name, &v.IsMaterialized)
+			stats.Views = append(stats.Views, v)
+		}
+	}
+
+	return stats, nil
+}

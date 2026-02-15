@@ -944,6 +944,70 @@ export async function getPGServiceStats(name: string): Promise<PGServerStats> {
   return handleResponse<PGServerStats>(response)
 }
 
+// Schema Statistics types
+export interface PGTableStats {
+  name: string
+  row_count: number
+  size: string
+  size_bytes: number
+  dead_tuples: number
+  last_vacuum?: string
+  last_autovacuum?: string
+  index_count: number
+  has_primary_key: boolean
+  has_geometry: boolean
+  geometry_type?: string
+  srid?: number
+}
+
+export interface PGViewStats {
+  name: string
+  definition?: string
+  is_materialized: boolean
+}
+
+export interface PGSchemaStats {
+  name: string
+  owner: string
+  database_name: string
+
+  // Object counts
+  table_count: number
+  view_count: number
+  index_count: number
+  function_count: number
+  sequence_count: number
+  trigger_count: number
+
+  // Size info
+  total_size: string
+  total_size_bytes: number
+
+  // Table stats
+  total_rows: number
+  dead_tuples: number
+  table_usage?: string
+
+  // Tables with details
+  tables: PGTableStats[]
+
+  // Views
+  views: PGViewStats[]
+
+  // PostGIS specific
+  has_postgis: boolean
+  geometry_columns: number
+  raster_columns: number
+}
+
+// Get schema statistics for a PostgreSQL schema
+export async function getPGSchemaStats(serviceName: string, schemaName: string): Promise<PGSchemaStats> {
+  const response = await fetch(
+    `${API_BASE}/pg/services/${encodeURIComponent(serviceName)}/schemastats?schema=${encodeURIComponent(schemaName)}`
+  )
+  return handleResponse<PGSchemaStats>(response)
+}
+
 // ============================================================================
 // PostgreSQL Data Import API
 // ============================================================================
@@ -1091,4 +1155,51 @@ export async function startRasterImport(request: RasterImportRequest): Promise<{
 export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
   const response = await fetch(`${API_BASE}/pg/import/${jobId}`)
   return handleResponse<ImportJob>(response)
+}
+
+// ============================================================================
+// Query Execution API
+// ============================================================================
+
+export interface QueryResult {
+  columns: string[]
+  rows: unknown[][]
+  row_count: number
+  execution_time_ms: number
+}
+
+export interface ExecuteQueryResponse {
+  success: boolean
+  sql: string
+  result: QueryResult
+}
+
+// Execute a SQL query against a PostgreSQL service
+export async function executeQuery(
+  serviceName: string,
+  sql: string,
+  maxRows: number = 100
+): Promise<ExecuteQueryResponse> {
+  const response = await fetch(`${API_BASE}/query/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      service_name: serviceName,
+      sql,
+      max_rows: maxRows,
+    }),
+  })
+  return handleResponse<ExecuteQueryResponse>(response)
+}
+
+// Get table data for the data viewer
+export async function getTableData(
+  serviceName: string,
+  schemaName: string,
+  tableName: string,
+  limit: number = 100,
+  offset: number = 0
+): Promise<ExecuteQueryResponse> {
+  const sql = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit} OFFSET ${offset}`
+  return executeQuery(serviceName, sql, limit)
 }

@@ -810,6 +810,42 @@ sslmode=prefer
 | `/api/pg/services/{name}/test` | POST | Test connection |
 | `/api/pg/services/{name}/parse` | POST | Harvest schema metadata |
 | `/api/pg/services/{name}/schema` | GET | Get harvested schema |
+| `/api/pg/services/{name}/schemas` | GET | Get schemas for SQL completion |
+| `/api/pg/services/{name}/stats` | GET | Get server statistics |
+| `/api/query/execute` | POST | Execute SQL query |
+
+### Data Viewer Dialog
+
+The Data Viewer allows browsing table data with the following features:
+
+- **Paginated Results**: View table data with configurable page sizes (25, 50, 100, 250, 500 rows)
+- **Column Headers**: Displays all column names
+- **Row Numbering**: Shows row numbers for easy reference
+- **NULL Handling**: Displays NULL values with visual distinction
+- **JSON Support**: Renders JSON/JSONB fields with syntax highlighting
+- **Pagination Controls**: Navigate through pages with prev/next buttons or jump to specific page
+- **Total Row Count**: Shows total rows in the table
+- **Query Timing**: Displays query execution time
+- **CSV Export**: Export current page data to CSV file
+- **Refresh**: Reload data from the database
+
+### Tree Structure
+
+The PostgreSQL tree displays:
+- **Service Nodes**: Database connections from pg_service.conf
+  - Shows host, port, and database name
+  - Refresh icon to reload schema data
+  - Upload icon to import data
+- **Schema Nodes**: Database schemas
+  - Refresh icon to reload tables
+  - Upload icon to import data into schema
+  - Table count badge
+- **Table Nodes**: Tables and views
+  - View Data icon to open Data Viewer dialog
+  - Query icon to open SQL query editor
+  - Column count badge
+- **Column Nodes**: Table columns
+  - Shows column name, type, and nullability
 
 ### Schema Cache
 
@@ -845,12 +881,15 @@ The application provides a geospatial data import facility using GDAL's ogr2ogr.
 
 ### Import Features
 
-- **Layer Detection**: Detect available layers in multi-layer sources
+- **Layer Detection**: Detect available layers in multi-layer sources (e.g., all tables in a GeoPackage)
+- **Multi-Layer Import**: Import all layers from GeoPackage files with Select All/Deselect All controls
+- **Custom Table Names**: Edit target table names for each layer before import
 - **SRID Auto-detection**: Automatically detect source coordinate system
 - **Reprojection**: Optionally reproject to target SRID
 - **Overwrite/Append**: Replace or append to existing tables
 - **Progress Tracking**: Real-time import progress updates
 - **Background Jobs**: Async import with job status tracking
+- **Schema Selection**: Choose target schema for imported tables
 
 ### API Endpoints
 
