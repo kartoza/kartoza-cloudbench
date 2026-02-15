@@ -1306,6 +1306,92 @@ The editor provides intelligent completion based on context:
 
 ---
 
+## UI Animation System
+
+The Web UI features a comprehensive physics-based animation system that creates a delightful, engaging user experience with purposeful motion.
+
+### Design Philosophy
+
+- **Purposeful Motion**: Animations guide user attention and communicate state changes
+- **Spring Physics**: Natural, organic movement using spring dynamics (stiffness, damping, mass)
+- **Micro-interactions**: Subtle feedback on hover, tap, and state changes
+- **Delightful Surprises**: Occasional celebratory moments (confetti, sparkles) for achievements
+- **Flow State**: Smooth transitions support user focus and confidence
+
+### Animation Utilities
+
+Located in `web/src/utils/animations.ts`:
+
+| Category | Examples |
+|----------|----------|
+| Spring Configs | `gentle`, `default`, `snappy`, `bouncy`, `wobbly`, `stiff` |
+| Modal Transitions | `modalBackdrop`, `modalContent`, `slideUp`, `slideDown` |
+| List Animations | `staggerContainer`, `staggerItem`, `listItemHover` |
+| Tree Animations | `treeNodeExpand`, `treeChevron` |
+| Feedback | `successPop`, `errorShake`, `warningPulse` |
+| Special Effects | `confettiBurst`, `sparkle`, `heartbeat`, `wiggle` |
+
+### Animated Components
+
+Located in `web/src/components/AnimatedComponents.tsx`:
+
+| Component | Purpose |
+|-----------|---------|
+| `AnimatedModal` | Physics-based modal with backdrop blur |
+| `AnimatedButton` | Hover/tap feedback with loading states |
+| `AnimatedCard` | Hover elevation and entry animation |
+| `AnimatedList` | Staggered entry for list items |
+| `AnimatedExpandable` | Smooth expand/collapse sections |
+| `AnimatedChevron` | Rotating indicator for expandable items |
+| `AnimatedCheckmark` | Celebratory success indicator |
+| `AnimatedError` | Shake animation for errors |
+| `AnimatedToast` | Slide-in notifications |
+| `AnimatedProgress` | Spring-based progress bar |
+| `AnimatedCounter` | Animated number transitions |
+| `Confetti` | Celebration particle effects |
+| `SparkleWrapper` | Ambient sparkle effects |
+| `PulsingDot` | Status indicators |
+
+### Spring Configurations
+
+```typescript
+// Gentle, relaxed motion for ambient elements
+gentle: { stiffness: 120, damping: 14, mass: 1 }
+
+// Default spring for most UI elements
+default: { stiffness: 300, damping: 24, mass: 1 }
+
+// Snappy response for interactive elements
+snappy: { stiffness: 400, damping: 28, mass: 0.8 }
+
+// Bouncy for playful elements
+bouncy: { stiffness: 500, damping: 15, mass: 1 }
+```
+
+### Usage Example
+
+```tsx
+import { motion } from 'framer-motion';
+import { modalContent, springs } from '../utils/animations';
+
+<motion.div
+  variants={modalContent}
+  initial="hidden"
+  animate="visible"
+  exit="exit"
+>
+  <motion.button
+    whileHover={{ scale: 1.02 }}
+    whileTap={{ scale: 0.98 }}
+    transition={springs.snappy}
+  >
+    Click me
+  </motion.button>
+</motion.div>
+```
+
+---
+
 ## Terria Integration
 
 The application integrates with TerriaJS, a powerful open-source framework for web-based 2D/3D geospatial visualization. This enables viewing GeoServer data in a 3D globe interface.
@@ -1408,6 +1494,7 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 | 0.9.0 | 2025 | Visual Query Designer with SQL generation, PostGIS support, query saving |
 | 0.10.0 | 2025 | SQL View Layers: publish queries as GeoServer WMS/WFS layers |
 | 0.11.0 | 2025 | SQL Editor with syntax highlighting and schema-aware autocompletion |
+| 0.12.0 | 2025 | Physics-based UI animations with spring motion, micro-interactions, and delightful transitions |
 
 ---
 

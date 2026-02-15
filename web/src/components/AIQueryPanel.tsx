@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { FiPlay, FiRefreshCw, FiAlertTriangle, FiCheck, FiCpu, FiDatabase, FiHelpCircle, FiEdit2 } from 'react-icons/fi';
 import { SQLEditor } from './SQLEditor';
+import { springs, staggerContainer, staggerItem, slideUp, expandCollapse } from '../utils/animations';
 
 interface QueryResult {
   columns: { name: string; type: string; nullable: boolean }[];
@@ -124,10 +126,25 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
   ];
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl shadow-lg p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
+    <motion.div
+      className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-6 max-w-4xl mx-auto overflow-hidden"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={springs.default}
+    >
+      <motion.div
+        className="flex items-center justify-between mb-4"
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.1, ...springs.snappy }}
+      >
         <h2 className="text-xl font-bold flex items-center gap-2">
-          <FiCpu className="text-purple-500" />
+          <motion.div
+            animate={{ rotate: [0, 360] }}
+            transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+          >
+            <FiCpu className="text-purple-500" />
+          </motion.div>
           AI Query Engine
         </h2>
         <div className="flex items-center gap-2">
@@ -135,57 +152,93 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
             <FiDatabase className="inline mr-1" />
             {serviceName}{schemaName && `.${schemaName}`}
           </span>
-          <button
+          <motion.button
             onClick={() => setShowHelp(!showHelp)}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
             title="Help"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.95 }}
           >
             <FiHelpCircle />
-          </button>
+          </motion.button>
         </div>
-      </div>
+      </motion.div>
 
       {/* Provider Status */}
-      {!isProviderAvailable && (
-        <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 rounded-lg flex items-center gap-2">
-          <FiAlertTriangle />
-          <span>
-            Ollama is not running. Please start Ollama with:{' '}
-            <code className="bg-yellow-200 dark:bg-yellow-800 px-1 rounded">ollama serve</code>
-          </span>
-        </div>
-      )}
+      <AnimatePresence>
+        {!isProviderAvailable && (
+          <motion.div
+            className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 rounded-xl flex items-center gap-2"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={springs.gentle}
+          >
+            <motion.div
+              animate={{ rotate: [0, 10, -10, 0] }}
+              transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 2 }}
+            >
+              <FiAlertTriangle />
+            </motion.div>
+            <span>
+              Ollama is not running. Please start Ollama with:{' '}
+              <code className="bg-yellow-200 dark:bg-yellow-800 px-1 rounded">ollama serve</code>
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Help Panel */}
-      {showHelp && (
-        <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <h3 className="font-semibold mb-2">How to use</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            Ask questions about your data in natural language. The AI will generate SQL queries
-            that you can review and execute.
-          </p>
-          <h4 className="font-medium text-sm mb-2">Example questions:</h4>
-          <div className="flex flex-wrap gap-2">
-            {exampleQuestions.map((q, i) => (
-              <button
-                key={i}
-                onClick={() => setQuestion(q)}
-                className="text-xs px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {showHelp && (
+          <motion.div
+            className="mb-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl overflow-hidden"
+            variants={expandCollapse}
+            initial="collapsed"
+            animate="expanded"
+            exit="collapsed"
+          >
+            <h3 className="font-semibold mb-2">How to use</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              Ask questions about your data in natural language. The AI will generate SQL queries
+              that you can review and execute.
+            </p>
+            <h4 className="font-medium text-sm mb-2">Example questions:</h4>
+            <motion.div
+              className="flex flex-wrap gap-2"
+              variants={staggerContainer}
+              initial="hidden"
+              animate="visible"
+            >
+              {exampleQuestions.map((q, i) => (
+                <motion.button
+                  key={i}
+                  onClick={() => setQuestion(q)}
+                  className="text-xs px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                  variants={staggerItem}
+                  whileHover={{ scale: 1.05, y: -1 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  {q}
+                </motion.button>
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Question Input */}
-      <div className="mb-4">
-        <textarea
+      <motion.div
+        className="mb-4"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.2 }}
+      >
+        <motion.textarea
           value={question}
           onChange={e => setQuestion(e.target.value)}
           placeholder="Ask a question about your data..."
-          className="w-full p-3 border rounded-lg dark:bg-gray-800 dark:border-gray-600 resize-none"
+          className="w-full p-4 border-2 rounded-xl dark:bg-gray-800 dark:border-gray-600 resize-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
           rows={3}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -194,36 +247,65 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
             }
           }}
         />
-        <div className="flex items-center justify-between mt-2">
-          <label className="flex items-center gap-2 text-sm text-gray-500">
-            <input
+        <div className="flex items-center justify-between mt-3">
+          <motion.label
+            className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer group"
+            whileHover={{ x: 2 }}
+          >
+            <motion.input
               type="checkbox"
               checked={autoExecute}
               onChange={e => setAutoExecute(e.target.checked)}
-              className="rounded"
+              className="rounded border-gray-300 text-purple-500 focus:ring-purple-500"
+              whileTap={{ scale: 0.9 }}
             />
-            Auto-execute query
-          </label>
-          <button
+            <span className="group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
+              Auto-execute query
+            </span>
+          </motion.label>
+          <motion.button
             onClick={handleSubmit}
             disabled={loading || !question.trim() || !isProviderAvailable}
-            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-5 py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2 font-medium transition-shadow"
+            whileHover={!loading && question.trim() && isProviderAvailable ? { scale: 1.02 } : undefined}
+            whileTap={!loading && question.trim() && isProviderAvailable ? { scale: 0.98 } : undefined}
           >
-            {loading ? <FiRefreshCw className="animate-spin" /> : <FiPlay />}
+            {loading ? (
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
+                <FiRefreshCw />
+              </motion.div>
+            ) : (
+              <FiPlay />
+            )}
             Generate SQL
-          </button>
+          </motion.button>
         </div>
-      </div>
+      </motion.div>
 
       {/* Results */}
-      {response && (
-        <div className="space-y-4">
-          {/* Error */}
-          {response.error && (
-            <div className="p-3 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-lg">
-              {response.error}
-            </div>
-          )}
+      <AnimatePresence>
+        {response && (
+          <motion.div
+            className="space-y-4"
+            variants={slideUp}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {/* Error */}
+            <AnimatePresence>
+              {response.error && (
+                <motion.div
+                  className="p-4 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-xl border border-red-200 dark:border-red-800"
+                  initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1, x: [0, -5, 5, -5, 0] }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ x: { duration: 0.4 } }}
+                >
+                  {response.error}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
           {/* Generated SQL */}
           {response.sql && (
@@ -334,12 +416,18 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
 
           {/* Timing */}
           {response.duration_ms !== undefined && (
-            <p className="text-sm text-gray-500">
+            <motion.p
+              className="text-sm text-gray-500"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+            >
               Total time: {response.duration_ms.toFixed(2)}ms
-            </p>
+            </motion.p>
           )}
-        </div>
-      )}
-    </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 };

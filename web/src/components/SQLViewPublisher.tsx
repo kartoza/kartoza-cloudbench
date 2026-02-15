@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   FiDatabase,
   FiLayers,
@@ -10,6 +11,14 @@ import {
   FiCode,
 } from 'react-icons/fi';
 import { SQLEditor } from './SQLEditor';
+import {
+  modalBackdrop,
+  modalContent,
+  springs,
+  staggerContainer,
+  staggerItem,
+  successPop,
+} from '../utils/animations';
 
 interface GeoServerConnection {
   id: string;
@@ -204,94 +213,196 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
   // Success view
   if (result?.success) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-          <div className="flex items-center mb-4">
-            <div className="bg-green-100 p-2 rounded-full mr-3">
-              <FiCheck className="text-green-600" size={24} />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900">SQL View Created</h2>
-          </div>
+      <motion.div
+        className="fixed inset-0 flex items-center justify-center z-50"
+        initial="hidden"
+        animate="visible"
+        exit="exit"
+      >
+        <motion.div
+          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          variants={modalBackdrop}
+          onClick={onClose}
+        />
+        <motion.div
+          className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full mx-4 p-6 overflow-hidden"
+          variants={modalContent}
+        >
+          {/* Celebration background effect */}
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+          />
 
-          <div className="space-y-3 mb-6">
-            <div className="flex items-center text-gray-600">
-              <FiLayers className="mr-2" />
-              <span className="font-medium">Layer:</span>
-              <span className="ml-2">{result.layer_name}</span>
-            </div>
-            <div className="flex items-center text-gray-600">
-              <FiMap className="mr-2" />
-              <span className="font-medium">Workspace:</span>
-              <span className="ml-2">{result.workspace}</span>
-            </div>
-            <div className="flex items-center text-gray-600">
-              <FiDatabase className="mr-2" />
-              <span className="font-medium">Store:</span>
-              <span className="ml-2">{result.datastore}</span>
-            </div>
-          </div>
-
-          <div className="bg-gray-50 rounded p-3 mb-6">
-            <p className="text-sm text-gray-600 mb-2">
-              Your query is now available as a WMS/WFS layer:
-            </p>
-            <p className="text-sm font-mono text-gray-800">
-              {result.workspace}:{result.layer_name}
-            </p>
-          </div>
-
-          {result.wms_endpoint && (
-            <div className="flex space-x-2 mb-4">
-              <a
-                href={result.wms_endpoint}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center text-blue-600 hover:text-blue-800 text-sm"
+          <div className="relative">
+            <motion.div
+              className="flex items-center mb-4"
+              variants={staggerContainer}
+              initial="hidden"
+              animate="visible"
+            >
+              <motion.div
+                className="bg-green-100 dark:bg-green-900/50 p-3 rounded-full mr-3"
+                variants={successPop}
               >
-                <FiExternalLink className="mr-1" />
-                WMS Capabilities
-              </a>
-              {result.wfs_endpoint && (
-                <a
-                  href={result.wfs_endpoint}
+                <motion.div
+                  initial={{ scale: 0, rotate: -180 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={springs.bouncy}
+                >
+                  <FiCheck className="text-green-600 dark:text-green-400" size={28} />
+                </motion.div>
+              </motion.div>
+              <motion.h2
+                className="text-xl font-bold text-gray-900 dark:text-white"
+                variants={staggerItem}
+              >
+                SQL View Created
+              </motion.h2>
+            </motion.div>
+
+            <motion.div
+              className="space-y-3 mb-6"
+              variants={staggerContainer}
+              initial="hidden"
+              animate="visible"
+            >
+              <motion.div className="flex items-center text-gray-600 dark:text-gray-300" variants={staggerItem}>
+                <FiLayers className="mr-2 text-blue-500" />
+                <span className="font-medium">Layer:</span>
+                <span className="ml-2">{result.layer_name}</span>
+              </motion.div>
+              <motion.div className="flex items-center text-gray-600 dark:text-gray-300" variants={staggerItem}>
+                <FiMap className="mr-2 text-green-500" />
+                <span className="font-medium">Workspace:</span>
+                <span className="ml-2">{result.workspace}</span>
+              </motion.div>
+              <motion.div className="flex items-center text-gray-600 dark:text-gray-300" variants={staggerItem}>
+                <FiDatabase className="mr-2 text-purple-500" />
+                <span className="font-medium">Store:</span>
+                <span className="ml-2">{result.datastore}</span>
+              </motion.div>
+            </motion.div>
+
+            <motion.div
+              className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 mb-6"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, ...springs.gentle }}
+            >
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                Your query is now available as a WMS/WFS layer:
+              </p>
+              <motion.p
+                className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-700 px-3 py-2 rounded-lg"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.4 }}
+              >
+                {result.workspace}:{result.layer_name}
+              </motion.p>
+            </motion.div>
+
+            {result.wms_endpoint && (
+              <motion.div
+                className="flex space-x-4 mb-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5 }}
+              >
+                <motion.a
+                  href={result.wms_endpoint}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center text-blue-600 hover:text-blue-800 text-sm"
+                  className="flex items-center text-blue-600 hover:text-blue-800 text-sm group"
+                  whileHover={{ x: 2 }}
                 >
-                  <FiExternalLink className="mr-1" />
-                  WFS Capabilities
-                </a>
-              )}
-            </div>
-          )}
+                  <FiExternalLink className="mr-1 group-hover:rotate-12 transition-transform" />
+                  WMS Capabilities
+                </motion.a>
+                {result.wfs_endpoint && (
+                  <motion.a
+                    href={result.wfs_endpoint}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center text-blue-600 hover:text-blue-800 text-sm group"
+                    whileHover={{ x: 2 }}
+                  >
+                    <FiExternalLink className="mr-1 group-hover:rotate-12 transition-transform" />
+                    WFS Capabilities
+                  </motion.a>
+                )}
+              </motion.div>
+            )}
 
-          <button
-            onClick={onClose}
-            className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Done
-          </button>
-        </div>
-      </div>
+            <motion.button
+              onClick={onClose}
+              className="w-full py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-shadow"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5, ...springs.snappy }}
+            >
+              Done
+            </motion.button>
+          </div>
+        </motion.div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <motion.div
+      className="fixed inset-0 flex items-center justify-center z-50"
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+    >
+      <motion.div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        variants={modalBackdrop}
+        onClick={onClose}
+      />
+      <motion.div
+        className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+        variants={modalContent}
+      >
         <div className="p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Publish SQL View Layer</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-              <FiX size={24} />
-            </button>
+            <motion.h2
+              className="text-xl font-bold text-gray-900 dark:text-white"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={springs.snappy}
+            >
+              Publish SQL View Layer
+            </motion.h2>
+            <motion.button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              whileHover={{ rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <FiX size={20} />
+            </motion.button>
           </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
-              {error}
-            </div>
-          )}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-xl mb-4"
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1, x: [0, -5, 5, -5, 5, 0] }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                transition={{ x: { duration: 0.4 }, ...springs.snappy }}
+              >
+                {error}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* GeoServer Selection */}
           <div className="space-y-4 mb-6">
@@ -486,21 +597,35 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end space-x-3 pt-4 border-t">
-            <button
+          <motion.div
+            className="flex justify-end space-x-3 pt-4 border-t dark:border-gray-700"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, ...springs.gentle }}
+          >
+            <motion.button
               onClick={onClose}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
             >
               Cancel
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               onClick={createSQLView}
               disabled={loading || !selectedConnection || !selectedWorkspace || !selectedDatastore || !layerName || !sql}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center"
+              className="px-5 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg shadow-md shadow-blue-500/25 hover:shadow-blue-500/40 disabled:from-gray-300 disabled:to-gray-400 disabled:shadow-none disabled:cursor-not-allowed flex items-center transition-shadow"
+              whileHover={!loading && selectedConnection && selectedWorkspace && selectedDatastore && layerName && sql ? { scale: 1.02 } : undefined}
+              whileTap={!loading && selectedConnection && selectedWorkspace && selectedDatastore && layerName && sql ? { scale: 0.98 } : undefined}
             >
               {loading ? (
                 <>
-                  <FiRefreshCw className="animate-spin mr-2" />
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  >
+                    <FiRefreshCw className="mr-2" />
+                  </motion.div>
                   Creating...
                 </>
               ) : (
@@ -509,10 +634,10 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
                   Publish Layer
                 </>
               )}
-            </button>
-          </div>
+            </motion.button>
+          </motion.div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
