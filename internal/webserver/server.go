@@ -129,6 +129,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/search/suggestions", s.handleSearchSuggestions)
 
+	// API routes - PostgreSQL Services
+	mux.HandleFunc("/api/pg/services", s.handlePGServices)
+	mux.HandleFunc("/api/pg/services/", s.handlePGServiceByName)
+
 	// API routes - Terria Integration (3D globe viewer, catalog export)
 	mux.HandleFunc("/api/terria/connection/", s.handleTerriaConnection)
 	mux.HandleFunc("/api/terria/workspace/", s.handleTerriaWorkspace)

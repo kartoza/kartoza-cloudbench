@@ -5,6 +5,7 @@ import (
 	"github.com/kartoza/kartoza-cloudbench/internal/api"
 	"github.com/kartoza/kartoza-cloudbench/internal/config"
 	"github.com/kartoza/kartoza-cloudbench/internal/models"
+	"github.com/kartoza/kartoza-cloudbench/internal/postgres"
 )
 
 // buildConnectionsTree builds the unified tree with CloudBench root, GeoServer and PostgreSQL sections
@@ -27,11 +28,36 @@ func (a *App) buildConnectionsTree() {
 	// Create PostgreSQL section
 	postgresNode := models.NewTreeNode("PostgreSQL", models.NodeTypePostgreSQLRoot)
 	postgresNode.Expanded = true
-	// PostgreSQL services will be populated in Phase 2 from pg_service.conf
-	// For now, show placeholder if no services configured
+	// Load PostgreSQL services from pg_service.conf
+	a.loadPGServicesToTree(postgresNode)
 	root.AddChild(postgresNode)
 
 	a.treeView.SetRoot(root)
+}
+
+// loadPGServicesToTree loads PostgreSQL services from pg_service.conf into the tree
+func (a *App) loadPGServicesToTree(postgresNode *models.TreeNode) {
+	if !postgres.PGServiceFileExists() {
+		return
+	}
+
+	services, err := postgres.ParsePGServiceFile()
+	if err != nil {
+		return
+	}
+
+	for _, svc := range services {
+		svcNode := models.NewTreeNode(svc.Name, models.NodeTypePGService)
+		svcNode.PGServiceName = svc.Name
+
+		// Check if this service has been parsed (schema harvested)
+		state := a.config.GetPGServiceState(svc.Name)
+		if state != nil {
+			svcNode.IsParsed = state.IsParsed
+		}
+
+		postgresNode.AddChild(svcNode)
+	}
 }
 
 // addWorkspacesToConnection adds workspaces to a connection node

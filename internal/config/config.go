@@ -73,6 +73,13 @@ func DefaultSyncOptions() SyncOptions {
 	}
 }
 
+// PGServiceState tracks the parsed state of a PostgreSQL service
+type PGServiceState struct {
+	Name     string `json:"name"`
+	IsParsed bool   `json:"is_parsed"`
+	// SchemaCache is stored separately to avoid bloating the main config
+}
+
 // Config holds the application configuration
 type Config struct {
 	Connections      []Connection        `json:"connections"`
@@ -81,6 +88,7 @@ type Config struct {
 	Theme            string              `json:"theme"`
 	SyncConfigs      []SyncConfiguration `json:"sync_configs,omitempty"`
 	PingIntervalSecs int                 `json:"ping_interval_secs,omitempty"` // Dashboard refresh interval, default 60
+	PGServiceStates  []PGServiceState    `json:"pg_services,omitempty"`        // PostgreSQL service states
 }
 
 // GetPingInterval returns the ping interval in seconds, with a default of 60
@@ -302,4 +310,39 @@ func (c *Config) GetConnection(id string) *Connection {
 		}
 	}
 	return nil
+}
+
+// GetPGServiceState returns the state for a PostgreSQL service
+func (c *Config) GetPGServiceState(name string) *PGServiceState {
+	for i := range c.PGServiceStates {
+		if c.PGServiceStates[i].Name == name {
+			return &c.PGServiceStates[i]
+		}
+	}
+	return nil
+}
+
+// SetPGServiceParsed marks a PostgreSQL service as parsed
+func (c *Config) SetPGServiceParsed(name string, parsed bool) {
+	for i := range c.PGServiceStates {
+		if c.PGServiceStates[i].Name == name {
+			c.PGServiceStates[i].IsParsed = parsed
+			return
+		}
+	}
+	// Add new entry
+	c.PGServiceStates = append(c.PGServiceStates, PGServiceState{
+		Name:     name,
+		IsParsed: parsed,
+	})
+}
+
+// RemovePGServiceState removes the state for a PostgreSQL service
+func (c *Config) RemovePGServiceState(name string) {
+	for i := range c.PGServiceStates {
+		if c.PGServiceStates[i].Name == name {
+			c.PGServiceStates = append(c.PGServiceStates[:i], c.PGServiceStates[i+1:]...)
+			return
+		}
+	}
 }

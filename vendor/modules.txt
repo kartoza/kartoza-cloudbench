@@ -47,6 +47,15 @@ github.com/google/uuid
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
+# github.com/lib/pq v1.11.2
+## explicit; go 1.21
+github.com/lib/pq
+github.com/lib/pq/internal/pgpass
+github.com/lib/pq/internal/pqsql
+github.com/lib/pq/internal/pqutil
+github.com/lib/pq/internal/proto
+github.com/lib/pq/oid
+github.com/lib/pq/scram
 # github.com/lrstanley/bubblezone v0.0.0-20240914071701-b48c55a5e78e
 ## explicit; go 1.19
 github.com/lrstanley/bubblezone
