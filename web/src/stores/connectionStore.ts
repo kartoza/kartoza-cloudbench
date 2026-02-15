@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import type { Connection } from '../types'
 import * as api from '../api/client'
+import type { PGService } from '../api/client'
 
 interface ConnectionState {
   connections: Connection[]
+  pgServices: PGService[]
   activeConnectionId: string | null
   isLoading: boolean
   error: string | null
@@ -16,10 +18,14 @@ interface ConnectionState {
   setActiveConnection: (id: string | null) => void
   testConnection: (id: string) => Promise<{ success: boolean; message: string }>
   clearError: () => void
+
+  // PostgreSQL service actions
+  refreshPGServices: () => Promise<void>
 }
 
 export const useConnectionStore = create<ConnectionState>((set) => ({
   connections: [],
+  pgServices: [],
   activeConnectionId: null,
   isLoading: false,
   error: null,
@@ -97,4 +103,13 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  refreshPGServices: async () => {
+    try {
+      const pgServices = await api.getPGServices()
+      set({ pgServices })
+    } catch (err) {
+      console.error('Failed to fetch PG services:', err)
+    }
+  },
 }))

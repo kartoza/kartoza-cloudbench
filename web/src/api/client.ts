@@ -804,3 +804,67 @@ export async function getSearchSuggestions(): Promise<{ suggestions: string[] }>
   const response = await fetch(`${API_BASE}/search/suggestions`)
   return handleResponse<{ suggestions: string[] }>(response)
 }
+
+// ============================================================================
+// PostgreSQL Services API (from pg_service.conf)
+// ============================================================================
+
+export interface PGService {
+  name: string
+  host?: string
+  port?: string
+  dbname?: string
+  user?: string
+  sslmode?: string
+  is_parsed: boolean
+}
+
+export interface PGServiceCreate {
+  name: string
+  host: string
+  port: string
+  dbname: string
+  user: string
+  password: string
+  sslmode: string
+}
+
+// Get all PostgreSQL services from pg_service.conf
+export async function getPGServices(): Promise<PGService[]> {
+  const response = await fetch(`${API_BASE}/pg/services`)
+  return handleResponse<PGService[]>(response)
+}
+
+// Create a new PostgreSQL service (adds to pg_service.conf)
+export async function createPGService(service: PGServiceCreate): Promise<PGService> {
+  const response = await fetch(`${API_BASE}/pg/services`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(service),
+  })
+  return handleResponse<PGService>(response)
+}
+
+// Delete a PostgreSQL service from pg_service.conf
+export async function deletePGService(name: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/pg/services/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+  return handleResponse<void>(response)
+}
+
+// Test a PostgreSQL service connection
+export async function testPGService(name: string): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE}/pg/services/${encodeURIComponent(name)}/test`, {
+    method: 'POST',
+  })
+  return handleResponse<{ success: boolean; message: string }>(response)
+}
+
+// Parse/harvest schema from a PostgreSQL service
+export async function parsePGService(name: string): Promise<unknown> {
+  const response = await fetch(`${API_BASE}/pg/services/${encodeURIComponent(name)}/parse`, {
+    method: 'POST',
+  })
+  return handleResponse<unknown>(response)
+}
