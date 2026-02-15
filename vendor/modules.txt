@@ -14,7 +14,10 @@ github.com/aymanbagabas/go-osc52/v2
 # github.com/charmbracelet/bubbles v1.0.0
 ## explicit; go 1.24.2
 github.com/charmbracelet/bubbles/cursor
+github.com/charmbracelet/bubbles/help
 github.com/charmbracelet/bubbles/key
+github.com/charmbracelet/bubbles/list
+github.com/charmbracelet/bubbles/paginator
 github.com/charmbracelet/bubbles/progress
 github.com/charmbracelet/bubbles/runeutil
 github.com/charmbracelet/bubbles/spinner
@@ -101,6 +104,7 @@ github.com/muesli/termenv
 github.com/rivo/uniseg
 # github.com/sahilm/fuzzy v0.1.1
 ## explicit
+github.com/sahilm/fuzzy
 # github.com/spf13/cobra v1.8.1
 ## explicit; go 1.15
 github.com/spf13/cobra

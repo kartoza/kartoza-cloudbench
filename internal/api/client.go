@@ -2051,6 +2051,213 @@ func (c *Client) PublishFeatureType(workspace, dataStore, featureTypeName string
 	return nil
 }
 
+// SQLViewParameter defines a parameter for a SQL View query
+type SQLViewParameter struct {
+	Name         string `json:"name"`
+	DefaultValue string `json:"defaultValue,omitempty"`
+	RegexpValidator string `json:"regexpValidator,omitempty"`
+}
+
+// SQLViewConfig contains configuration for creating a SQL View layer
+type SQLViewConfig struct {
+	Name             string             // Layer name
+	Title            string             // Human-readable title
+	Abstract         string             // Description
+	SQL              string             // The SQL query
+	KeyColumn        string             // Primary key column (optional)
+	GeometryColumn   string             // Geometry column name
+	GeometryType     string             // Geometry type (Point, LineString, Polygon, etc.)
+	GeometrySRID     int                // SRID (e.g., 4326)
+	Parameters       []SQLViewParameter // Query parameters
+	EscapeSql        bool               // Whether to escape SQL
+}
+
+// CreateSQLViewLayer creates a SQL View layer in GeoServer
+// SQL Views are virtual feature types that execute a SQL query instead of mapping to a table
+func (c *Client) CreateSQLViewLayer(workspace, dataStore string, config SQLViewConfig) error {
+	// Build the virtualTable (SQL View) configuration
+	virtualTable := map[string]interface{}{
+		"name": config.Name,
+		"sql":  config.SQL,
+	}
+
+	// Add key column if specified
+	if config.KeyColumn != "" {
+		virtualTable["keyColumn"] = config.KeyColumn
+	}
+
+	// Add escape SQL setting
+	virtualTable["escapeSql"] = config.EscapeSql
+
+	// Add geometry configuration
+	if config.GeometryColumn != "" {
+		geometry := map[string]interface{}{
+			"name": config.GeometryColumn,
+			"type": config.GeometryType,
+			"srid": config.GeometrySRID,
+		}
+		virtualTable["geometry"] = geometry
+	}
+
+	// Add parameters if any
+	if len(config.Parameters) > 0 {
+		params := make([]map[string]interface{}, len(config.Parameters))
+		for i, p := range config.Parameters {
+			param := map[string]interface{}{
+				"name": p.Name,
+			}
+			if p.DefaultValue != "" {
+				param["defaultValue"] = p.DefaultValue
+			}
+			if p.RegexpValidator != "" {
+				param["regexpValidator"] = p.RegexpValidator
+			}
+			params[i] = param
+		}
+		virtualTable["parameter"] = params
+	}
+
+	// Build the feature type with metadata containing virtualTable
+	title := config.Title
+	if title == "" {
+		title = config.Name
+	}
+
+	body := map[string]interface{}{
+		"featureType": map[string]interface{}{
+			"name":       config.Name,
+			"nativeName": config.Name,
+			"title":      title,
+			"abstract":   config.Abstract,
+			"enabled":    true,
+			"advertised": true,
+			"metadata": map[string]interface{}{
+				"entry": []map[string]interface{}{
+					{
+						"@key":         "JDBC_VIRTUAL_TABLE",
+						"virtualTable": virtualTable,
+					},
+				},
+			},
+		},
+	}
+
+	resp, err := c.doJSONRequest("POST", fmt.Sprintf("/workspaces/%s/datastores/%s/featuretypes", workspace, dataStore), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create SQL view layer: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
+// UpdateSQLViewLayer updates an existing SQL View layer
+func (c *Client) UpdateSQLViewLayer(workspace, dataStore string, config SQLViewConfig) error {
+	// Build the virtualTable (SQL View) configuration
+	virtualTable := map[string]interface{}{
+		"name": config.Name,
+		"sql":  config.SQL,
+	}
+
+	if config.KeyColumn != "" {
+		virtualTable["keyColumn"] = config.KeyColumn
+	}
+
+	virtualTable["escapeSql"] = config.EscapeSql
+
+	if config.GeometryColumn != "" {
+		geometry := map[string]interface{}{
+			"name": config.GeometryColumn,
+			"type": config.GeometryType,
+			"srid": config.GeometrySRID,
+		}
+		virtualTable["geometry"] = geometry
+	}
+
+	if len(config.Parameters) > 0 {
+		params := make([]map[string]interface{}, len(config.Parameters))
+		for i, p := range config.Parameters {
+			param := map[string]interface{}{
+				"name": p.Name,
+			}
+			if p.DefaultValue != "" {
+				param["defaultValue"] = p.DefaultValue
+			}
+			if p.RegexpValidator != "" {
+				param["regexpValidator"] = p.RegexpValidator
+			}
+			params[i] = param
+		}
+		virtualTable["parameter"] = params
+	}
+
+	title := config.Title
+	if title == "" {
+		title = config.Name
+	}
+
+	body := map[string]interface{}{
+		"featureType": map[string]interface{}{
+			"name":       config.Name,
+			"nativeName": config.Name,
+			"title":      title,
+			"abstract":   config.Abstract,
+			"enabled":    true,
+			"advertised": true,
+			"metadata": map[string]interface{}{
+				"entry": []map[string]interface{}{
+					{
+						"@key":         "JDBC_VIRTUAL_TABLE",
+						"virtualTable": virtualTable,
+					},
+				},
+			},
+		},
+	}
+
+	resp, err := c.doJSONRequest("PUT", fmt.Sprintf("/workspaces/%s/datastores/%s/featuretypes/%s", workspace, dataStore, config.Name), body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to update SQL view layer: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
+// DeleteSQLViewLayer deletes a SQL View layer (same as deleting a feature type)
+func (c *Client) DeleteSQLViewLayer(workspace, dataStore, layerName string) error {
+	// First delete the layer
+	resp, err := c.doRequest("DELETE", fmt.Sprintf("/layers/%s:%s", workspace, layerName), nil, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	// Then delete the feature type with recurse=true to clean up
+	resp, err = c.doRequest("DELETE", fmt.Sprintf("/workspaces/%s/datastores/%s/featuretypes/%s?recurse=true", workspace, dataStore, layerName), nil, "")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete SQL view layer: %s", string(bodyBytes))
+	}
+
+	return nil
+}
+
 // EnableLayer enables or disables a layer
 func (c *Client) EnableLayer(workspace, layerName string, enabled bool) error {
 	body := map[string]interface{}{

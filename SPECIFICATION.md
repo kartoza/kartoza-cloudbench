@@ -1123,6 +1123,104 @@ The QueryDesigner component provides:
 
 ---
 
+## SQL View Layers
+
+The application allows publishing SQL queries (from the Visual Query Designer or AI Query Engine) as GeoServer SQL View layers. This creates virtual layers that execute the query in real-time.
+
+### Features
+
+- **Publish Queries as Layers**: Convert any SQL query into a WMS/WFS layer
+- **PostGIS Store Selection**: Choose which PostGIS data store to create the view in
+- **Geometry Configuration**: Specify geometry column, type, and SRID
+- **Parameterized Views**: Support for query parameters with validation
+- **Auto-detection**: Automatic detection of geometry columns from the SQL query
+- **Update Support**: Modify the SQL of existing views without recreating
+
+### SQL View Configuration
+
+| Field | Description | Required |
+|-------|-------------|----------|
+| `layer_name` | Name of the layer in GeoServer | Yes |
+| `title` | Human-readable title | No |
+| `abstract` | Description of the layer | No |
+| `sql` | The SQL SELECT query | Yes |
+| `geometry_column` | Name of the geometry column in results | Yes |
+| `geometry_type` | PostGIS geometry type (Point, Polygon, etc.) | Yes |
+| `srid` | Spatial Reference ID (e.g., 4326) | Yes |
+| `key_column` | Primary key for WFS performance | No |
+| `parameters` | Query parameters with validators | No |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/sqlview` | POST | Create a new SQL View layer |
+| `/api/sqlview/{conn}/{ws}/{layer}` | PUT | Update existing SQL View |
+| `/api/sqlview/{conn}/{ws}/{layer}` | DELETE | Delete SQL View layer |
+| `/api/sqlview/datastores` | GET | List PostGIS data stores |
+| `/api/sqlview/detect` | POST | Auto-detect geometry info |
+
+### Create Request
+
+```json
+{
+  "connection_id": "conn_1",
+  "workspace": "myworkspace",
+  "datastore": "postgis_store",
+  "layer_name": "population_view",
+  "title": "Population by Region",
+  "abstract": "Aggregated population data",
+  "sql": "SELECT region, SUM(population) as total_pop, ST_Union(geom) as geom FROM census GROUP BY region",
+  "geometry_column": "geom",
+  "geometry_type": "MultiPolygon",
+  "srid": 4326,
+  "key_column": "region"
+}
+```
+
+### Create Response
+
+```json
+{
+  "success": true,
+  "layer_name": "population_view",
+  "workspace": "myworkspace",
+  "datastore": "postgis_store",
+  "sql": "SELECT ...",
+  "wms_endpoint": "http://geoserver/geoserver/wms?...",
+  "wfs_endpoint": "http://geoserver/geoserver/wfs?..."
+}
+```
+
+### Security Considerations
+
+- SQL is validated to ensure it's a SELECT query only
+- Dangerous operations (DROP, DELETE, UPDATE, etc.) are blocked
+- SQL injection patterns are detected and rejected
+- Read-only execution context in GeoServer
+
+### TUI Usage
+
+The SQL View Wizard provides a step-by-step process:
+1. Select GeoServer connection
+2. Choose workspace
+3. Select PostGIS data store
+4. Configure layer name and metadata
+5. Set geometry column, type, and SRID
+6. Review and create
+
+### Web UI Usage
+
+The SQLViewPublisher component provides:
+- Connection/workspace/datastore dropdowns
+- Layer configuration form
+- SQL preview panel
+- Geometry auto-detection button
+- Real-time validation
+- Success confirmation with WMS/WFS links
+
+---
+
 ## Terria Integration
 
 The application integrates with TerriaJS, a powerful open-source framework for web-based 2D/3D geospatial visualization. This enables viewing GeoServer data in a 3D globe interface.
@@ -1198,7 +1296,7 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 13. ~~**PG to GeoServer Bridge**: PostGIS store creation~~ (Implemented in v0.8.0)
 14. ~~**AI Query Engine**: Natural language to SQL~~ (Implemented in v0.8.0)
 15. ~~**Visual Query Designer**: Metabase-style query builder~~ (Implemented in v0.9.0)
-16. **SQL View Layers**: Publish queries as GeoServer layers (Planned)
+16. ~~**SQL View Layers**: Publish queries as GeoServer layers~~ (Implemented in v0.9.0)
 
 ### Known Limitations
 
@@ -1223,6 +1321,7 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 | 0.7.0 | 2025 | Terria 3D globe integration, catalog export, CORS proxy |
 | 0.8.0 | 2025 | Renamed to Kartoza CloudBench, PostgreSQL integration, ogr2ogr import, PG to GeoServer bridge |
 | 0.9.0 | 2025 | Visual Query Designer with SQL generation, PostGIS support, query saving |
+| 0.10.0 | 2025 | SQL View Layers: publish queries as GeoServer WMS/WFS layers |
 
 ---
 

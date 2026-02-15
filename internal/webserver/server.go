@@ -150,6 +150,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// API routes - Visual Query Designer
 	mux.HandleFunc("/api/query/", s.handleQuery)
 
+	// API routes - SQL View Layers (publish queries as GeoServer layers)
+	mux.HandleFunc("/api/sqlview/", s.handleSQLView)
+	mux.HandleFunc("/api/sqlview", s.handleSQLView)
+
 	// API routes - Terria Integration (3D globe viewer, catalog export)
 	mux.HandleFunc("/api/terria/connection/", s.handleTerriaConnection)
 	mux.HandleFunc("/api/terria/workspace/", s.handleTerriaWorkspace)

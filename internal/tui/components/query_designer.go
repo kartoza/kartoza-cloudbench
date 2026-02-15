@@ -490,7 +490,7 @@ func (q *QueryDesigner) formatResults() string {
 	sb.WriteString("\n\n")
 
 	// Summary
-	sb.WriteString(fmt.Sprintf("Rows: %d | Duration: %dms\n\n", q.queryResult.RowCount, q.queryResult.DurationMs))
+	sb.WriteString(fmt.Sprintf("Rows: %d | Duration: %.2fms\n\n", q.queryResult.RowCount, q.queryResult.Duration))
 
 	// Column headers
 	if len(q.queryResult.Columns) > 0 {
