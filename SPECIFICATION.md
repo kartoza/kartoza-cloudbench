@@ -945,6 +945,94 @@ The bridge creates PostGIS stores with optimized defaults:
 
 ---
 
+## AI Query Engine
+
+The application includes an AI-powered natural language to SQL query engine using local LLM providers.
+
+### Features
+
+- **Natural Language Queries**: Ask questions in plain English
+- **SQL Generation**: Automatically generates PostgreSQL/PostGIS queries
+- **Schema Awareness**: Uses database schema for accurate query generation
+- **Query Validation**: Checks for dangerous operations and SQL injection
+- **Safe Execution**: Read-only queries with LIMIT enforcement
+- **Result Display**: Tabular results with column types
+
+### Supported Providers
+
+| Provider | Description | Configuration |
+|----------|-------------|---------------|
+| Ollama | Local LLM server | `http://localhost:11434` |
+| (Planned) OpenAI | Cloud API | API key required |
+| (Planned) Anthropic | Cloud API | API key required |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ai/query` | POST | Generate and optionally execute SQL |
+| `/api/ai/explain` | POST | Explain a SQL query in natural language |
+| `/api/ai/execute` | POST | Execute a SQL query safely |
+| `/api/ai/providers` | GET | List available LLM providers |
+
+### Query Request
+
+```json
+{
+  "question": "Show me all countries with population > 1 million",
+  "service_name": "mydb",
+  "schema_name": "public",
+  "max_rows": 100,
+  "execute": true
+}
+```
+
+### Query Response
+
+```json
+{
+  "success": true,
+  "sql": "SELECT name, population FROM countries WHERE population > 1000000 LIMIT 100",
+  "confidence": 0.85,
+  "warnings": [],
+  "result": {
+    "columns": [{"name": "name", "type": "text"}, {"name": "population", "type": "integer"}],
+    "rows": [...],
+    "row_count": 42,
+    "duration_ms": 15.5
+  }
+}
+```
+
+### Safety Features
+
+- **Read-only mode**: Only SELECT queries allowed by default
+- **LIMIT enforcement**: Automatic LIMIT clause added to prevent large result sets
+- **Query validation**: Checks for DROP, DELETE, TRUNCATE, UPDATE without WHERE
+- **Timeout protection**: 30-second query timeout
+- **SQL injection detection**: Pattern-based detection of common injection techniques
+
+### TUI Usage
+
+The AI Query component can be accessed from PostgreSQL service nodes. It provides:
+- Multi-line question input
+- Generated SQL preview with syntax highlighting
+- Confidence indicator
+- Warning display
+- Result table viewer
+
+### Web UI Usage
+
+The AI Query Panel provides:
+- Question input with example suggestions
+- Auto-execute toggle
+- SQL preview with execute button
+- Confidence badge (color-coded)
+- Scrollable results table
+- Provider status indicator
+
+---
+
 ## Terria Integration
 
 The application integrates with TerriaJS, a powerful open-source framework for web-based 2D/3D geospatial visualization. This enables viewing GeoServer data in a 3D globe interface.
@@ -1018,7 +1106,7 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 11. ~~**PostgreSQL Integration**: pg_service.conf support~~ (Implemented in v0.8.0)
 12. ~~**Data Import**: ogr2ogr-based import~~ (Implemented in v0.8.0)
 13. ~~**PG to GeoServer Bridge**: PostGIS store creation~~ (Implemented in v0.8.0)
-14. **AI Query Engine**: Natural language to SQL (Planned)
+14. ~~**AI Query Engine**: Natural language to SQL~~ (Implemented in v0.8.0)
 15. **Visual Query Designer**: Metabase-style query builder (Planned)
 16. **SQL View Layers**: Publish queries as GeoServer layers (Planned)
 
