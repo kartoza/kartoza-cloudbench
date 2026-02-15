@@ -43,6 +43,7 @@ import { SiPostgresql } from 'react-icons/si'
 import * as api from '../api/client'
 import type { ServerStatus } from '../types'
 import { useUIStore } from '../stores/uiStore'
+import { useTreeStore } from '../stores/treeStore'
 
 // Keyframe animations
 const pulseKeyframes = keyframes`
@@ -472,6 +473,32 @@ export default function Dashboard() {
   const showHiddenPGServices = useUIStore((state) => state.settings.showHiddenPGServices)
   const openDialog = useUIStore((state) => state.openDialog)
 
+  // Get selected node to filter dashboard view
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  // Determine which sections to show based on selected node
+  const getViewFilter = (): 'all' | 'geoserver' | 'postgresql' => {
+    if (!selectedNode) return 'all'
+
+    const nodeType = selectedNode.type
+    // Show only GeoServer if a GeoServer-related node is selected
+    if (nodeType === 'geoserver' || nodeType === 'connection' || nodeType === 'workspace' ||
+        nodeType === 'datastores' || nodeType === 'coveragestores' || nodeType === 'datastore' ||
+        nodeType === 'coveragestore' || nodeType === 'layers' || nodeType === 'layer' ||
+        nodeType === 'styles' || nodeType === 'style' || nodeType === 'layergroups' || nodeType === 'layergroup') {
+      return 'geoserver'
+    }
+    // Show only PostgreSQL if a PostgreSQL-related node is selected
+    if (nodeType === 'postgresql' || nodeType === 'pgservice' || nodeType === 'pgschema' ||
+        nodeType === 'pgtable' || nodeType === 'pgview' || nodeType === 'pgcolumn') {
+      return 'postgresql'
+    }
+    // Default: show all (CloudBench root or unknown)
+    return 'all'
+  }
+
+  const viewFilter = getViewFilter()
+
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: api.getDashboard,
@@ -558,6 +585,10 @@ export default function Dashboard() {
 
   const hasGeoServers = data && data.servers.length > 0
   const hasPGServices = filteredPGServices && filteredPGServices.length > 0
+
+  // Apply view filter
+  const showGeoServerSection = (viewFilter === 'all' || viewFilter === 'geoserver') && hasGeoServers
+  const showPGSection = (viewFilter === 'all' || viewFilter === 'postgresql') && hasPGServices
 
   if (!hasGeoServers && !hasPGServices) {
     return (
@@ -657,7 +688,7 @@ export default function Dashboard() {
       >
         <VStack spacing={6} maxW="1400px" w="100%">
           {/* GeoServer section */}
-          {hasGeoServers && (
+          {showGeoServerSection && (
             <Box w="100%">
               <HStack spacing={2} mb={3} justify="center">
                 <Icon as={FiServer} color="kartoza.500" />
@@ -699,7 +730,7 @@ export default function Dashboard() {
           )}
 
           {/* PostgreSQL Services section */}
-          {hasPGServices && (
+          {showPGSection && (
             <Box w="100%">
               <HStack spacing={2} mb={3} justify="center">
                 <Icon as={SiPostgresql} color="blue.600" />

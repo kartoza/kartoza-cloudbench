@@ -166,6 +166,10 @@
             jq
             yq
 
+            # GIS tools for data import
+            gdal                         # Provides ogr2ogr for vector data import
+            postgresqlPackages.postgis   # Provides raster2pgsql for raster data import
+
             # Documentation
             mkdocsEnv
 

@@ -36,7 +36,34 @@ export default function Header({ onSearchClick }: HeaderProps) {
   }
 
   const handleUpload = () => {
-    if (!selectedNode?.workspace) {
+    if (!selectedNode) {
+      useUIStore.getState().setError('Select a workspace or PostgreSQL service first')
+      return
+    }
+
+    const nodeType = selectedNode.type
+
+    // PostgreSQL-related nodes → open PG upload dialog
+    if (nodeType === 'postgresql' || nodeType === 'pgservice' || nodeType === 'pgschema' ||
+        nodeType === 'pgtable' || nodeType === 'pgview' || nodeType === 'pgcolumn') {
+      // Get service name and optionally schema name
+      const serviceName = selectedNode.serviceName
+      const schemaName = nodeType === 'pgschema' ? selectedNode.schemaName : undefined
+
+      if (!serviceName) {
+        useUIStore.getState().setError('Select a PostgreSQL service first')
+        return
+      }
+
+      openDialog('pgupload', {
+        mode: 'create',
+        data: { serviceName, schemaName },
+      })
+      return
+    }
+
+    // GeoServer-related nodes → open GeoServer upload dialog
+    if (!selectedNode.workspace) {
       useUIStore.getState().setError('Select a workspace first')
       return
     }
@@ -108,7 +135,16 @@ export default function Header({ onSearchClick }: HeaderProps) {
               onClick={handleNewConnection}
             />
           </Tooltip>
-          <Tooltip label="Upload Files" placement="bottom">
+          <Tooltip
+            label={
+              selectedNode?.type === 'postgresql' || selectedNode?.type === 'pgservice' ||
+              selectedNode?.type === 'pgschema' || selectedNode?.type === 'pgtable' ||
+              selectedNode?.type === 'pgview' || selectedNode?.type === 'pgcolumn'
+                ? 'Upload to PostgreSQL'
+                : 'Upload to GeoServer'
+            }
+            placement="bottom"
+          >
             <IconButton
               aria-label="Upload files"
               icon={<FiUpload />}
