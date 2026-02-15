@@ -242,7 +242,15 @@ export interface PreviewRequest {
 // Tree node types for UI
 export type NodeType =
   | 'root'
-  | 'connection'
+  | 'cloudbench'     // Application root: "Kartoza CloudBench"
+  | 'geoserver'      // "GeoServer" container
+  | 'postgresql'     // "PostgreSQL" container
+  | 'connection'     // GeoServer connection
+  | 'pgservice'      // pg_service.conf entry
+  | 'pgschema'       // PostgreSQL schema
+  | 'pgtable'        // Database table
+  | 'pgview'         // Database view
+  | 'pgcolumn'       // Table column
   | 'workspace'
   | 'datastores'
   | 'coveragestores'
@@ -269,6 +277,12 @@ export interface TreeNode {
   hasError?: boolean
   errorMsg?: string
   enabled?: boolean
+  // PostgreSQL-specific fields
+  pgServiceName?: string
+  pgSchemaName?: string
+  pgTableName?: string
+  isParsed?: boolean
+  dataType?: string
 }
 
 // GeoWebCache (GWC) types

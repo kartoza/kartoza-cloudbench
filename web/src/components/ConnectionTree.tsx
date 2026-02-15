@@ -38,7 +38,11 @@ import {
   FiUpload,
   FiExternalLink,
   FiGlobe,
+  FiCloud,
+  FiTable,
+  FiColumns,
 } from 'react-icons/fi'
+import { SiPostgresql } from 'react-icons/si'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore, generateNodeId } from '../stores/treeStore'
 import { useUIStore } from '../stores/uiStore'
@@ -48,8 +52,24 @@ import type { TreeNode, NodeType } from '../types'
 // Get the icon component for each node type
 function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage') {
   switch (type) {
+    case 'cloudbench':
+      return FiCloud
+    case 'geoserver':
+      return FiGlobe
+    case 'postgresql':
+      return SiPostgresql
     case 'connection':
       return FiServer
+    case 'pgservice':
+      return FiDatabase
+    case 'pgschema':
+      return FiFolder
+    case 'pgtable':
+      return FiTable
+    case 'pgview':
+      return FiEye
+    case 'pgcolumn':
+      return FiColumns
     case 'workspace':
       return FiFolder
     case 'datastores':
@@ -79,8 +99,24 @@ function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage') {
 // Get color for each node type
 function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): string {
   switch (type) {
+    case 'cloudbench':
+      return 'kartoza.500'
+    case 'geoserver':
+      return 'blue.500'
+    case 'postgresql':
+      return 'blue.600'
     case 'connection':
       return 'kartoza.500'
+    case 'pgservice':
+      return 'blue.500'
+    case 'pgschema':
+      return 'cyan.500'
+    case 'pgtable':
+      return 'green.500'
+    case 'pgview':
+      return 'purple.500'
+    case 'pgcolumn':
+      return 'gray.500'
     case 'workspace':
       return 'accent.400'
     case 'datastores':
@@ -115,30 +151,173 @@ export default function ConnectionTree() {
     fetchConnections()
   }, [fetchConnections])
 
-  if (connections.length === 0) {
-    return (
-      <Box p={6} textAlign="center">
-        <Icon as={FiServer} boxSize={10} color="gray.300" mb={3} />
-        <Text color="gray.500" fontSize="sm" fontWeight="500">
-          No connections yet
-        </Text>
-        <Text color="gray.400" fontSize="xs" mt={1}>
-          Click the + button above to add a GeoServer connection
-        </Text>
-      </Box>
-    )
+  return (
+    <Box>
+      {/* CloudBench Root Node */}
+      <CloudBenchRootNode connections={connections} />
+    </Box>
+  )
+}
+
+// CloudBench root node - top level container
+function CloudBenchRootNode({ connections }: { connections: { id: string; name: string; url: string }[] }) {
+  const nodeId = 'cloudbench-root'
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  // Auto-expand root on mount
+  useEffect(() => {
+    if (!isExpanded) {
+      toggleNode(nodeId)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: 'Kartoza CloudBench',
+    type: 'cloudbench',
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
   }
 
   return (
     <Box>
-      {connections.map((conn) => (
-        <ConnectionNode
-          key={conn.id}
-          connectionId={conn.id}
-          name={conn.name}
-          url={conn.url}
-        />
-      ))}
+      <TreeNodeRow
+        node={node}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={false}
+        onClick={handleClick}
+        level={0}
+      />
+      {isExpanded && (
+        <Box pl={4}>
+          {/* GeoServer Section */}
+          <GeoServerRootNode connections={connections} />
+          {/* PostgreSQL Section */}
+          <PostgreSQLRootNode />
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// GeoServer root node - container for all GeoServer connections
+function GeoServerRootNode({ connections }: { connections: { id: string; name: string; url: string }[] }) {
+  const nodeId = 'geoserver-root'
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  // Auto-expand GeoServer section on mount
+  useEffect(() => {
+    if (!isExpanded) {
+      toggleNode(nodeId)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: 'GeoServer',
+    type: 'geoserver',
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
+  }
+
+  return (
+    <Box>
+      <TreeNodeRow
+        node={node}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={false}
+        onClick={handleClick}
+        level={1}
+        count={connections.length}
+      />
+      {isExpanded && (
+        <Box pl={4}>
+          {connections.length === 0 ? (
+            <Box px={2} py={3}>
+              <Text color="gray.500" fontSize="sm">
+                No connections yet. Click + to add one.
+              </Text>
+            </Box>
+          ) : (
+            connections.map((conn) => (
+              <ConnectionNode
+                key={conn.id}
+                connectionId={conn.id}
+                name={conn.name}
+                url={conn.url}
+              />
+            ))
+          )}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// PostgreSQL root node - container for PostgreSQL services (Phase 2)
+function PostgreSQLRootNode() {
+  const nodeId = 'postgresql-root'
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  // Auto-expand PostgreSQL section on mount
+  useEffect(() => {
+    if (!isExpanded) {
+      toggleNode(nodeId)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: 'PostgreSQL',
+    type: 'postgresql',
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
+  }
+
+  return (
+    <Box>
+      <TreeNodeRow
+        node={node}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={false}
+        onClick={handleClick}
+        level={1}
+        count={0}
+      />
+      {isExpanded && (
+        <Box pl={4} px={2} py={3}>
+          <Text color="gray.500" fontSize="sm" fontStyle="italic">
+            PostgreSQL services will be available in a future update.
+          </Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -210,7 +389,7 @@ function ConnectionNode({ connectionId, name, url }: ConnectionNodeProps) {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onOpenAdmin={handleOpenAdmin}
-        level={0}
+        level={2}
         count={workspaces?.length}
       />
       {isExpanded && workspaces && (
@@ -287,7 +466,7 @@ function WorkspaceNode({ connectionId, workspace }: WorkspaceNodeProps) {
         onEdit={handleEdit}
         onDownloadConfig={handleDownloadConfig}
         onDelete={handleDelete}
-        level={1}
+        level={3}
       />
       {isExpanded && (
         <Box pl={4}>
@@ -398,7 +577,7 @@ function CategoryNode({ connectionId, workspace, category, label }: CategoryNode
         isSelected={isSelected}
         isLoading={isLoading}
         onClick={handleClick}
-        level={2}
+        level={4}
         count={items?.length}
       />
       {isExpanded && items && (
@@ -650,7 +829,7 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
         onDownloadData={canDownloadData ? handleDownloadData : undefined}
         downloadDataLabel={downloadDataLabel}
         onDelete={handleDelete}
-        level={3}
+        level={5}
         isLeaf={!isExpandable}
         count={totalCount}
       />

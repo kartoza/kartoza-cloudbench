@@ -1,11 +1,19 @@
 package models
 
-// NodeType represents the type of node in the GeoServer hierarchy
+// NodeType represents the type of node in the application hierarchy
 type NodeType int
 
 const (
 	NodeTypeRoot NodeType = iota
-	NodeTypeConnection // A GeoServer connection (server)
+	NodeTypeCloudBenchRoot  // Application root: "Kartoza CloudBench"
+	NodeTypeGeoServerRoot   // "GeoServer" container
+	NodeTypePostgreSQLRoot  // "PostgreSQL" container
+	NodeTypeConnection      // A GeoServer connection (server)
+	NodeTypePGService       // pg_service.conf entry
+	NodeTypePGSchema        // PostgreSQL schema
+	NodeTypePGTable         // Database table
+	NodeTypePGView          // Database view
+	NodeTypePGColumn        // Table column
 	NodeTypeWorkspace
 	NodeTypeDataStores
 	NodeTypeCoverageStores
@@ -28,8 +36,24 @@ func (n NodeType) String() string {
 	switch n {
 	case NodeTypeRoot:
 		return "root"
+	case NodeTypeCloudBenchRoot:
+		return "cloudbench"
+	case NodeTypeGeoServerRoot:
+		return "geoserver"
+	case NodeTypePostgreSQLRoot:
+		return "postgresql"
 	case NodeTypeConnection:
 		return "connection"
+	case NodeTypePGService:
+		return "pgservice"
+	case NodeTypePGSchema:
+		return "pgschema"
+	case NodeTypePGTable:
+		return "pgtable"
+	case NodeTypePGView:
+		return "pgview"
+	case NodeTypePGColumn:
+		return "pgcolumn"
 	case NodeTypeWorkspace:
 		return "workspace"
 	case NodeTypeDataStores:
@@ -71,8 +95,24 @@ func (n NodeType) Icon() string {
 	switch n {
 	case NodeTypeRoot:
 		return "\uf0ac" // fa-globe
+	case NodeTypeCloudBenchRoot:
+		return "\uf0c2" // fa-cloud
+	case NodeTypeGeoServerRoot:
+		return "\uf0ac" // fa-globe
+	case NodeTypePostgreSQLRoot:
+		return "\uf472" // postgresql elephant icon
 	case NodeTypeConnection:
 		return "\uf233" // fa-server
+	case NodeTypePGService:
+		return "\uf1c0" // fa-database
+	case NodeTypePGSchema:
+		return "\uf07b" // fa-folder
+	case NodeTypePGTable:
+		return "\uf0ce" // fa-table
+	case NodeTypePGView:
+		return "\uf06e" // fa-eye
+	case NodeTypePGColumn:
+		return "\uf0db" // fa-columns
 	case NodeTypeWorkspace:
 		return "\uf07b" // fa-folder
 	case NodeTypeDataStores:
@@ -108,7 +148,7 @@ func (n NodeType) Icon() string {
 	}
 }
 
-// TreeNode represents a node in the GeoServer hierarchy tree
+// TreeNode represents a node in the application hierarchy tree
 type TreeNode struct {
 	Name         string
 	Type         NodeType
@@ -124,6 +164,12 @@ type TreeNode struct {
 	HasError     bool
 	ErrorMsg     string
 	Enabled      *bool // nil = unknown, true = enabled, false = disabled
+	// PostgreSQL-specific fields
+	PGServiceName string // pg_service.conf entry name
+	PGSchemaName  string // PostgreSQL schema name
+	PGTableName   string // PostgreSQL table name
+	IsParsed      bool   // Whether the PG service has been parsed/harvested
+	DataType      string // Column data type for PGColumn nodes
 }
 
 // NewTreeNode creates a new tree node

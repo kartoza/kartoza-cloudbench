@@ -1,6 +1,6 @@
-# Kartoza GeoServer Client - Technical Specification
+# Kartoza CloudBench - Technical Specification
 
-This document provides a detailed specification of all features, behaviors, and requirements of the Kartoza GeoServer Client application. It serves as both a reference for developers and a functional specification for testing.
+This document provides a detailed specification of all features, behaviors, and requirements of the Kartoza CloudBench application. It serves as both a reference for developers and a functional specification for testing.
 
 ## Table of Contents
 
@@ -9,7 +9,7 @@ This document provides a detailed specification of all features, behaviors, and 
 3. [User Interface](#user-interface)
 4. [Connection Management](#connection-management)
 5. [File Browser](#file-browser)
-6. [GeoServer Tree](#geoserver-tree)
+6. [Unified Resource Tree](#unified-resource-tree)
 7. [CRUD Operations](#crud-operations)
 8. [File Upload](#file-upload)
 9. [Layer Preview](#layer-preview)
@@ -21,10 +21,10 @@ This document provides a detailed specification of all features, behaviors, and 
 
 ## Overview
 
-The Kartoza GeoServer Client is a Terminal User Interface (TUI) application for managing GeoServer instances. It provides a Midnight Commander-style dual-panel interface with:
+Kartoza CloudBench is a unified platform for GeoServer and PostgreSQL management with AI query capabilities. It provides both a Terminal User Interface (TUI) and Web UI with:
 
 - **Left Panel**: Local filesystem browser for geospatial files
-- **Right Panel**: GeoServer resource tree for multiple connections
+- **Right Panel**: Unified resource tree for GeoServer and PostgreSQL
 
 ### Key Capabilities
 
@@ -34,6 +34,9 @@ The Kartoza GeoServer Client is a Terminal User Interface (TUI) application for 
 - Upload files to GeoServer with progress tracking and verification
 - Create, edit, and delete GeoServer resources
 - Preview layers in a browser-based map viewer
+- **PostgreSQL Integration** (Planned): Manage PostgreSQL services via pg_service.conf
+- **AI Query Engine** (Planned): Natural language to SQL query generation
+- **Visual Query Designer** (Planned): Metabase-style visual query builder
 
 ---
 
@@ -55,6 +58,23 @@ internal/
 ├── config/        # Configuration management
 ├── models/        # Data models (TreeNode, LocalFile, etc.)
 ├── preview/       # Browser-based layer preview server
+├── postgres/      # PostgreSQL integration (Phase 2)
+│   ├── service.go     # pg_service.conf parsing
+│   ├── client.go      # Database operations
+│   └── schema.go      # Schema harvesting
+├── llm/           # LLM integration (Phase 5)
+│   ├── engine.go      # Query generation
+│   ├── embedded.go    # llama.cpp wrapper
+│   └── ollama.go      # Ollama client
+├── nn/            # Neural network (Phase 5)
+│   ├── model.go       # Seq2Seq model
+│   ├── trainer.go     # Training logic
+│   └── tokenizer.go   # SQL tokenizer
+├── ogr2ogr/       # Data import (Phase 3)
+│   └── import.go      # ogr2ogr wrapper
+├── integration/   # Cross-system operations (Phase 4, 7)
+│   ├── postgis_store.go    # PG → GeoServer stores
+│   └── sql_view_layer.go   # Query → SQL View layers
 ├── tui/           # Terminal UI components
 │   ├── app.go          # Main application state and Update loop
 │   ├── app_tree.go     # Tree building and navigation
@@ -63,6 +83,7 @@ internal/
 │   ├── components/     # Reusable UI components
 │   ├── screens/        # Full-screen views (connections)
 │   └── styles/         # Style definitions
+├── webserver/     # HTTP handlers for Web UI
 └── verify/        # Upload verification (WFS-based)
 ```
 
@@ -83,18 +104,18 @@ The application maintains:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Kartoza GeoServer Client                                      ┊ Tab │
+│ Kartoza CloudBench                                            ┊ Tab │
 ├─────────────────────────────────┬───────────────────────────────────┤
-│ Local Files                     │ GeoServer Resources               │
+│ Local Files                     │ Resources                         │
 │ ─────────────────────────────── │ ─────────────────────────────────  │
-│ 📁 ..                           │ 🌐 Production Server              │
-│ 📁 data/                        │   └── 📦 cite                     │
-│ 🗺️ countries.shp               │       ├── 📊 postgis_db           │
-│ 🛰️ elevation.tif               │       │   └── 🗺️ countries        │
-│ ✓ 📦 parks.gpkg                 │       └── 🖼️ dem_store            │
-│ 🎨 style.sld                    │ 🌐 Development Server             │
-│                                 │   └── 📦 test                     │
-│                                 │                                   │
+│ 📁 ..                           │ ☁️ Kartoza CloudBench              │
+│ 📁 data/                        │   ├── 🌐 GeoServer                 │
+│ 🗺️ countries.shp               │   │   └── 🖥️ Production Server     │
+│ 🛰️ elevation.tif               │   │       └── 📦 cite              │
+│ ✓ 📦 parks.gpkg                 │   │           ├── 📊 postgis_db    │
+│ 🎨 style.sld                    │   │           └── 🖼️ dem_store     │
+│                                 │   └── 🐘 PostgreSQL                │
+│                                 │       └── 🔌 local_db              │
 ├─────────────────────────────────┴───────────────────────────────────┤
 │ Press ? for help │ 2 connections │ 1 file selected                  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -225,34 +246,50 @@ Press `i` on a file to view:
 
 ---
 
-## GeoServer Tree
+## Unified Resource Tree
 
 ### Node Types
 
 ```go
 const (
-    NodeTypeConnection    // Root level - represents a GeoServer instance
-    NodeTypeWorkspace     // GeoServer workspace
-    NodeTypeDataStore     // Vector data store
-    NodeTypeCoverageStore // Raster coverage store
-    NodeTypeLayer         // Published layer
-    NodeTypeLayerGroup    // Layer group
-    NodeTypeStyle         // Style definition
-    NodeTypeWMSStore      // Cascading WMS store
+    NodeTypeCloudBenchRoot  // Application root: "Kartoza CloudBench"
+    NodeTypeGeoServerRoot   // "GeoServer" container
+    NodeTypePostgreSQLRoot  // "PostgreSQL" container
+    NodeTypeConnection      // GeoServer connection
+    NodeTypePGService       // pg_service.conf entry
+    NodeTypePGSchema        // PostgreSQL schema
+    NodeTypePGTable         // Database table
+    NodeTypePGView          // Database view
+    NodeTypePGColumn        // Table column
+    NodeTypeWorkspace       // GeoServer workspace
+    NodeTypeDataStore       // Vector data store
+    NodeTypeCoverageStore   // Raster coverage store
+    NodeTypeLayer           // Published layer
+    NodeTypeLayerGroup      // Layer group
+    NodeTypeStyle           // Style definition
+    NodeTypeWMSStore        // Cascading WMS store
 )
 ```
 
 ### Tree Structure
 
 ```
-🌐 Connection Name
-└── 📦 Workspace
-    ├── 📊 Data Store
-    │   └── 🗺️ Layer
-    ├── 🖼️ Coverage Store
-    │   └── 🛰️ Coverage
-    ├── 🎨 Styles
-    └── 📚 Layer Groups
+☁️ Kartoza CloudBench
+├── 🌐 GeoServer
+│   └── 🖥️ Connection Name
+│       └── 📦 Workspace
+│           ├── 📊 Data Store
+│           │   └── 🗺️ Layer
+│           ├── 🖼️ Coverage Store
+│           │   └── 🛰️ Coverage
+│           ├── 🎨 Styles
+│           └── 📚 Layer Groups
+└── 🐘 PostgreSQL
+    └── 🔌 Service Entry (from pg_service.conf)
+        └── 📁 Schema
+            ├── 📋 Table
+            │   └── 🏷️ Column
+            └── 👁️ View
 ```
 
 ### Lazy Loading

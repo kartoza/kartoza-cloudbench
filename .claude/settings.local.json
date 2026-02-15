@@ -13,7 +13,8 @@
       "WebFetch(domain:docs-v8.terria.io)",
       "WebFetch(domain:github.com)",
       "Bash(mkdir:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd unified tree structure with CloudBench root and PostgreSQL placeholder\n\nPhase 1 of CloudBench transformation:\n- Add new NodeTypes: CloudBenchRoot, GeoServerRoot, PostgreSQLRoot, PGService, PGSchema, PGTable, PGView, PGColumn\n- Update TreeNode struct with PostgreSQL-specific fields\n- Restructure TUI tree to show unified hierarchy: CloudBench > GeoServer > Connections > Workspaces...\n- Update Web UI ConnectionTree with CloudBenchRootNode, GeoServerRootNode, PostgreSQLRootNode\n- Add icons and colors for new node types in both TUI and Web UI\n- Update SPECIFICATION.md to reflect new application name and tree structure\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []

@@ -460,10 +460,16 @@ func (tv *TreeView) getNewItemType(node *models.TreeNode) models.NodeType {
 	}
 
 	switch node.Type {
-	case models.NodeTypeRoot:
-		return models.NodeTypeWorkspace
+	case models.NodeTypeRoot, models.NodeTypeCloudBenchRoot:
+		return models.NodeTypeRoot // Not a valid new target at root level
+	case models.NodeTypeGeoServerRoot:
+		return models.NodeTypeConnection // Create new GeoServer connection
+	case models.NodeTypePostgreSQLRoot:
+		return models.NodeTypePGService // Create new PostgreSQL service
 	case models.NodeTypeConnection:
 		return models.NodeTypeWorkspace // Create workspace under connection
+	case models.NodeTypePGService:
+		return models.NodeTypePGService // Create sibling PG service
 	case models.NodeTypeWorkspace:
 		return models.NodeTypeWorkspace // Create sibling workspace
 	case models.NodeTypeDataStores:
@@ -514,9 +520,11 @@ func (tv *TreeView) canDelete(node *models.TreeNode) bool {
 // canLoadChildren returns true if the node type can have children loaded dynamically
 func (tv *TreeView) canLoadChildren(node *models.TreeNode) bool {
 	switch node.Type {
-	case models.NodeTypeConnection, models.NodeTypeWorkspace, models.NodeTypeDataStores, models.NodeTypeCoverageStores,
+	case models.NodeTypeCloudBenchRoot, models.NodeTypeGeoServerRoot, models.NodeTypePostgreSQLRoot,
+		models.NodeTypeConnection, models.NodeTypeWorkspace, models.NodeTypeDataStores, models.NodeTypeCoverageStores,
 		models.NodeTypeDataStore, models.NodeTypeCoverageStore, models.NodeTypeLayers,
-		models.NodeTypeStyles, models.NodeTypeLayerGroups:
+		models.NodeTypeStyles, models.NodeTypeLayerGroups,
+		models.NodeTypePGService, models.NodeTypePGSchema:
 		return true
 	default:
 		return false

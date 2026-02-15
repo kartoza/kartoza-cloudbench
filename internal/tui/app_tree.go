@@ -7,17 +7,29 @@ import (
 	"github.com/kartoza/kartoza-cloudbench/internal/models"
 )
 
-// buildConnectionsTree builds the initial tree with all connections as root nodes
+// buildConnectionsTree builds the unified tree with CloudBench root, GeoServer and PostgreSQL sections
 func (a *App) buildConnectionsTree() {
-	root := models.NewTreeNode("Connections", models.NodeTypeRoot)
+	// Create the CloudBench root node
+	root := models.NewTreeNode("Kartoza CloudBench", models.NodeTypeCloudBenchRoot)
 	root.Expanded = true
 
+	// Create GeoServer section
+	geoserverNode := models.NewTreeNode("GeoServer", models.NodeTypeGeoServerRoot)
+	geoserverNode.Expanded = true
 	for _, conn := range a.config.Connections {
 		connNode := models.NewTreeNode(conn.Name, models.NodeTypeConnection)
 		connNode.ConnectionID = conn.ID
 		connNode.Expanded = false // Start collapsed, expand when user clicks
-		root.AddChild(connNode)
+		geoserverNode.AddChild(connNode)
 	}
+	root.AddChild(geoserverNode)
+
+	// Create PostgreSQL section
+	postgresNode := models.NewTreeNode("PostgreSQL", models.NodeTypePostgreSQLRoot)
+	postgresNode.Expanded = true
+	// PostgreSQL services will be populated in Phase 2 from pg_service.conf
+	// For now, show placeholder if no services configured
+	root.AddChild(postgresNode)
 
 	a.treeView.SetRoot(root)
 }
