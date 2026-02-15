@@ -129,6 +129,21 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/search/suggestions", s.handleSearchSuggestions)
 
+	// API routes - Terria Integration (3D globe viewer, catalog export)
+	mux.HandleFunc("/api/terria/connection/", s.handleTerriaConnection)
+	mux.HandleFunc("/api/terria/workspace/", s.handleTerriaWorkspace)
+	mux.HandleFunc("/api/terria/layer/", s.handleTerriaLayer)
+	mux.HandleFunc("/api/terria/layergroup/", s.handleTerriaLayerGroup)
+	mux.HandleFunc("/api/terria/story/", s.handleTerriaStory)
+	mux.HandleFunc("/api/terria/init/", s.handleTerriaInit)
+	mux.HandleFunc("/api/terria/proxy", s.handleTerriaProxy)
+	mux.HandleFunc("/api/terria/url/", s.handleTerriaURL)
+	mux.HandleFunc("/api/terria/download/", s.handleTerriaDownload)
+
+	// 3D Viewer - embedded Cesium-based viewer
+	mux.HandleFunc("/viewer/", s.handleTerriaViewer)
+	mux.HandleFunc("/viewer", s.handleTerriaViewer)
+
 	// Serve static files (React app)
 	mux.HandleFunc("/", s.serveStatic)
 }
@@ -161,6 +176,8 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(path, ".js"):
 		contentType = "application/javascript"
+	case strings.HasSuffix(path, ".mjs"):
+		contentType = "application/javascript"
 	case strings.HasSuffix(path, ".css"):
 		contentType = "text/css"
 	case strings.HasSuffix(path, ".json"):
@@ -169,8 +186,24 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/svg+xml"
 	case strings.HasSuffix(path, ".png"):
 		contentType = "image/png"
+	case strings.HasSuffix(path, ".jpg"), strings.HasSuffix(path, ".jpeg"):
+		contentType = "image/jpeg"
+	case strings.HasSuffix(path, ".gif"):
+		contentType = "image/gif"
 	case strings.HasSuffix(path, ".ico"):
 		contentType = "image/x-icon"
+	case strings.HasSuffix(path, ".woff"):
+		contentType = "font/woff"
+	case strings.HasSuffix(path, ".woff2"):
+		contentType = "font/woff2"
+	case strings.HasSuffix(path, ".glb"):
+		contentType = "model/gltf-binary"
+	case strings.HasSuffix(path, ".gltf"):
+		contentType = "model/gltf+json"
+	case strings.HasSuffix(path, ".ktx2"):
+		contentType = "image/ktx2"
+	case strings.HasSuffix(path, ".wasm"):
+		contentType = "application/wasm"
 	}
 
 	w.Header().Set("Content-Type", contentType)

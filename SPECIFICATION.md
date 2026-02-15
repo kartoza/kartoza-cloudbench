@@ -737,6 +737,62 @@ Used for layer preview:
 
 ---
 
+## Terria Integration
+
+The application integrates with TerriaJS, a powerful open-source framework for web-based 2D/3D geospatial visualization. This enables viewing GeoServer data in a 3D globe interface.
+
+### Features
+
+- **Embedded 3D Viewer**: Built-in Cesium-based 3D globe viewer at `/viewer/` - no external dependencies
+- **Terria Catalog Export**: Export workspaces, layers, and layer groups as TerriaJS-compatible catalog JSON
+- **3D Globe Viewer**: Open layers directly in the embedded viewer or any external Terria-based viewer
+- **Layer Group Stories**: Export layer groups as Terria "stories" with individual controllable layers
+- **CORS Proxy**: Built-in proxy for cross-origin data access
+- **View Modes**: Toggle between 3D Globe, 2D Map, and Columbus View
+- **Layer Controls**: Toggle visibility and adjust opacity for each layer
+
+### TUI Usage
+
+Press `T` (Shift+T) on supported nodes:
+- **Connection**: Export entire GeoServer as catalog
+- **Workspace**: Export workspace layers as catalog group
+- **Layer**: Open layer in Terria 3D viewer
+- **Layer Group**: Export as story with individual layers
+
+### Web UI Usage
+
+Click the globe icon (🌍) next to layers and layer groups to open in Terria.
+
+### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /viewer/` | Embedded Cesium-based 3D viewer |
+| `GET /api/terria/connection/{connId}` | Export entire connection catalog |
+| `GET /api/terria/workspace/{connId}/{ws}` | Export workspace catalog |
+| `GET /api/terria/layer/{connId}/{ws}/{layer}` | Export layer as WMS item |
+| `GET /api/terria/layergroup/{connId}/{ws}/{group}` | Export layer group |
+| `GET /api/terria/story/{connId}/{ws}/{group}` | Export layer group as story |
+| `GET /api/terria/init/{connId}.json` | Generate Terria init file |
+| `GET /api/terria/proxy?url={url}` | CORS proxy for data access |
+| `GET /api/terria/download/{connId}` | Download catalog as JSON file |
+
+### Embedded 3D Viewer
+
+Access the built-in 3D viewer at `/viewer/` with a catalog URL hash:
+```
+http://localhost:8080/viewer/#http://localhost:8080/api/terria/layer/CONN_ID/WORKSPACE/LAYER
+```
+
+### Using with External Terria
+
+Optionally load catalogs into any TerriaMap instance (e.g., map.terria.io) via URL fragment:
+```
+https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
+```
+
+---
+
 ## Future Enhancements
 
 ### Planned Features
@@ -744,11 +800,13 @@ Used for layer preview:
 1. **GeoJSON Upload**: Support for uploading GeoJSON files
 2. ~~**Style Editor**: In-TUI style editing with preview~~ (Implemented in v0.5.0)
 3. **Bulk Operations**: Multi-select for tree operations
-4. **Search/Filter**: Filter files and tree nodes
+4. ~~**Search/Filter**: Filter files and tree nodes~~ (Implemented - Universal Search)
 5. **Keyring Integration**: Secure password storage
 6. **REST API Cache**: Reduce API calls with caching
 7. **Offline Mode**: Cached tree browsing when disconnected
 8. **Raster Verification**: WCS-based verification for coverage uploads
+9. ~~**Terria Integration**: 3D globe viewer support~~ (Implemented in v0.7.0)
+10. **Embedded TerriaMap**: Self-hosted Terria viewer (setup script available)
 
 ### Known Limitations
 
@@ -756,6 +814,7 @@ Used for layer preview:
 2. Large file uploads may timeout (30-second default)
 3. No support for cascading WMS stores (read-only)
 4. Password stored in plaintext in config file
+5. Terria integration requires external viewer (NationalMap) unless TerriaMapStatic is installed
 
 ---
 
@@ -769,6 +828,7 @@ Used for layer preview:
 | 0.4.0 | 2025 | Server info dialog, code reorganization |
 | 0.5.0 | 2025 | Style Editor with visual/code editing (TUI + Web UI) |
 | 0.6.0 | 2025 | MapLibre GL viewer (Web), TUI map preview with Kitty/Sixel/Chafa support |
+| 0.7.0 | 2025 | Terria 3D globe integration, catalog export, CORS proxy |
 
 ---
 

@@ -18,11 +18,14 @@
     "@emotion/styled": "^11.11.0",
     "@tanstack/react-query": "^5.17.19",
     "@uiw/react-codemirror": "^4.21.21",
+    "cesium": "^1.138.0",
     "framer-motion": "^10.18.0",
     "maplibre-gl": "^4.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^5.0.1",
+    "resium": "^1.19.3",
+    "vite-plugin-cesium": "^1.2.23",
     "zustand": "^4.5.0"
   },
   "devDependencies": {

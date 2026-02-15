@@ -37,6 +37,7 @@ import {
   FiPlus,
   FiUpload,
   FiExternalLink,
+  FiGlobe,
 } from 'react-icons/fi'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore, generateNodeId } from '../stores/treeStore'
@@ -434,6 +435,7 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
   const setPreview = useUIStore((state) => state.setPreview)
+  const setPreviewMode = useUIStore((state) => state.setPreviewMode)
 
   // For datastores and coveragestores, we can expand to show feature types / coverages
   const isExpandable = type === 'datastore' || type === 'coveragestore'
@@ -521,6 +523,23 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
       })
     }).catch((err) => {
       useUIStore.getState().setError(err.message)
+    })
+  }
+
+  const handleTerria = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // Set preview mode to 3D and open embedded preview
+    const layerType = storeType === 'coveragestore' ? 'raster' : 'vector'
+    setPreviewMode('3d')
+    setPreview({
+      url: '', // Globe3DPreview doesn't need a preview URL, it fetches from Terria API
+      layerName: name,
+      workspace,
+      connectionId,
+      storeName: name,
+      storeType,
+      layerType,
+      nodeType: type, // 'layer' or 'layergroup'
     })
   }
 
@@ -626,6 +645,7 @@ function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodePr
         onClick={handleClick}
         onEdit={canEdit ? handleEdit : undefined}
         onPreview={type === 'layer' || type === 'datastore' || type === 'coveragestore' ? handlePreview : undefined}
+        onTerria={type === 'layer' || type === 'layergroup' ? handleTerria : undefined}
         onDownloadConfig={canDownloadConfig ? handleDownloadConfig : undefined}
         onDownloadData={canDownloadData ? handleDownloadData : undefined}
         downloadDataLabel={downloadDataLabel}
@@ -1077,6 +1097,7 @@ interface TreeNodeRowProps {
   onEdit?: (e: React.MouseEvent) => void
   onDelete?: (e: React.MouseEvent) => void
   onPreview?: (e: React.MouseEvent) => void
+  onTerria?: (e: React.MouseEvent) => void
   onOpenAdmin?: (e: React.MouseEvent) => void
   onDownloadConfig?: (e: React.MouseEvent) => void
   onDownloadData?: (e: React.MouseEvent) => void
@@ -1095,6 +1116,7 @@ function TreeNodeRow({
   onEdit,
   onDelete,
   onPreview,
+  onTerria,
   onOpenAdmin,
   onDownloadConfig,
   onDownloadData,
@@ -1244,6 +1266,19 @@ function TreeNodeRow({
               colorScheme="kartoza"
               onClick={onPreview}
               _hover={{ bg: 'kartoza.100' }}
+            />
+          </Tooltip>
+        )}
+        {onTerria && (
+          <Tooltip label="Open in Terria 3D" fontSize="xs">
+            <IconButton
+              aria-label="Open in Terria 3D"
+              icon={<FiGlobe size={14} />}
+              size="xs"
+              variant="ghost"
+              colorScheme="teal"
+              onClick={onTerria}
+              _hover={{ bg: 'teal.50' }}
             />
           </Tooltip>
         )}

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kartoza GeoServer 3D Viewer</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(38, 38, 38, 0.9);
+            padding: 10px 15px;
+            border-radius: 8px;
+            color: white;
+            max-width: 350px;
+        }
+        #toolbar h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #444;
+            padding-bottom: 8px;
+        }
+        #layerList {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .layer-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #333;
+        }
+        .layer-item:last-child {
+            border-bottom: none;
+        }
+        .layer-item input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        .layer-item label {
+            flex: 1;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .layer-item .opacity {
+            width: 60px;
+            margin-left: 8px;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            z-index: 2000;
+            display: none;
+        }
+        #error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(180, 30, 30, 0.95);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            z-index: 2000;
+            display: none;
+            max-width: 500px;
+        }
+        .view-buttons {
+            margin-top: 10px;
+            display: flex;
+            gap: 5px;
+        }
+        .view-buttons button {
+            flex: 1;
+            padding: 6px 10px;
+            background: #4a90d9;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .view-buttons button:hover {
+            background: #357abd;
+        }
+        .view-buttons button.active {
+            background: #2d6da3;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    <div id="toolbar">
+        <h3>Kartoza GeoServer 3D Viewer</h3>
+        <div id="layerList"></div>
+        <div class="view-buttons">
+            <button onclick="setView('3d')" id="btn3d">3D Globe</button>
+            <button onclick="setView('2d')" id="btn2d">2D Map</button>
+            <button onclick="setView('cv')" id="btncv">Columbus View</button>
+        </div>
+    </div>
+    <div id="loading">Loading layers...</div>
+    <div id="error"></div>
+
+    <script>
+        // Disable Cesium Ion (we're not using it)
+        Cesium.Ion.defaultAccessToken = undefined;
+
+        let viewer;
+        let imageryLayers = [];
+        let catalogData = null;
+
+        // Initialize Cesium viewer
+        async function init() {
+            try {
+                viewer = new Cesium.Viewer('cesiumContainer', {
+                    baseLayerPicker: true,
+                    geocoder: false,
+                    homeButton: true,
+                    sceneModePicker: false, // We'll use our own buttons
+                    selectionIndicator: true,
+                    timeline: false,
+                    animation: false,
+                    navigationHelpButton: true,
+                    fullscreenButton: true,
+                    vrButton: false,
+                    baseLayer: new Cesium.ImageryLayer(
+                        new Cesium.OpenStreetMapImageryProvider({
+                            url: 'https://a.tile.openstreetmap.org/'
+                        })
+                    )
+                });
+
+                // Remove credits display for cleaner view
+                viewer.cesiumWidget.creditContainer.style.display = 'none';
+
+                // Load catalog from URL hash
+                const catalogUrl = getCatalogUrl();
+                if (catalogUrl) {
+                    await loadCatalog(catalogUrl);
+                } else {
+                    showError('No catalog URL provided. Use: #http://localhost:8080/api/terria/layer/...');
+                }
+            } catch (e) {
+                showError('Failed to initialize viewer: ' + e.message);
+            }
+        }
+
+        function getCatalogUrl() {
+            const hash = window.location.hash.substring(1);
+            if (hash) {
+                return hash;
+            }
+            return null;
+        }
+
+        async function loadCatalog(url) {
+            showLoading(true);
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                catalogData = await response.json();
+
+                // Handle different catalog formats
+                if (catalogData.catalog) {
+                    // This is an init file format
+                    processCatalog(catalogData.catalog);
+                    if (catalogData.homeCamera) {
+                        flyToCamera(catalogData.homeCamera);
+                    }
+                } else if (catalogData.type === 'wms') {
+                    // Single WMS item
+                    addWmsLayer(catalogData);
+                } else if (catalogData.type === 'group') {
+                    // Group of items
+                    processCatalog(catalogData.members || []);
+                    if (catalogData.homeCamera) {
+                        flyToCamera(catalogData.homeCamera);
+                    }
+                } else if (Array.isArray(catalogData)) {
+                    // Array of items
+                    processCatalog(catalogData);
+                }
+
+                showLoading(false);
+            } catch (e) {
+                showLoading(false);
+                showError('Failed to load catalog: ' + e.message + '\nURL: ' + url);
+            }
+        }
+
+        function processCatalog(items) {
+            for (const item of items) {
+                if (item.type === 'wms' || item.type === 'wms-getCapabilities') {
+                    addWmsLayer(item);
+                } else if (item.type === 'group' && item.members) {
+                    processCatalog(item.members);
+                }
+            }
+        }
+
+        function addWmsLayer(item) {
+            try {
+                const provider = new Cesium.WebMapServiceImageryProvider({
+                    url: item.url,
+                    layers: item.layers || item.name,
+                    parameters: {
+                        transparent: true,
+                        format: 'image/png',
+                        styles: item.styles || ''
+                    },
+                    credit: item.name
+                });
+
+                const layer = viewer.imageryLayers.addImageryProvider(provider);
+                layer.alpha = item.opacity !== undefined ? item.opacity : 1.0;
+                layer.show = item.isShown !== false;
+
+                imageryLayers.push({
+                    name: item.name,
+                    layer: layer,
+                    item: item
+                });
+
+                updateLayerList();
+
+                // Fly to layer bounds if available
+                if (item.rectangle) {
+                    flyToRectangle(item.rectangle);
+                }
+            } catch (e) {
+                console.error('Failed to add WMS layer:', item.name, e);
+            }
+        }
+
+        function flyToRectangle(rect) {
+            viewer.camera.flyTo({
+                destination: Cesium.Rectangle.fromDegrees(
+                    rect.west,
+                    rect.south,
+                    rect.east,
+                    rect.north
+                ),
+                duration: 1.5
+            });
+        }
+
+        function flyToCamera(camera) {
+            viewer.camera.flyTo({
+                destination: Cesium.Rectangle.fromDegrees(
+                    camera.west,
+                    camera.south,
+                    camera.east,
+                    camera.north
+                ),
+                duration: 1.5
+            });
+        }
+
+        function updateLayerList() {
+            const list = document.getElementById('layerList');
+            list.innerHTML = '';
+
+            if (imageryLayers.length === 0) {
+                list.innerHTML = '<p style="color: #888; font-size: 12px;">No layers loaded</p>';
+                return;
+            }
+
+            for (let i = 0; i < imageryLayers.length; i++) {
+                const layerInfo = imageryLayers[i];
+                const div = document.createElement('div');
+                div.className = 'layer-item';
+                div.innerHTML = `
+                    <input type="checkbox" id="layer${i}" ${layerInfo.layer.show ? 'checked' : ''}
+                           onchange="toggleLayer(${i}, this.checked)">
+                    <label for="layer${i}">${layerInfo.name}</label>
+                    <input type="range" class="opacity" min="0" max="100"
+                           value="${layerInfo.layer.alpha * 100}"
+                           onchange="setLayerOpacity(${i}, this.value / 100)">
+                `;
+                list.appendChild(div);
+            }
+        }
+
+        function toggleLayer(index, show) {
+            if (imageryLayers[index]) {
+                imageryLayers[index].layer.show = show;
+            }
+        }
+
+        function setLayerOpacity(index, opacity) {
+            if (imageryLayers[index]) {
+                imageryLayers[index].layer.alpha = opacity;
+            }
+        }
+
+        function setView(mode) {
+            document.querySelectorAll('.view-buttons button').forEach(b => b.classList.remove('active'));
+            switch (mode) {
+                case '3d':
+                    viewer.scene.mode = Cesium.SceneMode.SCENE3D;
+                    document.getElementById('btn3d').classList.add('active');
+                    break;
+                case '2d':
+                    viewer.scene.mode = Cesium.SceneMode.SCENE2D;
+                    document.getElementById('btn2d').classList.add('active');
+                    break;
+                case 'cv':
+                    viewer.scene.mode = Cesium.SceneMode.COLUMBUS_VIEW;
+                    document.getElementById('btncv').classList.add('active');
+                    break;
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // Listen for hash changes to reload catalog
+        window.addEventListener('hashchange', function() {
+            const catalogUrl = getCatalogUrl();
+            if (catalogUrl) {
+                // Clear existing layers
+                for (const layerInfo of imageryLayers) {
+                    viewer.imageryLayers.remove(layerInfo.layer);
+                }
+                imageryLayers = [];
+                loadCatalog(catalogUrl);
+            }
+        });
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

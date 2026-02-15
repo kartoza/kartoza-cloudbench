@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -1167,6 +1168,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Open WYSIWYG style editor
 		return a, a.showVisualStyleEditor(msg.Node)
 
+	case components.TreeTerriaMsg:
+		// Open Terria 3D viewer for the selected resource
+		return a, a.openInTerria(msg.Node)
+
 	case components.CacheWizardAnimationMsg:
 		// Forward to cache wizard if we have one
 		if a.cacheWizard != nil && a.cacheWizard.IsVisible() {
@@ -1271,6 +1276,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.fileBrowser.Refresh()
 		} else {
 			a.errorMsg = fmt.Sprintf("Download failed: %v", msg.err)
+		}
+
+	case terriaOpenCompleteMsg:
+		if msg.success {
+			a.statusMsg = "Terria 3D viewer opened in browser"
+			a.errorMsg = ""
+		} else {
+			a.errorMsg = fmt.Sprintf("Failed to open Terria: %v. URL: %s", msg.err, msg.url)
 		}
 
 	case cacheOperationCompleteMsg:
@@ -1890,6 +1903,88 @@ type downloadResourceMsg struct {
 }
 
 // downloadResource downloads the resource configuration to the current file browser directory
+// openInTerria opens the selected resource in Terria 3D viewer
+func (a *App) openInTerria(node *models.TreeNode) tea.Cmd {
+	if node == nil {
+		return nil
+	}
+
+	// Find the connection for this node
+	var conn *config.Connection
+	for i := range a.config.Connections {
+		if a.config.Connections[i].ID == node.ConnectionID {
+			conn = &a.config.Connections[i]
+			break
+		}
+	}
+
+	if conn == nil {
+		a.errorMsg = "Connection not found"
+		return nil
+	}
+
+	// Build the Terria URL based on node type
+	// The web server will handle this endpoint
+	var terriaPath string
+	switch node.Type {
+	case models.NodeTypeConnection:
+		terriaPath = fmt.Sprintf("/api/terria/init/%s.json", conn.ID)
+	case models.NodeTypeWorkspace:
+		terriaPath = fmt.Sprintf("/api/terria/init/%s/%s.json", conn.ID, node.Name)
+	case models.NodeTypeLayer:
+		terriaPath = fmt.Sprintf("/api/terria/layer/%s/%s/%s", conn.ID, node.Workspace, node.Name)
+	case models.NodeTypeLayerGroup:
+		terriaPath = fmt.Sprintf("/api/terria/story/%s/%s/%s", conn.ID, node.Workspace, node.Name)
+	default:
+		a.errorMsg = "Terria export not supported for this resource type"
+		return nil
+	}
+
+	// Use our local embedded Cesium-based 3D viewer
+	terriaURL := fmt.Sprintf("http://localhost:8080/viewer/#http://localhost:8080%s", terriaPath)
+
+	a.statusMsg = fmt.Sprintf("Opening in Terria 3D: %s", node.Name)
+
+	// Try to open the URL in the default browser
+	return func() tea.Msg {
+		var cmd string
+		var args []string
+
+		// Detect OS and use appropriate open command
+		switch {
+		case fileExists("/usr/bin/xdg-open"):
+			cmd = "xdg-open"
+			args = []string{terriaURL}
+		case fileExists("/usr/bin/open"):
+			cmd = "open"
+			args = []string{terriaURL}
+		default:
+			return terriaOpenCompleteMsg{
+				success: false,
+				err:     fmt.Errorf("no browser opener found (xdg-open or open)"),
+				url:     terriaURL,
+			}
+		}
+
+		err := runCommand(cmd, args...)
+		if err != nil {
+			return terriaOpenCompleteMsg{
+				success: false,
+				err:     err,
+				url:     terriaURL,
+			}
+		}
+		return terriaOpenCompleteMsg{success: true, url: terriaURL}
+	}
+}
+
+// terriaOpenCompleteMsg is sent when Terria browser open completes
+type terriaOpenCompleteMsg struct {
+	success bool
+	err     error
+	url     string
+}
+
 func (a *App) downloadResource(node *models.TreeNode) tea.Cmd {
 	if node == nil {
 		return nil
@@ -1987,4 +2082,16 @@ func (a *App) downloadResource(node *models.TreeNode) tea.Cmd {
 			success:  true,
 		}
 	}
+}
+
+// fileExists checks if a file exists at the given path
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// runCommand runs a command and returns any error
+func runCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	return cmd.Start() // Start without waiting (opens in background)
 }

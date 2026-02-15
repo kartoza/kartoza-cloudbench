@@ -34,6 +34,7 @@ type TreeViewKeyMap struct {
 	Settings   key.Binding
 	Download   key.Binding
 	VisualEdit key.Binding
+	Terria     key.Binding
 }
 
 // DefaultTreeViewKeyMap returns the default key bindings
@@ -123,6 +124,10 @@ func DefaultTreeViewKeyMap() TreeViewKeyMap {
 			key.WithKeys("v"),
 			key.WithHelp("v", "visual edit"),
 		),
+		Terria: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "terria 3D"),
+		),
 	}
 }
 
@@ -167,6 +172,10 @@ type (
 	}
 	// TreeVisualEditMsg is sent when user wants to open WYSIWYG style editor
 	TreeVisualEditMsg struct {
+		Node *models.TreeNode
+	}
+	// TreeTerriaMsg is sent when user wants to open in Terria 3D viewer
+	TreeTerriaMsg struct {
 		Node *models.TreeNode
 	}
 )
@@ -423,6 +432,18 @@ func (tv *TreeView) Update(msg tea.Msg) (*TreeView, tea.Cmd) {
 				if node.Type == models.NodeTypeStyle {
 					return tv, func() tea.Msg {
 						return TreeVisualEditMsg{Node: node}
+					}
+				}
+			}
+
+		case key.Matches(msg, tv.keyMap.Terria):
+			if len(tv.flatNodes) > 0 && tv.cursor < len(tv.flatNodes) {
+				node := tv.flatNodes[tv.cursor].Node
+				// Allow Terria export for workspaces, layers, and layer groups
+				switch node.Type {
+				case models.NodeTypeWorkspace, models.NodeTypeLayer, models.NodeTypeLayerGroup, models.NodeTypeConnection:
+					return tv, func() tea.Msg {
+						return TreeTerriaMsg{Node: node}
 					}
 				}
 			}

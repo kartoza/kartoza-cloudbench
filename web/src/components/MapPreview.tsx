@@ -26,6 +26,7 @@ import { FiInfo, FiRefreshCw, FiX, FiDroplet, FiBox, FiGlobe, FiMap, FiChevronDo
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import * as api from '../api/client'
+import { useUIStore } from '../stores/uiStore'
 
 interface MapPreviewProps {
   previewUrl: string | null
@@ -69,7 +70,7 @@ interface LayerInfo {
   tile_format?: string
 }
 
-type ViewMode = '2d' | '3d' | 'globe'
+type ViewMode = '2d' | '3d'
 
 // Component to display a style legend icon using GeoServer's GetLegendGraphic
 function StyleLegendIcon({
@@ -139,6 +140,9 @@ export default function MapPreview({
   const cardBg = useColorModeValue('white', 'gray.800')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const metaBg = useColorModeValue('gray.50', 'gray.700')
+
+  // Store for switching to 3D Globe preview
+  const setPreviewMode = useUIStore((state) => state.setPreviewMode)
 
   // Fetch layer info from preview server (includes geoserver_url)
   useEffect(() => {
@@ -403,14 +407,6 @@ export default function MapPreview({
           duration: 500,
         })
         break
-      case 'globe':
-        map.current.setMaxPitch(85)
-        map.current.easeTo({
-          pitch: 0,
-          zoom: 1.5,
-          duration: 500,
-        })
-        break
     }
   }, [viewMode, mapLoaded])
 
@@ -539,7 +535,7 @@ export default function MapPreview({
                   onClick={() => setViewMode('2d')}
                 />
               </Tooltip>
-              <Tooltip label="3D View">
+              <Tooltip label="3D View (tilt)">
                 <IconButton
                   aria-label="3D"
                   icon={<FiBox />}
@@ -549,17 +545,20 @@ export default function MapPreview({
                   onClick={() => setViewMode('3d')}
                 />
               </Tooltip>
-              <Tooltip label="Globe View">
-                <IconButton
-                  aria-label="Globe"
-                  icon={<FiGlobe />}
-                  color="white"
-                  bg={viewMode === 'globe' ? 'whiteAlpha.300' : undefined}
-                  _hover={{ bg: 'whiteAlpha.200' }}
-                  onClick={() => setViewMode('globe')}
-                />
-              </Tooltip>
             </ButtonGroup>
+
+            {/* 3D Globe (Cesium) Toggle */}
+            <Tooltip label="3D Globe (Cesium)">
+              <IconButton
+                aria-label="3D Globe"
+                icon={<FiGlobe />}
+                size="sm"
+                variant="ghost"
+                color="white"
+                _hover={{ bg: 'whiteAlpha.200' }}
+                onClick={() => setPreviewMode('3d')}
+              />
+            </Tooltip>
 
             <Divider orientation="vertical" h="24px" borderColor="whiteAlpha.400" />
 

@@ -9,6 +9,7 @@ import StoreDialog from './StoreDialog'
 import { SettingsDialog } from './SettingsDialog'
 import { SyncDialog } from './SyncDialog'
 import { StyleDialog } from './StyleDialog'
+import { Globe3DDialog } from './Globe3DDialog'
 
 export default function Dialogs() {
   return (
@@ -23,8 +24,9 @@ export default function Dialogs() {
       <StoreDialog />
       <SyncDialog />
       <StyleDialog />
+      <Globe3DDialog />
     </>
   )
 }
 
-export { SettingsDialog, SyncDialog, StyleDialog }
+export { SettingsDialog, SyncDialog, StyleDialog, Globe3DDialog }

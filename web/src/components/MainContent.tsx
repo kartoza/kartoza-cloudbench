@@ -42,12 +42,14 @@ import { useQuery } from '@tanstack/react-query'
 import * as api from '../api/client'
 import { useUIStore } from '../stores/uiStore'
 import MapPreview from './MapPreview'
+import Globe3DPreview from './Globe3DPreview'
 import { SettingsDialog } from './dialogs/SettingsDialog'
 import Dashboard from './Dashboard'
 
 export default function MainContent() {
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const activePreview = useUIStore((state) => state.activePreview)
+  const previewMode = useUIStore((state) => state.previewMode)
   const setPreview = useUIStore((state) => state.setPreview)
   const prevSelectedNodeRef = useRef(selectedNode)
 
@@ -107,17 +109,28 @@ export default function MainContent() {
   if (activePreview) {
     return (
       <Box flex="1" display="flex" flexDirection="column" minH="0">
-        <MapPreview
-          key={`${activePreview.workspace}:${activePreview.layerName}:${activePreview.url}`}
-          previewUrl={activePreview.url}
-          layerName={activePreview.layerName}
-          workspace={activePreview.workspace}
-          connectionId={activePreview.connectionId}
-          storeName={activePreview.storeName}
-          storeType={activePreview.storeType}
-          layerType={activePreview.layerType}
-          onClose={() => setPreview(null)}
-        />
+        {previewMode === '3d' ? (
+          <Globe3DPreview
+            key={`3d-${activePreview.workspace}:${activePreview.layerName}`}
+            connectionId={activePreview.connectionId}
+            workspace={activePreview.workspace}
+            layerName={activePreview.layerName}
+            nodeType={activePreview.nodeType || (activePreview.layerType === 'group' ? 'layergroup' : 'layer')}
+            onClose={() => setPreview(null)}
+          />
+        ) : (
+          <MapPreview
+            key={`2d-${activePreview.workspace}:${activePreview.layerName}:${activePreview.url}`}
+            previewUrl={activePreview.url}
+            layerName={activePreview.layerName}
+            workspace={activePreview.workspace}
+            connectionId={activePreview.connectionId}
+            storeName={activePreview.storeName}
+            storeType={activePreview.storeType}
+            layerType={activePreview.layerType}
+            onClose={() => setPreview(null)}
+          />
+        )}
       </Box>
     )
   }

@@ -12,6 +12,7 @@ export type DialogType =
   | 'confirm'
   | 'info'
   | 'sync'
+  | 'globe3d'
   | null
 
 export type DialogMode = 'create' | 'edit' | 'delete' | 'view'
@@ -24,6 +25,8 @@ interface DialogData {
   onConfirm?: () => void | Promise<void>
 }
 
+export type PreviewMode = '2d' | '3d'
+
 interface PreviewState {
   url: string
   layerName: string
@@ -32,6 +35,7 @@ interface PreviewState {
   storeName?: string
   storeType?: string
   layerType?: string
+  nodeType?: string // 'layer' | 'layergroup'
 }
 
 interface UIState {
@@ -41,6 +45,7 @@ interface UIState {
 
   // Preview state
   activePreview: PreviewState | null
+  previewMode: PreviewMode
 
   // Status messages
   statusMessage: string
@@ -57,6 +62,7 @@ interface UIState {
   openDialog: (type: DialogType, data?: DialogData) => void
   closeDialog: () => void
   setPreview: (preview: PreviewState | null) => void
+  setPreviewMode: (mode: PreviewMode) => void
   setStatus: (message: string) => void
   setError: (message: string | null) => void
   setSuccess: (message: string | null) => void
@@ -69,6 +75,7 @@ export const useUIStore = create<UIState>((set) => ({
   activeDialog: null,
   dialogData: null,
   activePreview: null,
+  previewMode: '2d',
   statusMessage: 'Ready',
   errorMessage: null,
   successMessage: null,
@@ -85,6 +92,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   setPreview: (preview) => {
     set({ activePreview: preview })
+  },
+
+  setPreviewMode: (mode) => {
+    set({ previewMode: mode })
   },
 
   setStatus: (message) => {
