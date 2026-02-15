@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import {
   Box,
   Flex,
@@ -19,9 +19,10 @@ import {
   AlertDescription,
   Tooltip,
   IconButton,
+  Button,
 } from '@chakra-ui/react'
 import { keyframes, css } from '@emotion/react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   FiServer,
   FiLayers,
@@ -33,7 +34,9 @@ import {
   FiClock,
   FiHardDrive,
   FiActivity,
+  FiTable,
 } from 'react-icons/fi'
+import { SiPostgresql } from 'react-icons/si'
 import * as api from '../api/client'
 import type { ServerStatus } from '../types'
 
@@ -107,6 +110,123 @@ function addPingToHistory(connectionId: string, responseTimeMs: number) {
 
 function getPingHistory(connectionId: string): number[] {
   return pingHistoryMap.get(connectionId) || []
+}
+
+// PostgreSQL Service Card
+interface PGServiceCardProps {
+  service: api.PGService
+  onParse: () => Promise<void>
+  isParsing: boolean
+}
+
+function PGServiceCard({ service, onParse, isParsing }: PGServiceCardProps) {
+  const bgColor = service.is_parsed ? 'white' : 'gray.50'
+  const borderColor = service.is_parsed ? 'blue.400' : 'gray.300'
+  const statusIcon = service.is_parsed ? FiCheckCircle : FiDatabase
+  const statusColor = service.is_parsed ? 'blue.500' : 'gray.400'
+
+  return (
+    <Box
+      bg={bgColor}
+      borderRadius="xl"
+      border="2px solid"
+      borderColor={borderColor}
+      p={4}
+      position="relative"
+      transition="all 0.3s ease"
+      _hover={{
+        transform: 'translateY(-2px)',
+        boxShadow: 'lg',
+      }}
+    >
+      {/* Status indicator */}
+      <Box
+        position="absolute"
+        top={3}
+        right={3}
+      >
+        <Tooltip label={service.is_parsed ? 'Schema Parsed' : 'Not Parsed'}>
+          <span>
+            <Icon
+              as={statusIcon}
+              color={statusColor}
+              boxSize={5}
+            />
+          </span>
+        </Tooltip>
+      </Box>
+
+      {/* Service info */}
+      <VStack align="start" spacing={3}>
+        <HStack>
+          <Icon as={SiPostgresql} color="blue.600" boxSize={6} />
+          <VStack align="start" spacing={0}>
+            <Text fontWeight="bold" fontSize="lg" noOfLines={1}>
+              {service.name}
+            </Text>
+            <Text fontSize="xs" color="gray.500" noOfLines={1}>
+              {service.host ? `${service.host}:${service.port || '5432'}` : 'pg_service.conf entry'}
+            </Text>
+          </VStack>
+        </HStack>
+
+        {/* Database info */}
+        {service.dbname && (
+          <Badge colorScheme="blue" fontSize="xs">
+            Database: {service.dbname}
+          </Badge>
+        )}
+
+        {/* Stats or action */}
+        {service.is_parsed ? (
+          <SimpleGrid columns={2} spacing={2} w="100%">
+            <Stat size="sm">
+              <StatLabel fontSize="xs" color="gray.500">
+                <HStack spacing={1}>
+                  <Icon as={FiTable} boxSize={3} />
+                  <Text>Status</Text>
+                </HStack>
+              </StatLabel>
+              <StatNumber fontSize="md" color="blue.600">
+                Parsed
+              </StatNumber>
+            </Stat>
+            <Stat size="sm">
+              <StatLabel fontSize="xs" color="gray.500">
+                <HStack spacing={1}>
+                  <Icon as={FiDatabase} boxSize={3} />
+                  <Text>User</Text>
+                </HStack>
+              </StatLabel>
+              <StatNumber fontSize="md" color="gray.600" noOfLines={1}>
+                {service.user || 'N/A'}
+              </StatNumber>
+            </Stat>
+          </SimpleGrid>
+        ) : (
+          <Button
+            size="sm"
+            colorScheme="blue"
+            variant="outline"
+            leftIcon={<FiDatabase />}
+            onClick={onParse}
+            isLoading={isParsing}
+            loadingText="Parsing..."
+            w="100%"
+          >
+            Parse Schema
+          </Button>
+        )}
+
+        {/* SSL Mode */}
+        {service.sslmode && (
+          <HStack spacing={2} fontSize="xs" color="gray.500" w="100%">
+            <Text>SSL: {service.sslmode}</Text>
+          </HStack>
+        )}
+      </VStack>
+    </Box>
+  )
 }
 
 interface ServerCardProps {
@@ -252,12 +372,34 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
 
 export default function Dashboard() {
   const pingIntervalRef = useRef<number>(30)
+  const queryClient = useQueryClient()
+  const [parsingService, setParsingService] = useState<string | null>(null)
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: api.getDashboard,
     refetchInterval: () => pingIntervalRef.current * 1000, // Use dynamic interval
   })
+
+  // Fetch PostgreSQL services
+  const { data: pgServices } = useQuery({
+    queryKey: ['pgservices'],
+    queryFn: api.getPGServices,
+    staleTime: 30000,
+  })
+
+  // Handle parsing a PG service
+  const handleParsePGService = async (serviceName: string) => {
+    setParsingService(serviceName)
+    try {
+      await api.parsePGService(serviceName)
+      queryClient.invalidateQueries({ queryKey: ['pgservices'] })
+    } catch (err) {
+      console.error('Failed to parse service:', err)
+    } finally {
+      setParsingService(null)
+    }
+  }
 
   // Update ping history when data changes
   useEffect(() => {
@@ -297,14 +439,17 @@ export default function Dashboard() {
     )
   }
 
-  if (!data || data.servers.length === 0) {
+  const hasGeoServers = data && data.servers.length > 0
+  const hasPGServices = pgServices && pgServices.length > 0
+
+  if (!hasGeoServers && !hasPGServices) {
     return (
       <Flex h="100%" align="center" justify="center" p={8}>
         <VStack spacing={4} textAlign="center">
           <Icon as={FiServer} boxSize={16} color="gray.300" />
           <Text color="gray.500" fontSize="lg">No servers configured</Text>
           <Text color="gray.400" fontSize="sm">
-            Add a GeoServer connection to get started
+            Add a GeoServer connection or PostgreSQL service to get started
           </Text>
         </VStack>
       </Flex>
@@ -312,8 +457,8 @@ export default function Dashboard() {
   }
 
   // Separate alert servers from healthy ones
-  const healthyServers = data.servers.filter(s => s.online)
-  const alertServers = data.servers.filter(s => !s.online)
+  const healthyServers = data?.servers.filter(s => s.online) || []
+  const alertServers = data?.servers.filter(s => !s.online) || []
 
   return (
     <Flex h="100%" direction="column">
@@ -336,24 +481,31 @@ export default function Dashboard() {
           <HStack spacing={6} display={{ base: 'none', md: 'flex' }}>
             <HStack spacing={2}>
               <Icon as={FiCheckCircle} color="green.500" />
-              <Text fontWeight="bold" color="green.600">{data.onlineCount}</Text>
+              <Text fontWeight="bold" color="green.600">{data?.onlineCount || 0}</Text>
               <Text color="gray.500">Online</Text>
             </HStack>
-            {data.offlineCount > 0 && (
+            {(data?.offlineCount || 0) > 0 && (
               <HStack spacing={2}>
                 <Icon as={FiXCircle} color="red.500" />
-                <Text fontWeight="bold" color="red.600">{data.offlineCount}</Text>
+                <Text fontWeight="bold" color="red.600">{data?.offlineCount || 0}</Text>
                 <Text color="gray.500">Offline</Text>
               </HStack>
             )}
             <HStack spacing={2}>
               <Icon as={FiLayers} color="purple.500" />
-              <Text fontWeight="bold" color="purple.600">{data.totalLayers}</Text>
+              <Text fontWeight="bold" color="purple.600">{data?.totalLayers || 0}</Text>
               <Text color="gray.500">Layers</Text>
             </HStack>
+            {hasPGServices && (
+              <HStack spacing={2}>
+                <Icon as={SiPostgresql} color="blue.600" />
+                <Text fontWeight="bold" color="blue.600">{pgServices?.length || 0}</Text>
+                <Text color="gray.500">PG Services</Text>
+              </HStack>
+            )}
             <HStack spacing={2}>
               <Icon as={FiClock} color="gray.500" />
-              <Text color="gray.500">{data.pingIntervalSecs || 60}s</Text>
+              <Text color="gray.500">{data?.pingIntervalSecs || 60}s</Text>
             </HStack>
           </HStack>
           <Tooltip label="Refresh status">
@@ -375,43 +527,68 @@ export default function Dashboard() {
         overflowY="auto"
         p={6}
         justify="center"
-        align={data.servers.length <= 3 ? 'center' : 'flex-start'}
+        align={(data?.servers.length || 0) + (pgServices?.length || 0) <= 3 ? 'center' : 'flex-start'}
       >
         <VStack spacing={6} maxW="1400px" w="100%">
-          {/* Alert section for offline/error servers */}
-          {alertServers.length > 0 && (
+          {/* GeoServer section */}
+          {hasGeoServers && (
             <Box w="100%">
               <HStack spacing={2} mb={3} justify="center">
-                <Icon as={FiAlertTriangle} color="red.500" />
-                <Text fontWeight="bold" color="red.600">
-                  Servers Requiring Attention ({alertServers.length})
+                <Icon as={FiServer} color="kartoza.500" />
+                <Text fontWeight="bold" color="gray.700">
+                  GeoServer Connections ({data?.servers.length || 0})
                 </Text>
               </HStack>
-              <Flex wrap="wrap" gap={4} justify="center">
-                {alertServers.map(server => (
-                  <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
-                    <ServerCard server={server} isAlert />
-                  </Box>
-                ))}
-              </Flex>
+
+              {/* Alert section for offline/error servers */}
+              {alertServers.length > 0 && (
+                <Box mb={4}>
+                  <HStack spacing={2} mb={2} justify="center">
+                    <Icon as={FiAlertTriangle} color="red.500" boxSize={4} />
+                    <Text fontSize="sm" fontWeight="medium" color="red.600">
+                      Requires Attention ({alertServers.length})
+                    </Text>
+                  </HStack>
+                  <Flex wrap="wrap" gap={4} justify="center">
+                    {alertServers.map(server => (
+                      <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
+                        <ServerCard server={server} isAlert />
+                      </Box>
+                    ))}
+                  </Flex>
+                </Box>
+              )}
+
+              {/* Healthy servers */}
+              {healthyServers.length > 0 && (
+                <Flex wrap="wrap" gap={4} justify="center">
+                  {healthyServers.map(server => (
+                    <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
+                      <ServerCard server={server} />
+                    </Box>
+                  ))}
+                </Flex>
+              )}
             </Box>
           )}
 
-          {/* Healthy servers section */}
-          {healthyServers.length > 0 && (
+          {/* PostgreSQL Services section */}
+          {hasPGServices && (
             <Box w="100%">
-              {alertServers.length > 0 && (
-                <HStack spacing={2} mb={3} justify="center">
-                  <Icon as={FiCheckCircle} color="green.500" />
-                  <Text fontWeight="bold" color="green.600">
-                    Online Servers ({healthyServers.length})
-                  </Text>
-                </HStack>
-              )}
+              <HStack spacing={2} mb={3} justify="center">
+                <Icon as={SiPostgresql} color="blue.600" />
+                <Text fontWeight="bold" color="gray.700">
+                  PostgreSQL Services ({pgServices?.length || 0})
+                </Text>
+              </HStack>
               <Flex wrap="wrap" gap={4} justify="center">
-                {healthyServers.map(server => (
-                  <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
-                    <ServerCard server={server} />
+                {pgServices?.map(service => (
+                  <Box key={service.name} w={{ base: '100%', md: '340px' }}>
+                    <PGServiceCard
+                      service={service}
+                      onParse={() => handleParsePGService(service.name)}
+                      isParsing={parsingService === service.name}
+                    />
                   </Box>
                 ))}
               </Flex>

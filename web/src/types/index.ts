@@ -278,9 +278,9 @@ export interface TreeNode {
   errorMsg?: string
   enabled?: boolean
   // PostgreSQL-specific fields
-  pgServiceName?: string
-  pgSchemaName?: string
-  pgTableName?: string
+  serviceName?: string
+  schemaName?: string
+  tableName?: string
   isParsed?: boolean
   dataType?: string
 }

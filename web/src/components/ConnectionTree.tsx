@@ -272,13 +272,20 @@ function GeoServerRootNode({ connections }: { connections: { id: string; name: s
   )
 }
 
-// PostgreSQL root node - container for PostgreSQL services (Phase 2)
+// PostgreSQL root node - container for PostgreSQL services
 function PostgreSQLRootNode() {
   const nodeId = 'postgresql-root'
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  // Fetch PostgreSQL services
+  const { data: pgServices, isLoading } = useQuery({
+    queryKey: ['pgservices'],
+    queryFn: () => api.getPGServices(),
+    staleTime: 30000,
+  })
 
   // Auto-expand PostgreSQL section on mount
   useEffect(() => {
@@ -306,19 +313,309 @@ function PostgreSQLRootNode() {
         node={node}
         isExpanded={isExpanded}
         isSelected={isSelected}
-        isLoading={false}
+        isLoading={isLoading}
         onClick={handleClick}
         level={1}
-        count={0}
+        count={pgServices?.length}
       />
       {isExpanded && (
-        <Box pl={4} px={2} py={3}>
-          <Text color="gray.500" fontSize="sm" fontStyle="italic">
-            PostgreSQL services will be available in a future update.
-          </Text>
+        <Box pl={4}>
+          {!pgServices || pgServices.length === 0 ? (
+            <Box px={2} py={3}>
+              <Text color="gray.500" fontSize="sm">
+                No PostgreSQL services. Click + to add one.
+              </Text>
+            </Box>
+          ) : (
+            pgServices.map((svc) => (
+              <PGServiceNode
+                key={svc.name}
+                service={svc}
+              />
+            ))
+          )}
         </Box>
       )}
     </Box>
+  )
+}
+
+// PostgreSQL service node - individual pg_service.conf entry
+interface PGServiceNodeProps {
+  service: api.PGService
+}
+
+function PGServiceNode({ service }: PGServiceNodeProps) {
+  const nodeId = generateNodeId('pgservice', service.name)
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+  const openDialog = useUIStore((state) => state.openDialog)
+  const toast = useToast()
+  const queryClient = useQueryClient()
+
+  // Fetch schemas when expanded and service is parsed
+  const { data: schemaData, isLoading: loadingSchemas } = useQuery({
+    queryKey: ['pgschemas', service.name],
+    queryFn: async () => {
+      const response = await fetch(`/api/pg/services/${encodeURIComponent(service.name)}/schemas`)
+      if (!response.ok) throw new Error('Failed to fetch schemas')
+      return response.json() as Promise<{ schemas: { name: string; tables: { name: string; schema: string; columns: { name: string; type: string; nullable: boolean }[] }[] }[] }>
+    },
+    enabled: isExpanded && service.is_parsed,
+    staleTime: 60000,
+  })
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: service.name,
+    type: 'pgservice',
+    serviceName: service.name,
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
+  }
+
+  const handleParse = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await api.parsePGService(service.name)
+      toast({
+        title: 'Schema Parsed',
+        description: `Successfully parsed schema for ${service.name}`,
+        status: 'success',
+        duration: 3000,
+      })
+      queryClient.invalidateQueries({ queryKey: ['pgservices'] })
+      queryClient.invalidateQueries({ queryKey: ['pgschemas', service.name] })
+    } catch (err) {
+      toast({
+        title: 'Parse Failed',
+        description: (err as Error).message,
+        status: 'error',
+        duration: 5000,
+      })
+    }
+  }
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    openDialog('confirm', {
+      mode: 'delete',
+      title: 'Delete PostgreSQL Service',
+      message: `Are you sure you want to remove "${service.name}" from pg_service.conf?`,
+      data: { pgServiceName: service.name },
+    })
+  }
+
+  const subtitle = service.host ? `${service.host}:${service.port || '5432'}/${service.dbname || ''}` : ''
+
+  return (
+    <Box>
+      <TreeNodeRow
+        node={{ ...node, name: service.name }}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={loadingSchemas}
+        onClick={handleClick}
+        onDelete={handleDelete}
+        level={2}
+        count={schemaData?.schemas?.length}
+      />
+      {/* Show parse button or schemas */}
+      {isExpanded && !service.is_parsed && (
+        <Box pl={8} py={2}>
+          <Button
+            size="sm"
+            colorScheme="blue"
+            variant="outline"
+            leftIcon={<FiDatabase size={14} />}
+            onClick={handleParse}
+          >
+            Parse Schema
+          </Button>
+          <Text fontSize="xs" color="gray.500" mt={1}>
+            {subtitle}
+          </Text>
+        </Box>
+      )}
+      {isExpanded && service.is_parsed && schemaData?.schemas && (
+        <Box pl={4}>
+          {schemaData.schemas.map((schema) => (
+            <PGSchemaNode
+              key={schema.name}
+              serviceName={service.name}
+              schema={schema}
+            />
+          ))}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// PostgreSQL schema node
+interface PGSchemaNodeProps {
+  serviceName: string
+  schema: {
+    name: string
+    tables: { name: string; schema: string; columns: { name: string; type: string; nullable: boolean }[] }[]
+  }
+}
+
+function PGSchemaNode({ serviceName, schema }: PGSchemaNodeProps) {
+  const nodeId = generateNodeId('pgschema', serviceName, schema.name)
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: schema.name,
+    type: 'pgschema',
+    serviceName,
+    schemaName: schema.name,
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
+  }
+
+  return (
+    <Box>
+      <TreeNodeRow
+        node={node}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={false}
+        onClick={handleClick}
+        level={3}
+        count={schema.tables.length}
+      />
+      {isExpanded && (
+        <Box pl={4}>
+          {schema.tables.map((table) => (
+            <PGTableNode
+              key={table.name}
+              serviceName={serviceName}
+              schemaName={schema.name}
+              table={table}
+            />
+          ))}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// PostgreSQL table node
+interface PGTableNodeProps {
+  serviceName: string
+  schemaName: string
+  table: {
+    name: string
+    columns: { name: string; type: string; nullable: boolean }[]
+  }
+}
+
+function PGTableNode({ serviceName, schemaName, table }: PGTableNodeProps) {
+  const nodeId = generateNodeId('pgtable', serviceName, schemaName, table.name)
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: table.name,
+    type: 'pgtable',
+    serviceName,
+    schemaName,
+    tableName: table.name,
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+    toggleNode(nodeId)
+  }
+
+  return (
+    <Box>
+      <TreeNodeRow
+        node={node}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isLoading={false}
+        onClick={handleClick}
+        level={4}
+        count={table.columns.length}
+      />
+      {isExpanded && (
+        <Box pl={4}>
+          {table.columns.map((col) => (
+            <PGColumnRow
+              key={col.name}
+              serviceName={serviceName}
+              schemaName={schemaName}
+              tableName={table.name}
+              column={col}
+            />
+          ))}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// PostgreSQL column row (leaf node)
+interface PGColumnRowProps {
+  serviceName: string
+  schemaName: string
+  tableName: string
+  column: { name: string; type: string; nullable: boolean }
+}
+
+function PGColumnRow({ serviceName, schemaName, tableName, column }: PGColumnRowProps) {
+  const nodeId = generateNodeId('pgcolumn', serviceName, schemaName, `${tableName}:${column.name}`)
+  const selectNode = useTreeStore((state) => state.selectNode)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+
+  const node: TreeNode = {
+    id: nodeId,
+    name: `${column.name} (${column.type}${column.nullable ? ', nullable' : ''})`,
+    type: 'pgcolumn',
+    serviceName,
+    schemaName,
+    tableName,
+  }
+
+  const isSelected = selectedNode?.id === nodeId
+
+  const handleClick = () => {
+    selectNode(node)
+  }
+
+  return (
+    <TreeNodeRow
+      node={node}
+      isExpanded={false}
+      isSelected={isSelected}
+      isLoading={false}
+      onClick={handleClick}
+      level={5}
+      isLeaf
+    />
   )
 }
 

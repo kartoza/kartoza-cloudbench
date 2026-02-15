@@ -39,9 +39,20 @@ export default function ConfirmDialog() {
 
     try {
       // Handle different delete types based on data
-      if (data?.connectionId && !data?.workspace) {
+      if (data?.pgServiceName) {
+        // Delete PostgreSQL service
+        await api.deletePGService(data.pgServiceName as string)
+        queryClient.invalidateQueries({ queryKey: ['pgservices'] })
+        toast({
+          title: 'PostgreSQL service deleted',
+          status: 'success',
+          duration: 2000,
+        })
+      } else if (data?.connectionId && !data?.workspace) {
         // Delete connection
         await removeConnection(data.connectionId as string)
+        // Also invalidate dashboard to update the display
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] })
         toast({
           title: 'Connection deleted',
           status: 'success',
