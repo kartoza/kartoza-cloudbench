@@ -46,3 +46,8 @@ Thumbs.db
 node_modules/
 web/node_modules/
 cloudbench
+
+# Generated build artifacts
+cloudbench-web
+internal/webserver/static/cesium/
+internal/webserver/static/assets/
