@@ -14,8 +14,11 @@ import {
   FiCloud,
   FiTable,
   FiColumns,
+  FiHardDrive,
+  FiArchive,
+  FiFile,
 } from 'react-icons/fi'
-import { SiPostgresql } from 'react-icons/si'
+import { SiPostgresql, SiAmazons3 } from 'react-icons/si'
 
 // Get the icon component for each node type
 export function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage') {
@@ -26,6 +29,8 @@ export function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage'
       return FiGlobe
     case 'postgresql':
       return SiPostgresql
+    case 's3storage':
+      return SiAmazons3
     case 'connection':
       return FiServer
     case 'pgservice':
@@ -38,6 +43,14 @@ export function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage'
       return FiEye
     case 'pgcolumn':
       return FiColumns
+    case 's3connection':
+      return FiHardDrive
+    case 's3bucket':
+      return FiArchive
+    case 's3folder':
+      return FiFolder
+    case 's3object':
+      return FiFile
     case 'workspace':
       return FiFolder
     case 'datastores':
@@ -73,6 +86,8 @@ export function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): strin
       return 'blue.500'
     case 'postgresql':
       return 'blue.600'
+    case 's3storage':
+      return 'orange.500'
     case 'connection':
       return 'kartoza.500'
     case 'pgservice':
@@ -85,6 +100,14 @@ export function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): strin
       return 'purple.500'
     case 'pgcolumn':
       return 'gray.500'
+    case 's3connection':
+      return 'orange.500'
+    case 's3bucket':
+      return 'yellow.600'
+    case 's3folder':
+      return 'yellow.500'
+    case 's3object':
+      return 'orange.400'
     case 'workspace':
       return 'accent.400'
     case 'datastores':

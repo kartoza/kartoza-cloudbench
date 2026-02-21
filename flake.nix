@@ -167,6 +167,14 @@
         postgisPass = "docker";
         postgisDb = "gis";
 
+        # Test MinIO (S3-compatible) configuration
+        minioContainer = "kartoza-minio-test";
+        minioPort = "9000";
+        minioConsolePort = "9001";
+        minioRootUser = "minioadmin";
+        minioRootPassword = "minioadmin";
+        minioDefaultBucket = "geospatial-data";
+
       in
       {
         packages = {
@@ -208,8 +216,9 @@
             jq
             yq
 
-            # GIS tools for data import
-            gdal # Provides ogr2ogr for vector data import
+            # GIS tools for data import and cloud-native conversion
+            gdal # Provides ogr2ogr for vector data import and COG conversion
+            pdal # Provides COPC (Cloud Optimized Point Cloud) conversion
             postgresqlPackages.postgis # Provides raster2pgsql for raster data import
 
             # Documentation
@@ -248,6 +257,15 @@
             export POSTGIS_USER="${postgisUser}"
             export POSTGIS_PASS="${postgisPass}"
             export POSTGIS_DB="${postgisDb}"
+
+            # Test MinIO (S3-compatible) configuration
+            export MINIO_CONTAINER="${minioContainer}"
+            export MINIO_PORT="${minioPort}"
+            export MINIO_CONSOLE_PORT="${minioConsolePort}"
+            export MINIO_ROOT_USER="${minioRootUser}"
+            export MINIO_ROOT_PASSWORD="${minioRootPassword}"
+            export MINIO_DEFAULT_BUCKET="${minioDefaultBucket}"
+            export MINIO_ENDPOINT="http://localhost:${minioPort}"
 
             # Helpful aliases
             alias gor='go run .'
@@ -431,6 +449,115 @@
             }
             export -f postgis-service
 
+            # MinIO (S3-compatible) test environment commands
+            minio-start() {
+              echo "Starting test MinIO on ports ${minioPort} (S3 API) and ${minioConsolePort} (Console)..."
+              docker run -d \
+                --name ${minioContainer} \
+                -p ${minioPort}:9000 \
+                -p ${minioConsolePort}:9001 \
+                -e MINIO_ROOT_USER=${minioRootUser} \
+                -e MINIO_ROOT_PASSWORD=${minioRootPassword} \
+                -v kartoza-minio-data:/data \
+                minio/minio:latest server /data --console-address ":9001"
+              echo ""
+              echo "MinIO starting..."
+              echo "S3 API:  http://localhost:${minioPort}"
+              echo "Console: http://localhost:${minioConsolePort}"
+              echo "Credentials: ${minioRootUser} / ${minioRootPassword}"
+              echo ""
+              echo "Wait ~5 seconds for MinIO to start."
+              echo "Check status with: minio-status"
+              echo ""
+              echo "Creating default bucket '${minioDefaultBucket}'..."
+              sleep 3
+              docker run --rm --network host \
+                -e MC_HOST_local=http://${minioRootUser}:${minioRootPassword}@localhost:${minioPort} \
+                minio/mc mb --ignore-existing local/${minioDefaultBucket} 2>/dev/null || true
+              echo "Default bucket created."
+            }
+            export -f minio-start
+
+            minio-stop() {
+              echo "Stopping test MinIO..."
+              docker stop ${minioContainer} 2>/dev/null || true
+              docker rm ${minioContainer} 2>/dev/null || true
+              echo "MinIO stopped."
+              echo "Note: Data volume 'kartoza-minio-data' preserved. Use 'minio-clean' to remove it."
+            }
+            export -f minio-stop
+
+            minio-clean() {
+              echo "Removing MinIO data volume..."
+              docker volume rm kartoza-minio-data 2>/dev/null || true
+              echo "Data volume removed."
+            }
+            export -f minio-clean
+
+            minio-status() {
+              if docker ps --format '{{.Names}}' | grep -q "^${minioContainer}$"; then
+                echo "MinIO is running"
+                echo ""
+                echo "S3 API:   http://localhost:${minioPort}"
+                echo "Console:  http://localhost:${minioConsolePort}"
+                echo "User:     ${minioRootUser}"
+                echo "Password: ${minioRootPassword}"
+                echo ""
+                # Check if MinIO is ready by hitting health endpoint
+                if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${minioPort}/minio/health/live" | grep -q "200"; then
+                  echo "Status: READY"
+                  echo ""
+                  # List buckets
+                  echo "Buckets:"
+                  docker run --rm --network host \
+                    -e MC_HOST_local=http://${minioRootUser}:${minioRootPassword}@localhost:${minioPort} \
+                    minio/mc ls local/ 2>/dev/null || echo "  (none or error listing)"
+                else
+                  echo "Status: STARTING (wait a moment...)"
+                fi
+              else
+                echo "MinIO is not running"
+                echo "Start with: minio-start"
+              fi
+            }
+            export -f minio-status
+
+            minio-logs() {
+              docker logs -f ${minioContainer}
+            }
+            export -f minio-logs
+
+            minio-creds() {
+              echo "Endpoint: http://localhost:$MINIO_PORT"
+              echo "Console:  http://localhost:$MINIO_CONSOLE_PORT"
+              echo "User:     $MINIO_ROOT_USER"
+              echo "Password: $MINIO_ROOT_PASSWORD"
+              echo ""
+              echo "Default bucket: $MINIO_DEFAULT_BUCKET"
+              echo ""
+              echo "For AWS CLI:"
+              echo "  export AWS_ACCESS_KEY_ID=$MINIO_ROOT_USER"
+              echo "  export AWS_SECRET_ACCESS_KEY=$MINIO_ROOT_PASSWORD"
+              echo "  aws --endpoint-url=http://localhost:$MINIO_PORT s3 ls"
+            }
+            export -f minio-creds
+
+            minio-console() {
+              echo "Opening MinIO Console in browser..."
+              xdg-open "http://localhost:${minioConsolePort}" 2>/dev/null || \
+              open "http://localhost:${minioConsolePort}" 2>/dev/null || \
+              echo "Open http://localhost:${minioConsolePort} in your browser"
+            }
+            export -f minio-console
+
+            minio-mc() {
+              # Run MinIO client command with local alias configured
+              docker run --rm -it --network host \
+                -e MC_HOST_local=http://${minioRootUser}:${minioRootPassword}@localhost:${minioPort} \
+                minio/mc "$@"
+            }
+            export -f minio-mc
+
             # Web development commands
             web-dev() {
               echo "Starting web development servers..."
@@ -481,6 +608,16 @@
             echo "  postgis-creds    - Show connection credentials"
             echo "  postgis-psql     - Open psql shell"
             echo "  postgis-service  - Show pg_service.conf entry"
+            echo ""
+            echo "Test MinIO (S3):"
+            echo "  minio-start      - Start MinIO S3-compatible storage"
+            echo "  minio-stop       - Stop and remove container (keeps data)"
+            echo "  minio-clean      - Remove data volume"
+            echo "  minio-status     - Check status and list buckets"
+            echo "  minio-logs       - Follow container logs"
+            echo "  minio-creds      - Show connection credentials"
+            echo "  minio-console    - Open MinIO web console"
+            echo "  minio-mc         - Run MinIO client (mc) commands"
             echo ""
             echo "Documentation:"
             echo "  docs       - Serve docs locally (http://localhost:8000)"

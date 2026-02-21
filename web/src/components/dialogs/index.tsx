@@ -11,6 +11,8 @@ import QueryDialog from './QueryDialog'
 import DataViewerDialog from './DataViewerDialog'
 import PGServiceDashboardDialog from './PGServiceDashboardDialog'
 import PGUploadDialog from './PGUploadDialog'
+import S3ConnectionDialog from './S3ConnectionDialog'
+import S3UploadDialog from './S3UploadDialog'
 import { SettingsDialog } from './SettingsDialog'
 import { SyncDialog } from './SyncDialog'
 import { StyleDialog } from './StyleDialog'
@@ -35,6 +37,8 @@ export default function Dialogs() {
       <DataViewerDialog />
       <PGServiceDashboardDialog />
       <PGUploadDialog />
+      <S3ConnectionDialog />
+      <S3UploadDialog />
     </>
   )
 }

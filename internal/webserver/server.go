@@ -11,8 +11,10 @@ import (
 	"sync"
 
 	"github.com/kartoza/kartoza-cloudbench/internal/api"
+	"github.com/kartoza/kartoza-cloudbench/internal/cloudnative"
 	"github.com/kartoza/kartoza-cloudbench/internal/config"
 	"github.com/kartoza/kartoza-cloudbench/internal/preview"
+	"github.com/kartoza/kartoza-cloudbench/internal/s3client"
 )
 
 //go:embed static/*
@@ -21,23 +23,35 @@ var staticFiles embed.FS
 // Server represents the web server
 type Server struct {
 	config        *config.Config
-	clients       map[string]*api.Client // Connection ID -> Client
+	clients       map[string]*api.Client       // GeoServer Connection ID -> Client
+	s3Clients     map[string]*s3client.Client  // S3 Connection ID -> Client
 	clientsMu     sync.RWMutex
+	s3ClientsMu   sync.RWMutex
 	previewServer *preview.Server
+	conversionMgr *cloudnative.Manager
 	addr          string
 }
 
 // New creates a new web server
 func New(cfg *config.Config) *Server {
 	s := &Server{
-		config:  cfg,
-		clients: make(map[string]*api.Client),
+		config:        cfg,
+		clients:       make(map[string]*api.Client),
+		s3Clients:     make(map[string]*s3client.Client),
+		conversionMgr: cloudnative.NewManager(),
 	}
 
-	// Initialize clients for existing connections
+	// Initialize clients for existing GeoServer connections
 	for _, conn := range cfg.Connections {
 		client := api.NewClient(&conn)
 		s.clients[conn.ID] = client
+	}
+
+	// Initialize clients for existing S3 connections
+	for _, conn := range cfg.S3Connections {
+		if client, err := s3client.NewClient(&conn); err == nil {
+			s.s3Clients[conn.ID] = client
+		}
 	}
 
 	return s
@@ -136,6 +150,16 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// API routes - PostgreSQL Services
 	mux.HandleFunc("/api/pg/services", s.handlePGServices)
 	mux.HandleFunc("/api/pg/services/", s.handlePGServiceByName)
+
+	// API routes - S3 Storage
+	mux.HandleFunc("/api/s3/connections", s.handleS3Connections)
+	mux.HandleFunc("/api/s3/connections/test", s.handleTestS3ConnectionDirect)
+	mux.HandleFunc("/api/s3/connections/", s.handleS3ConnectionByID)
+	mux.HandleFunc("/api/s3/conversion/tools", s.handleConversionToolStatus)
+	mux.HandleFunc("/api/s3/conversion/jobs", s.handleConversionJobs)
+	mux.HandleFunc("/api/s3/conversion/jobs/", s.handleConversionJobByID)
+	mux.HandleFunc("/api/s3/preview/", s.handleS3Preview)
+	mux.HandleFunc("/api/s3/proxy/", s.handleS3Proxy)
 
 	// API routes - Data Import (ogr2ogr and raster2pgsql)
 	mux.HandleFunc("/api/pg/import", s.handlePGImport)
@@ -346,4 +370,99 @@ func (s *Server) saveConfig() error {
 // generateConnectionID generates a unique connection ID
 func generateConnectionID() string {
 	return fmt.Sprintf("conn_%d", len(config.DefaultConfig().Connections)+1)
+}
+
+// S3 client management methods
+
+// getS3Client returns the S3 client for a connection ID
+func (s *Server) getS3Client(connID string) *s3client.Client {
+	s.s3ClientsMu.RLock()
+	defer s.s3ClientsMu.RUnlock()
+	return s.s3Clients[connID]
+}
+
+// addS3Client adds a new S3 client for a connection
+func (s *Server) addS3Client(conn *config.S3Connection) {
+	client, err := s3client.NewClient(conn)
+	if err != nil {
+		log.Printf("Failed to create S3 client for %s: %v", conn.ID, err)
+		return
+	}
+	s.s3ClientsMu.Lock()
+	defer s.s3ClientsMu.Unlock()
+	s.s3Clients[conn.ID] = client
+}
+
+// removeS3Client removes an S3 client
+func (s *Server) removeS3Client(connID string) {
+	s.s3ClientsMu.Lock()
+	defer s.s3ClientsMu.Unlock()
+	delete(s.s3Clients, connID)
+}
+
+// Conversion job handlers
+
+// handleConversionToolStatus returns the status of conversion tools
+func (s *Server) handleConversionToolStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.jsonResponse(w, cloudnative.GetToolStatus())
+}
+
+// handleConversionJobs handles listing conversion jobs
+func (s *Server) handleConversionJobs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.jsonResponse(w, s.conversionMgr.ListJobs())
+	case http.MethodOptions:
+		s.handleCORS(w)
+	default:
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleConversionJobByID handles operations on a specific conversion job
+func (s *Server) handleConversionJobByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/s3/conversion/jobs/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		s.jsonError(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+
+	jobID := parts[0]
+
+	// Check for cancel action
+	if len(parts) >= 2 && parts[1] == "cancel" {
+		if r.Method == http.MethodPost {
+			if s.conversionMgr.CancelJob(jobID) {
+				s.jsonResponse(w, map[string]string{"status": "cancelled"})
+			} else {
+				s.jsonError(w, "Failed to cancel job", http.StatusBadRequest)
+			}
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		job := s.conversionMgr.GetJob(jobID)
+		if job == nil {
+			s.jsonError(w, "Job not found", http.StatusNotFound)
+			return
+		}
+		s.jsonResponse(w, job)
+	case http.MethodDelete:
+		if s.conversionMgr.RemoveJob(jobID) {
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			s.jsonError(w, "Job not found or still running", http.StatusBadRequest)
+		}
+	case http.MethodOptions:
+		s.handleCORS(w)
+	default:
+		s.jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

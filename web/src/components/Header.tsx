@@ -18,7 +18,7 @@ import {
   Image,
   Text,
 } from '@chakra-ui/react'
-import { FiPlus, FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown } from 'react-icons/fi'
+import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload } from 'react-icons/fi'
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
@@ -32,10 +32,6 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
   const openDialog = useUIStore((state) => state.openDialog)
   const fetchConnections = useConnectionStore((state) => state.fetchConnections)
   const selectedNode = useTreeStore((state) => state.selectedNode)
-
-  const handleNewConnection = () => {
-    openDialog('connection', { mode: 'create' })
-  }
 
   const handleUpload = () => {
     if (!selectedNode) {
@@ -141,68 +137,25 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
                 alignItems="center"
               >
                 <HStack spacing={1}>
-                  <Text>Connections</Text>
+                  <Text>Tools</Text>
                   <FiChevronDown size={14} />
                 </HStack>
               </MenuButton>
               <MenuList>
-                <MenuItem
-                  icon={<FiPlus />}
-                  onClick={handleNewConnection}
-                >
-                  Add Connection
-                </MenuItem>
                 <MenuItem
                   icon={<FiRefreshCcw />}
                   onClick={() => openDialog('sync', { mode: 'create' })}
                 >
-                  Sync Server(s)
+                  Sync GeoServer(s)
+                </MenuItem>
+                <MenuItem
+                  icon={<FiUpload />}
+                  onClick={handleUpload}
+                >
+                  Upload Data
                 </MenuItem>
               </MenuList>
             </Menu>
-
-            <Menu>
-              <MenuButton
-                as={Box}
-                cursor="pointer"
-                {...navItemStyle}
-                display="flex"
-                alignItems="center"
-              >
-                <HStack spacing={1}>
-                  <Text>Create</Text>
-                  <FiChevronDown size={14} />
-                </HStack>
-              </MenuButton>
-              <MenuList>
-                <MenuItem
-                  icon={<FiPlus />}
-                  onClick={() => openDialog('workspace', { mode: 'create' })}
-                >
-                  New Workspace
-                </MenuItem>
-                <MenuItem
-                  icon={<FiPlus />}
-                  onClick={() => openDialog('datastore', { mode: 'create' })}
-                >
-                  New Data Store
-                </MenuItem>
-                <MenuItem
-                  icon={<FiPlus />}
-                  onClick={() => openDialog('coveragestore', { mode: 'create' })}
-                >
-                  New Coverage Store
-                </MenuItem>
-              </MenuList>
-            </Menu>
-
-            <Box
-              as="button"
-              {...navItemStyle}
-              onClick={handleUpload}
-            >
-              Upload
-            </Box>
           </HStack>
 
           <Spacer />

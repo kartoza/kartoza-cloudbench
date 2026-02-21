@@ -33,6 +33,15 @@ import type {
   StartSyncRequest,
   DashboardData,
   ServerStatus,
+  S3Connection,
+  S3ConnectionCreate,
+  S3ConnectionTestResult,
+  S3Bucket,
+  S3Object,
+  S3UploadResult,
+  S3PreviewMetadata,
+  ConversionJob,
+  ConversionToolStatus,
 } from '../types'
 
 const API_BASE = '/api'
@@ -1232,4 +1241,226 @@ export interface DocumentationResponse {
 export async function getDocumentation(): Promise<DocumentationResponse> {
   const response = await fetch(`${API_BASE}/docs`)
   return handleResponse<DocumentationResponse>(response)
+}
+
+// ============================================================================
+// S3 Storage API
+// ============================================================================
+
+// Get all S3 connections
+export async function getS3Connections(): Promise<S3Connection[]> {
+  const response = await fetch(`${API_BASE}/s3/connections`)
+  return handleResponse<S3Connection[]>(response)
+}
+
+// Get a specific S3 connection
+export async function getS3Connection(id: string): Promise<S3Connection> {
+  const response = await fetch(`${API_BASE}/s3/connections/${id}`)
+  return handleResponse<S3Connection>(response)
+}
+
+// Create a new S3 connection
+export async function createS3Connection(conn: S3ConnectionCreate): Promise<S3Connection> {
+  const response = await fetch(`${API_BASE}/s3/connections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(conn),
+  })
+  return handleResponse<S3Connection>(response)
+}
+
+// Update an S3 connection
+export async function updateS3Connection(id: string, conn: Partial<S3ConnectionCreate>): Promise<S3Connection> {
+  const response = await fetch(`${API_BASE}/s3/connections/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(conn),
+  })
+  return handleResponse<S3Connection>(response)
+}
+
+// Delete an S3 connection
+export async function deleteS3Connection(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/s3/connections/${id}`, {
+    method: 'DELETE',
+  })
+  return handleResponse<void>(response)
+}
+
+// Test an existing S3 connection
+export async function testS3Connection(id: string): Promise<S3ConnectionTestResult> {
+  const response = await fetch(`${API_BASE}/s3/connections/${id}/test`, {
+    method: 'POST',
+  })
+  return handleResponse<S3ConnectionTestResult>(response)
+}
+
+// Test S3 connection credentials without saving
+export async function testS3ConnectionDirect(conn: S3ConnectionCreate): Promise<S3ConnectionTestResult> {
+  const response = await fetch(`${API_BASE}/s3/connections/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(conn),
+  })
+  return handleResponse<S3ConnectionTestResult>(response)
+}
+
+// List buckets in an S3 connection
+export async function getS3Buckets(connectionId: string): Promise<S3Bucket[]> {
+  const response = await fetch(`${API_BASE}/s3/connections/${connectionId}/buckets`)
+  return handleResponse<S3Bucket[]>(response)
+}
+
+// Create a new bucket
+export async function createS3Bucket(connectionId: string, bucketName: string): Promise<S3Bucket> {
+  const response = await fetch(`${API_BASE}/s3/connections/${connectionId}/buckets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: bucketName }),
+  })
+  return handleResponse<S3Bucket>(response)
+}
+
+// Delete a bucket
+export async function deleteS3Bucket(connectionId: string, bucketName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}`, {
+    method: 'DELETE',
+  })
+  return handleResponse<void>(response)
+}
+
+// List objects in a bucket
+export async function getS3Objects(
+  connectionId: string,
+  bucketName: string,
+  prefix?: string
+): Promise<S3Object[]> {
+  let url = `${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}/objects`
+  if (prefix) {
+    url += `?prefix=${encodeURIComponent(prefix)}`
+  }
+  const response = await fetch(url)
+  return handleResponse<S3Object[]>(response)
+}
+
+// Upload a file to S3
+export async function uploadToS3(
+  connectionId: string,
+  bucketName: string,
+  file: File,
+  key?: string,
+  convert?: boolean,
+  targetFormat?: string,
+  onProgress?: (progress: number) => void,
+  subfolder?: boolean,
+  prefix?: string
+): Promise<S3UploadResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (key) {
+    formData.append('key', key)
+  }
+  if (convert !== undefined) {
+    formData.append('convert', convert.toString())
+  }
+  if (targetFormat) {
+    formData.append('targetFormat', targetFormat)
+  }
+  if (subfolder !== undefined) {
+    formData.append('subfolder', subfolder.toString())
+  }
+  if (prefix) {
+    formData.append('prefix', prefix)
+  }
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && onProgress) {
+        const progress = Math.round((event.loaded / event.total) * 100)
+        onProgress(progress)
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText))
+      } else {
+        reject(new Error(JSON.parse(xhr.responseText).error || 'Upload failed'))
+      }
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error'))
+    })
+
+    xhr.open('POST', `${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}/objects`)
+    xhr.send(formData)
+  })
+}
+
+// Delete an object from S3
+export async function deleteS3Object(connectionId: string, bucketName: string, key: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}/objects?key=${encodeURIComponent(key)}`,
+    { method: 'DELETE' }
+  )
+  return handleResponse<void>(response)
+}
+
+// Get a presigned URL for an S3 object
+export async function getS3PresignedURL(
+  connectionId: string,
+  bucketName: string,
+  key: string,
+  expiryMinutes?: number
+): Promise<{ url: string; expires: string }> {
+  let url = `${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}/presign?key=${encodeURIComponent(key)}`
+  if (expiryMinutes) {
+    url += `&expiry=${expiryMinutes}`
+  }
+  const response = await fetch(url)
+  return handleResponse<{ url: string; expires: string }>(response)
+}
+
+// ============================================================================
+// Cloud-Native Conversion API
+// ============================================================================
+
+// Get conversion tool status (GDAL, PDAL, ogr2ogr availability)
+export async function getConversionToolStatus(): Promise<ConversionToolStatus> {
+  const response = await fetch(`${API_BASE}/s3/conversion/tools`)
+  return handleResponse<ConversionToolStatus>(response)
+}
+
+// Get all conversion jobs
+export async function getConversionJobs(): Promise<ConversionJob[]> {
+  const response = await fetch(`${API_BASE}/s3/conversion/jobs`)
+  return handleResponse<ConversionJob[]>(response)
+}
+
+// Get a specific conversion job
+export async function getConversionJob(jobId: string): Promise<ConversionJob> {
+  const response = await fetch(`${API_BASE}/s3/conversion/jobs/${jobId}`)
+  return handleResponse<ConversionJob>(response)
+}
+
+// Cancel a conversion job
+export async function cancelConversionJob(jobId: string): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE}/s3/conversion/jobs/${jobId}`, {
+    method: 'DELETE',
+  })
+  return handleResponse<{ success: boolean; message: string }>(response)
+}
+
+// Get S3 object preview metadata (bounds, format, presigned URL)
+export async function getS3PreviewMetadata(
+  connectionId: string,
+  bucketName: string,
+  key: string
+): Promise<S3PreviewMetadata> {
+  const url = `${API_BASE}/s3/preview/${connectionId}/${bucketName}?key=${encodeURIComponent(key)}`
+  const response = await fetch(url)
+  return handleResponse<S3PreviewMetadata>(response)
 }

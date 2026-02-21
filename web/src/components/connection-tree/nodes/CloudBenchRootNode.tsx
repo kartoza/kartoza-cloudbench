@@ -6,6 +6,7 @@ import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { GeoServerRootNode } from './GeoServerRootNode'
 import { PostgreSQLRootNode } from './PostgreSQLRootNode'
+import { S3StorageRootNode } from './S3StorageRootNode'
 
 interface CloudBenchRootNodeProps {
   connections: { id: string; name: string; url: string }[]
@@ -55,6 +56,8 @@ export function CloudBenchRootNode({ connections }: CloudBenchRootNodeProps) {
           <GeoServerRootNode connections={connections} />
           {/* PostgreSQL Section */}
           <PostgreSQLRootNode />
+          {/* S3 Storage Section */}
+          <S3StorageRootNode />
         </Box>
       )}
     </Box>

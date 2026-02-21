@@ -28,6 +28,7 @@ import {
   FiTable,
   FiCode,
   FiRefreshCw,
+  FiPlus,
 } from 'react-icons/fi'
 import { getNodeIconComponent, getNodeColor } from './utils'
 import type { TreeNodeRowProps } from './types'
@@ -38,6 +39,7 @@ export function TreeNodeRow({
   isSelected,
   isLoading,
   onClick,
+  onAdd,
   onEdit,
   onDelete,
   onPreview,
@@ -135,6 +137,21 @@ export function TreeNodeRow({
         >
           {count}
         </Badge>
+      )}
+      {/* Add button - always visible for root nodes */}
+      {onAdd && (
+        <Tooltip label="Add" fontSize="xs">
+          <IconButton
+            aria-label="Add"
+            icon={<FiPlus size={14} />}
+            size="xs"
+            variant="ghost"
+            colorScheme="green"
+            onClick={onAdd}
+            _hover={{ bg: 'green.50' }}
+            mr={1}
+          />
+        </Tooltip>
       )}
       {/* Admin link - always visible for connections */}
       {onOpenAdmin && (

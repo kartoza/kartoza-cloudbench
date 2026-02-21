@@ -39,7 +39,28 @@ export default function ConfirmDialog() {
 
     try {
       // Handle different delete types based on data
-      if (data?.pgServiceName) {
+      if (data?.s3ConnectionId && data?.s3BucketName && data?.s3ObjectKey) {
+        // Delete S3 object or folder
+        await api.deleteS3Object(
+          data.s3ConnectionId as string,
+          data.s3BucketName as string,
+          data.s3ObjectKey as string
+        )
+        // Invalidate all S3 object queries for this bucket to refresh the tree
+        // Use predicate to match any query starting with ['s3objects', connectionId, bucketName, ...]
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            query.queryKey[0] === 's3objects' &&
+            query.queryKey[1] === data.s3ConnectionId &&
+            query.queryKey[2] === data.s3BucketName
+        })
+        toast({
+          title: 'Deleted successfully',
+          status: 'success',
+          duration: 2000,
+        })
+      } else if (data?.pgServiceName) {
         // Delete PostgreSQL service
         await api.deletePGService(data.pgServiceName as string)
         queryClient.invalidateQueries({ queryKey: ['pgservices'] })
@@ -130,9 +151,9 @@ export default function ConfirmDialog() {
     <Modal isOpen={isOpen} onClose={closeDialog} size="md" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
-        {/* Warning Header */}
+        {/* Warning Header - Red gradient for destructive action */}
         <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="linear-gradient(135deg, #7f1d1d 0%, #b91c1c 50%, #dc2626 100%)"
           px={6}
           py={4}
         >

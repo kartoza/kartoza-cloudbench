@@ -1,4 +1,4 @@
-.PHONY: all build build-tui build-web build-web-frontend clean dev-web dev-tui install test help
+.PHONY: all build build-tui build-web build-web-frontend clean clean-all dev-web dev-tui install test help redeploy kill-server
 
 # Version from git tag or commit
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -34,6 +34,12 @@ clean:
 	rm -rf internal/webserver/static/*.css
 	rm -rf internal/webserver/static/*.html
 	rm -rf internal/webserver/static/assets
+	rm -rf cloudbench
+
+# Deep clean - also clears Go build cache
+clean-all: clean
+	@echo "Clearing Go build cache..."
+	go clean -cache || true
 
 # Development mode for web (runs Vite dev server and Go server)
 dev-web:
@@ -63,6 +69,27 @@ install: build
 test:
 	go test -v ./...
 
+# Kill any running server instances on port 8080
+kill-server:
+	@echo "Killing any running server instances..."
+	@fuser -k 8080/tcp 2>/dev/null || true
+	@sleep 1
+
+# Full redeploy: kill server, deep clean, rebuild everything, and start server
+# Note: Run this inside 'nix develop' shell for GDAL tools support
+redeploy: kill-server clean-all build-web
+	@echo ""
+	@echo "================================================"
+	@echo "Build complete! Starting server..."
+	@echo "================================================"
+	@echo ""
+	./bin/kartoza-cloudbench &
+	@sleep 2
+	@echo ""
+	@echo "Server started on http://localhost:8080"
+	@echo "To run with GDAL tools support, use:"
+	@echo "  nix develop --command ./bin/kartoza-cloudbench"
+
 # Show help
 help:
 	@echo "Kartoza GeoServer Client - Build Commands"
@@ -76,10 +103,13 @@ help:
 	@echo "  build-web        Build the Web binary (includes React frontend)"
 	@echo "  build-web-frontend  Build the React frontend only"
 	@echo "  clean            Remove build artifacts"
+	@echo "  clean-all        Deep clean including Go build cache"
 	@echo "  dev-web          Instructions for web development mode"
 	@echo "  dev-tui          Run TUI in development mode"
 	@echo "  run-web          Build and run the web server"
 	@echo "  run-tui          Build and run the TUI"
 	@echo "  install          Install binaries to GOPATH/bin"
 	@echo "  test             Run tests"
+	@echo "  kill-server      Kill any running server instances"
+	@echo "  redeploy         Kill, clean, rebuild, and restart server"
 	@echo "  help             Show this help message"

@@ -245,12 +245,17 @@ export type NodeType =
   | 'cloudbench'     // Application root: "Kartoza CloudBench"
   | 'geoserver'      // "GeoServer" container
   | 'postgresql'     // "PostgreSQL" container
+  | 's3storage'      // "S3 Storage" container
   | 'connection'     // GeoServer connection
   | 'pgservice'      // pg_service.conf entry
   | 'pgschema'       // PostgreSQL schema
   | 'pgtable'        // Database table
   | 'pgview'         // Database view
   | 'pgcolumn'       // Table column
+  | 's3connection'   // S3 storage connection
+  | 's3bucket'       // S3 bucket
+  | 's3folder'       // Virtual folder (prefix) in S3
+  | 's3object'       // S3 object (file)
   | 'workspace'
   | 'datastores'
   | 'coveragestores'
@@ -283,6 +288,13 @@ export interface TreeNode {
   tableName?: string
   isParsed?: boolean
   dataType?: string
+  // S3-specific fields
+  s3ConnectionId?: string
+  s3Bucket?: string
+  s3Key?: string
+  s3Size?: number
+  s3ContentType?: string
+  s3IsFolder?: boolean
 }
 
 // GeoWebCache (GWC) types
@@ -436,4 +448,126 @@ export interface DashboardData {
   totalStores: number
   alertServers: ServerStatus[]
   pingIntervalSecs: number // Dashboard refresh interval from settings
+}
+
+// ============================================================================
+// S3 Storage Types
+// ============================================================================
+
+// S3 Connection configuration
+export interface S3Connection {
+  id: string
+  name: string
+  endpoint: string
+  accessKey: string
+  secretKey: string
+  region?: string
+  useSSL: boolean
+  pathStyle: boolean
+  isActive: boolean
+}
+
+export interface S3ConnectionCreate {
+  name: string
+  endpoint: string
+  accessKey: string
+  secretKey: string
+  region?: string
+  useSSL: boolean
+  pathStyle: boolean
+}
+
+export interface S3ConnectionTestResult {
+  success: boolean
+  message: string
+  buckets?: number
+}
+
+// S3 Bucket
+export interface S3Bucket {
+  name: string
+  creationDate: string
+}
+
+// S3 Object
+export interface S3Object {
+  key: string
+  size: number
+  lastModified: string
+  contentType?: string
+  isFolder: boolean
+  etag?: string
+}
+
+// Cloud-native format types
+export type CloudNativeFormat = 'cog' | 'copc' | 'geoparquet' | 'parquet' | 'unknown'
+
+// Conversion job status
+export type ConversionJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+// Conversion job
+export interface ConversionJob {
+  id: string
+  sourcePath: string
+  outputPath: string
+  sourceFormat: string
+  targetFormat: string
+  status: ConversionJobStatus
+  progress: number
+  message: string
+  error?: string
+  startedAt: string
+  completedAt?: string
+  inputSize: number
+  outputSize?: number
+}
+
+// Conversion tool info
+export interface ConversionToolInfo {
+  available: boolean
+  version?: string
+  tool: string
+  formats?: string[]
+  error?: string
+}
+
+export interface ConversionToolStatus {
+  gdal?: ConversionToolInfo
+  pdal?: ConversionToolInfo
+  ogr2ogr?: ConversionToolInfo
+}
+
+// S3 Upload options
+export interface S3UploadOptions {
+  convert?: boolean // Whether to suggest/perform cloud-native conversion
+  targetFormat?: 'cog' | 'copc' | 'geoparquet'
+}
+
+// S3 Upload result
+export interface S3UploadResult {
+  success: boolean
+  message: string
+  key: string
+  size: number
+  conversionJobId?: string // If conversion was started
+}
+
+// S3 Preview metadata for layer preview
+export interface S3PreviewBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+export interface S3PreviewMetadata {
+  format: string  // "cog", "copc", "geoparquet", "geojson", "geotiff"
+  previewType: string  // "raster", "pointcloud", "vector"
+  bounds?: S3PreviewBounds
+  crs?: string
+  size: number
+  key: string
+  proxyUrl: string  // URL to proxy through backend (not direct S3 access)
+  bandCount?: number  // Number of bands in raster (1 = potential DEM)
+  metadata?: unknown
 }

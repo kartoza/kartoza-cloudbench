@@ -81,6 +81,19 @@ type PGServiceState struct {
 	// SchemaCache is stored separately to avoid bloating the main config
 }
 
+// S3Connection represents an S3-compatible storage connection configuration
+type S3Connection struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Endpoint  string `json:"endpoint"`            // e.g., "localhost:9000" or "s3.amazonaws.com"
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+	Region    string `json:"region,omitempty"`    // AWS region, optional for MinIO
+	UseSSL    bool   `json:"use_ssl"`
+	PathStyle bool   `json:"path_style"`          // true for MinIO, false for AWS S3
+	IsActive  bool   `json:"is_active"`
+}
+
 // SavedQuery represents a saved visual query definition
 type SavedQuery struct {
 	Name        string      `json:"name"`
@@ -100,6 +113,7 @@ type Config struct {
 	PingIntervalSecs int                 `json:"ping_interval_secs,omitempty"` // Dashboard refresh interval, default 60
 	PGServiceStates  []PGServiceState    `json:"pg_services,omitempty"`        // PostgreSQL service states
 	SavedQueries     []SavedQuery        `json:"saved_queries,omitempty"`      // Visual query definitions
+	S3Connections    []S3Connection      `json:"s3_connections,omitempty"`     // S3-compatible storage connections
 }
 
 // GetPingInterval returns the ping interval in seconds, with a default of 60
@@ -410,6 +424,42 @@ func (c *Config) DeleteQuery(serviceName, queryName string) {
 	for i := range c.SavedQueries {
 		if c.SavedQueries[i].ServiceName == serviceName && c.SavedQueries[i].Name == queryName {
 			c.SavedQueries = append(c.SavedQueries[:i], c.SavedQueries[i+1:]...)
+			return
+		}
+	}
+}
+
+// GetS3Connection returns an S3 connection by ID
+func (c *Config) GetS3Connection(id string) *S3Connection {
+	for i := range c.S3Connections {
+		if c.S3Connections[i].ID == id {
+			return &c.S3Connections[i]
+		}
+	}
+	return nil
+}
+
+// AddS3Connection adds a new S3 connection
+func (c *Config) AddS3Connection(conn S3Connection) {
+	c.S3Connections = append(c.S3Connections, conn)
+}
+
+// UpdateS3Connection updates an existing S3 connection
+func (c *Config) UpdateS3Connection(conn S3Connection) bool {
+	for i := range c.S3Connections {
+		if c.S3Connections[i].ID == conn.ID {
+			c.S3Connections[i] = conn
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveS3Connection removes an S3 connection by ID
+func (c *Config) RemoveS3Connection(id string) {
+	for i, conn := range c.S3Connections {
+		if conn.ID == id {
+			c.S3Connections = append(c.S3Connections[:i], c.S3Connections[i+1:]...)
 			return
 		}
 	}

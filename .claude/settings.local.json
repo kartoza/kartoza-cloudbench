@@ -23,7 +23,13 @@
       "Bash(for:*)",
       "Bash(done)",
       "Bash(/tmp/header.txt)",
-      "Bash(cut:*)"
+      "Bash(cut:*)",
+      "Bash(pkill:*)",
+      "Bash(fuser:*)",
+      "Bash(ss:*)",
+      "Bash(netstat:*)",
+      "Bash(kill:*)",
+      "Bash(dmesg:*)"
     ],
     "deny": [],
     "ask": []

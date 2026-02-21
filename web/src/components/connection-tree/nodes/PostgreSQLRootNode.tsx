@@ -43,9 +43,16 @@ export function PostgreSQLRootNode() {
 
   const isSelected = selectedNode?.id === nodeId
 
+  const openDialog = useUIStore((state) => state.openDialog)
+
   const handleClick = () => {
     selectNode(node)
     toggleNode(nodeId)
+  }
+
+  const handleAdd = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    openDialog('pgdashboard', { mode: 'create' })
   }
 
   return (
@@ -56,6 +63,7 @@ export function PostgreSQLRootNode() {
         isSelected={isSelected}
         isLoading={isLoading}
         onClick={handleClick}
+        onAdd={handleAdd}
         level={1}
         count={filteredPGServices?.length}
       />

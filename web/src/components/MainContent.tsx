@@ -5,6 +5,7 @@ import { useUIStore } from '../stores/uiStore'
 import * as api from '../api/client'
 import MapPreview from './MapPreview'
 import Globe3DPreview from './Globe3DPreview'
+import S3LayerPreview from './S3LayerPreview'
 import Dashboard from './Dashboard'
 import {
   ConnectionPanel,
@@ -16,6 +17,8 @@ import {
   PGServicePanel,
   PGSchemaPanel,
   PGTablePanel,
+  S3ConnectionPanel,
+  S3StoragePanel,
 } from './panels'
 import {
   DataStoresDashboard,
@@ -28,8 +31,10 @@ import {
 export default function MainContent() {
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const activePreview = useUIStore((state) => state.activePreview)
+  const activeS3Preview = useUIStore((state) => state.activeS3Preview)
   const previewMode = useUIStore((state) => state.previewMode)
   const setPreview = useUIStore((state) => state.setPreview)
+  const setS3Preview = useUIStore((state) => state.setS3Preview)
   const prevSelectedNodeRef = useRef(selectedNode)
 
   // Auto-update preview when selection changes to a previewable entity
@@ -83,7 +88,22 @@ export default function MainContent() {
     startAutoPreview()
   }, [selectedNode, activePreview, setPreview])
 
-  // Show preview if active - fills the entire available space
+  // Show S3 preview if active
+  if (activeS3Preview) {
+    return (
+      <Box flex="1" display="flex" flexDirection="column" minH="0">
+        <S3LayerPreview
+          key={`s3-${activeS3Preview.connectionId}:${activeS3Preview.bucketName}:${activeS3Preview.objectKey}`}
+          connectionId={activeS3Preview.connectionId}
+          bucketName={activeS3Preview.bucketName}
+          objectKey={activeS3Preview.objectKey}
+          onClose={() => setS3Preview(null)}
+        />
+      </Box>
+    )
+  }
+
+  // Show GeoServer preview if active - fills the entire available space
   // Using key prop to force remount when layer changes, ensuring iframe and metadata fully refresh
   if (activePreview) {
     return (
@@ -218,6 +238,12 @@ export default function MainContent() {
           isView={selectedNode.type === 'pgview'}
         />
       )
+    case 's3connection':
+      return (
+        <S3ConnectionPanel connectionId={selectedNode.s3ConnectionId!} />
+      )
+    case 's3storage':
+      return <S3StoragePanel />
     default:
       return <Dashboard />
   }

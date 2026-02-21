@@ -8,12 +8,17 @@ const (
 	NodeTypeCloudBenchRoot  // Application root: "Kartoza CloudBench"
 	NodeTypeGeoServerRoot   // "GeoServer" container
 	NodeTypePostgreSQLRoot  // "PostgreSQL" container
+	NodeTypeS3Root          // "S3 Storage" container
 	NodeTypeConnection      // A GeoServer connection (server)
 	NodeTypePGService       // pg_service.conf entry
 	NodeTypePGSchema        // PostgreSQL schema
 	NodeTypePGTable         // Database table
 	NodeTypePGView          // Database view
 	NodeTypePGColumn        // Table column
+	NodeTypeS3Connection    // S3-compatible storage connection
+	NodeTypeS3Bucket        // S3 bucket
+	NodeTypeS3Folder        // Virtual folder (prefix) in S3
+	NodeTypeS3Object        // S3 object (file)
 	NodeTypeWorkspace
 	NodeTypeDataStores
 	NodeTypeCoverageStores
@@ -42,6 +47,8 @@ func (n NodeType) String() string {
 		return "geoserver"
 	case NodeTypePostgreSQLRoot:
 		return "postgresql"
+	case NodeTypeS3Root:
+		return "s3"
 	case NodeTypeConnection:
 		return "connection"
 	case NodeTypePGService:
@@ -54,6 +61,14 @@ func (n NodeType) String() string {
 		return "pgview"
 	case NodeTypePGColumn:
 		return "pgcolumn"
+	case NodeTypeS3Connection:
+		return "s3connection"
+	case NodeTypeS3Bucket:
+		return "s3bucket"
+	case NodeTypeS3Folder:
+		return "s3folder"
+	case NodeTypeS3Object:
+		return "s3object"
 	case NodeTypeWorkspace:
 		return "workspace"
 	case NodeTypeDataStores:
@@ -101,6 +116,8 @@ func (n NodeType) Icon() string {
 		return "\uf0ac" // fa-globe
 	case NodeTypePostgreSQLRoot:
 		return "\uf472" // postgresql elephant icon
+	case NodeTypeS3Root:
+		return "\uf0c2" // fa-cloud
 	case NodeTypeConnection:
 		return "\uf233" // fa-server
 	case NodeTypePGService:
@@ -113,6 +130,14 @@ func (n NodeType) Icon() string {
 		return "\uf06e" // fa-eye
 	case NodeTypePGColumn:
 		return "\uf0db" // fa-columns
+	case NodeTypeS3Connection:
+		return "\uf0c2" // fa-cloud
+	case NodeTypeS3Bucket:
+		return "\uf1b2" // fa-cube (bucket)
+	case NodeTypeS3Folder:
+		return "\uf07b" // fa-folder
+	case NodeTypeS3Object:
+		return "\uf15b" // fa-file
 	case NodeTypeWorkspace:
 		return "\uf07b" // fa-folder
 	case NodeTypeDataStores:
@@ -170,6 +195,12 @@ type TreeNode struct {
 	PGTableName   string // PostgreSQL table name
 	IsParsed      bool   // Whether the PG service has been parsed/harvested
 	DataType      string // Column data type for PGColumn nodes
+	// S3-specific fields
+	S3ConnectionID string // S3 connection ID this node belongs to
+	S3Bucket       string // S3 bucket name
+	S3Key          string // S3 object key (path)
+	S3Size         int64  // Object size in bytes
+	S3ContentType  string // Content type of the object
 }
 
 // NewTreeNode creates a new tree node

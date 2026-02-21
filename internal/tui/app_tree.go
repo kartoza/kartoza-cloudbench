@@ -8,7 +8,7 @@ import (
 	"github.com/kartoza/kartoza-cloudbench/internal/postgres"
 )
 
-// buildConnectionsTree builds the unified tree with CloudBench root, GeoServer and PostgreSQL sections
+// buildConnectionsTree builds the unified tree with CloudBench root, GeoServer, PostgreSQL, and S3 sections
 func (a *App) buildConnectionsTree() {
 	// Create the CloudBench root node
 	root := models.NewTreeNode("Kartoza CloudBench", models.NodeTypeCloudBenchRoot)
@@ -32,7 +32,24 @@ func (a *App) buildConnectionsTree() {
 	a.loadPGServicesToTree(postgresNode)
 	root.AddChild(postgresNode)
 
+	// Create S3 Storage section
+	s3Node := models.NewTreeNode("S3 Storage", models.NodeTypeS3Root)
+	s3Node.Expanded = true
+	// Load S3 connections from config
+	a.loadS3ConnectionsToTree(s3Node)
+	root.AddChild(s3Node)
+
 	a.treeView.SetRoot(root)
+}
+
+// loadS3ConnectionsToTree loads S3 connections from config into the tree
+func (a *App) loadS3ConnectionsToTree(s3Node *models.TreeNode) {
+	for _, conn := range a.config.S3Connections {
+		connNode := models.NewTreeNode(conn.Name, models.NodeTypeS3Connection)
+		connNode.S3ConnectionID = conn.ID
+		connNode.Expanded = false // Start collapsed, expand when user clicks
+		s3Node.AddChild(connNode)
+	}
 }
 
 // loadPGServicesToTree loads PostgreSQL services from pg_service.conf into the tree

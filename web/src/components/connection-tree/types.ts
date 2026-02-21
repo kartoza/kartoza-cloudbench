@@ -94,6 +94,7 @@ export interface TreeNodeRowProps {
   isSelected: boolean
   isLoading: boolean
   onClick: () => void
+  onAdd?: (e: React.MouseEvent) => void
   onEdit?: (e: React.MouseEvent) => void
   onDelete?: (e: React.MouseEvent) => void
   onPreview?: (e: React.MouseEvent) => void
@@ -109,4 +110,35 @@ export interface TreeNodeRowProps {
   level: number
   isLeaf?: boolean
   count?: number
+}
+
+// S3 Storage types
+export interface S3ConnectionNodeProps {
+  connection: {
+    id: string
+    name: string
+    endpoint: string
+    isActive: boolean
+  }
+}
+
+export interface S3BucketNodeProps {
+  connectionId: string
+  bucket: {
+    name: string
+    creationDate: string
+  }
+}
+
+export interface S3ObjectNodeProps {
+  connectionId: string
+  bucket: string
+  object: {
+    key: string
+    size: number
+    lastModified: string
+    contentType?: string
+    isFolder: boolean
+  }
+  prefix?: string
 }

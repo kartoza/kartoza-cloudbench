@@ -18,6 +18,9 @@ export type DialogType =
   | 'dataviewer'
   | 'pgdashboard'
   | 'pgupload'
+  | 's3connection'
+  | 's3upload'
+  | 'pointcloud'
   | null
 
 export type DialogMode = 'create' | 'edit' | 'delete' | 'view'
@@ -43,6 +46,12 @@ interface PreviewState {
   nodeType?: string // 'layer' | 'layergroup'
 }
 
+interface S3PreviewState {
+  connectionId: string
+  bucketName: string
+  objectKey: string
+}
+
 interface Settings {
   showHiddenPGServices: boolean
   instanceName: string
@@ -56,6 +65,9 @@ interface UIState {
   // Preview state
   activePreview: PreviewState | null
   previewMode: PreviewMode
+
+  // S3 Preview state
+  activeS3Preview: S3PreviewState | null
 
   // Status messages
   statusMessage: string
@@ -76,6 +88,7 @@ interface UIState {
   closeDialog: () => void
   setPreview: (preview: PreviewState | null) => void
   setPreviewMode: (mode: PreviewMode) => void
+  setS3Preview: (preview: S3PreviewState | null) => void
   setStatus: (message: string) => void
   setError: (message: string | null) => void
   setSuccess: (message: string | null) => void
@@ -113,6 +126,7 @@ export const useUIStore = create<UIState>((set) => ({
   dialogData: null,
   activePreview: null,
   previewMode: '2d',
+  activeS3Preview: null,
   statusMessage: 'Ready',
   errorMessage: null,
   successMessage: null,
@@ -129,11 +143,17 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setPreview: (preview) => {
-    set({ activePreview: preview })
+    // Clear S3 preview when setting GeoServer preview
+    set({ activePreview: preview, activeS3Preview: null })
   },
 
   setPreviewMode: (mode) => {
     set({ previewMode: mode })
+  },
+
+  setS3Preview: (preview) => {
+    // Clear GeoServer preview when setting S3 preview
+    set({ activeS3Preview: preview, activePreview: null })
   },
 
   setStatus: (message) => {

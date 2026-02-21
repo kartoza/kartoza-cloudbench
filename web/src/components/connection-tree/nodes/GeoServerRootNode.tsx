@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Box, Text } from '@chakra-ui/react'
 import { useTreeStore } from '../../../stores/treeStore'
+import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { ConnectionNode } from './ConnectionNode'
@@ -15,6 +16,7 @@ export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
+  const openDialog = useUIStore((state) => state.openDialog)
 
   // Auto-expand GeoServer section on mount
   useEffect(() => {
@@ -36,6 +38,11 @@ export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
     toggleNode(nodeId)
   }
 
+  const handleAdd = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    openDialog('connection', { mode: 'create' })
+  }
+
   return (
     <Box>
       <TreeNodeRow
@@ -44,6 +51,7 @@ export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
         isSelected={isSelected}
         isLoading={false}
         onClick={handleClick}
+        onAdd={handleAdd}
         level={1}
         count={connections.length}
       />

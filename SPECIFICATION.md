@@ -34,8 +34,10 @@ This document provides a detailed specification of all features, behaviors, and 
 28. [Raster Data Import](#raster-data-import)
 29. [PostgreSQL Table Data Viewer](#postgresql-table-data-viewer)
 30. [Terria Integration](#terria-integration)
-31. [Future Enhancements](#future-enhancements)
-32. [Version History](#version-history)
+31. [S3 Storage Integration](#s3-storage-integration)
+32. [Cloud-Native Format Conversion](#cloud-native-format-conversion)
+33. [Future Enhancements](#future-enhancements)
+34. [Version History](#version-history)
 
 ---
 
@@ -63,6 +65,8 @@ Kartoza CloudBench is a unified platform for GeoServer and PostgreSQL management
 - **Visual Query Designer**: Metabase-style visual query builder
 - **SQL View Layers**: Publish SQL queries as GeoServer WMS/WFS layers
 - **Table Data Viewer**: Browse PostgreSQL table data with infinite scroll
+- **S3 Storage Integration**: Connect to S3-compatible storage (MinIO, AWS S3, Wasabi, etc.)
+- **Cloud-Native Conversion**: Convert geospatial files to cloud-native formats (COG, COPC, GeoParquet)
 
 ---
 
@@ -104,6 +108,8 @@ internal/
 │   └── schema.go         # Schema harvesting
 ├── preview/       # Browser-based layer preview server
 ├── query/         # Visual query builder
+├── s3client/      # S3-compatible storage client
+├── cloudnative/   # Cloud-native format conversion (COG, COPC, GeoParquet)
 ├── storage/       # File storage management
 ├── sync/          # Server synchronization
 ├── terria/        # Terria catalog export
@@ -133,10 +139,12 @@ web/
 
 The application maintains:
 - `clients`: Map of connection ID to API client (`map[string]*api.Client`)
+- `s3Clients`: Map of S3 connection ID to S3 client (`map[string]*s3client.Client`)
 - `config`: Application configuration with connections list
 - `treeView`: GeoServer resource tree component
 - `fileBrowser`: Local file browser component
 - `focusLeft`: Boolean indicating which panel has focus
+- `conversionMgr`: Cloud-native format conversion job manager
 
 ---
 
@@ -415,12 +423,17 @@ const (
     NodeTypeCloudBenchRoot  // Application root: "Kartoza CloudBench"
     NodeTypeGeoServerRoot   // "GeoServer" container
     NodeTypePostgreSQLRoot  // "PostgreSQL" container
+    NodeTypeS3Root          // "S3 Storage" container
     NodeTypeConnection      // GeoServer connection
     NodeTypePGService       // pg_service.conf entry
     NodeTypePGSchema        // PostgreSQL schema
     NodeTypePGTable         // Database table
     NodeTypePGView          // Database view
     NodeTypePGColumn        // Table column
+    NodeTypeS3Connection    // S3-compatible storage connection
+    NodeTypeS3Bucket        // S3 bucket
+    NodeTypeS3Folder        // Virtual folder (prefix) in S3
+    NodeTypeS3Object        // S3 object (file)
     NodeTypeWorkspace       // GeoServer workspace
     NodeTypeDataStore       // Vector data store
     NodeTypeCoverageStore   // Raster coverage store
@@ -444,12 +457,17 @@ const (
 │           │   └── 🛰️ Coverage
 │           ├── 🎨 Styles
 │           └── 📚 Layer Groups
-└── 🐘 PostgreSQL
-    └── 🔌 Service Entry (from pg_service.conf)
-        └── 📁 Schema
-            ├── 📋 Table
-            │   └── 🏷️ Column
-            └── 👁️ View
+├── 🐘 PostgreSQL
+│   └── 🔌 Service Entry (from pg_service.conf)
+│       └── 📁 Schema
+│           ├── 📋 Table
+│           │   └── 🏷️ Column
+│           └── 👁️ View
+└── ☁️ S3 Storage
+    └── 💾 S3 Connection (MinIO, AWS S3, etc.)
+        └── 📦 Bucket
+            ├── 📁 Folder (virtual prefix)
+            └── 📄 Object (file)
 ```
 
 ### Lazy Loading
@@ -830,6 +848,19 @@ Configuration is stored at:
       "password": "password"
     }
   ],
+  "s3_connections": [
+    {
+      "id": "uuid-string",
+      "name": "MinIO Local",
+      "endpoint": "localhost:9000",
+      "access_key": "minioadmin",
+      "secret_key": "minioadmin",
+      "region": "",
+      "use_ssl": false,
+      "path_style": true,
+      "is_active": true
+    }
+  ],
   "active_connection": "uuid-string",
   "last_local_path": "/path/to/last/directory"
 }
@@ -845,6 +876,16 @@ Configuration is stored at:
 | `connections[].url` | String | GeoServer base URL |
 | `connections[].username` | String | HTTP Basic auth username |
 | `connections[].password` | String | HTTP Basic auth password |
+| `s3_connections` | Array | List of saved S3 connections |
+| `s3_connections[].id` | String | Unique identifier (UUID v4) |
+| `s3_connections[].name` | String | User-friendly display name |
+| `s3_connections[].endpoint` | String | S3 endpoint (e.g., localhost:9000) |
+| `s3_connections[].access_key` | String | S3 access key ID |
+| `s3_connections[].secret_key` | String | S3 secret access key |
+| `s3_connections[].region` | String | AWS region (optional) |
+| `s3_connections[].use_ssl` | Boolean | Use HTTPS connection |
+| `s3_connections[].path_style` | Boolean | Use path-style addressing |
+| `s3_connections[].is_active` | Boolean | Connection active status |
 | `active_connection` | String | ID of last active connection |
 | `last_local_path` | String | Last browsed local directory |
 
@@ -1972,6 +2013,216 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 
 ---
 
+## S3 Storage Integration
+
+The application provides comprehensive integration with S3-compatible object storage services, enabling cloud-based geospatial data management.
+
+### Supported Providers
+
+| Provider | Description | Configuration Notes |
+|----------|-------------|---------------------|
+| MinIO | Open-source S3-compatible storage | Path style, no SSL for local |
+| AWS S3 | Amazon Simple Storage Service | Virtual-hosted style, SSL required |
+| Wasabi | Hot cloud storage | S3-compatible API |
+| Backblaze B2 | Cloud storage with S3 API | S3-compatible endpoint |
+| DigitalOcean Spaces | Object storage | S3-compatible API |
+| Any S3-compatible | Custom S3 implementations | Configurable endpoint |
+
+### Connection Configuration
+
+| Field | Description | Required |
+|-------|-------------|----------|
+| `name` | Display name for the connection | Yes |
+| `endpoint` | S3 endpoint URL (e.g., `localhost:9000`, `s3.amazonaws.com`) | Yes |
+| `accessKey` | Access key ID for authentication | Yes |
+| `secretKey` | Secret access key | Yes |
+| `region` | AWS region (required for AWS S3) | No |
+| `useSSL` | Enable HTTPS connection | No (default: false) |
+| `pathStyle` | Use path-style addressing (required for MinIO) | No (default: true) |
+
+### Features
+
+- **Connection Management**: Add, edit, test, and remove S3 connections
+- **Bucket Operations**: Create, list, and delete buckets
+- **Object Management**: Upload, download, delete objects with folder organization
+- **Presigned URLs**: Generate temporary access URLs for direct download
+- **Progress Tracking**: Real-time upload progress with percentage display
+- **Cloud-Native Conversion**: Automatic format conversion during upload
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/s3/connections` | GET | List all S3 connections |
+| `/api/s3/connections` | POST | Create new S3 connection |
+| `/api/s3/connections/{id}` | GET | Get connection details |
+| `/api/s3/connections/{id}` | PUT | Update S3 connection |
+| `/api/s3/connections/{id}` | DELETE | Delete S3 connection |
+| `/api/s3/connections/{id}/test` | POST | Test existing connection |
+| `/api/s3/connections/test` | POST | Test connection credentials |
+| `/api/s3/buckets/{connId}` | GET | List buckets |
+| `/api/s3/buckets/{connId}` | POST | Create bucket |
+| `/api/s3/buckets/{connId}/{bucket}` | DELETE | Delete bucket |
+| `/api/s3/objects/{connId}/{bucket}` | GET | List objects (with prefix) |
+| `/api/s3/objects/{connId}/{bucket}` | POST | Upload object |
+| `/api/s3/objects/{connId}/{bucket}/{key}` | DELETE | Delete object |
+| `/api/s3/presign/{connId}/{bucket}/{key}` | GET | Get presigned URL |
+
+### Upload with Conversion
+
+When uploading files, the system can automatically suggest and perform cloud-native format conversion:
+
+```json
+POST /api/s3/objects/{connId}/{bucket}
+Content-Type: multipart/form-data
+
+file: <binary data>
+key: path/to/file.tif
+convert: true
+targetFormat: cog
+```
+
+### Response Format
+
+```json
+{
+  "success": true,
+  "message": "File uploaded successfully",
+  "key": "path/to/file.cog.tif",
+  "size": 1234567,
+  "conversionJobId": "job-uuid-here"
+}
+```
+
+### Web UI Components
+
+- **S3ConnectionDialog**: Create/edit S3 connections with test functionality
+- **S3UploadDialog**: Upload files with conversion options and progress
+- **S3ConnectionPanel**: Dashboard showing buckets, conversion tools, and stats
+- **S3StorageRootNode**: Tree node for S3 storage container
+- **S3ConnectionNode**: Tree node for individual S3 connections
+- **S3BucketNode**: Tree node for S3 buckets
+- **S3ObjectNode**: Tree node for S3 objects with preview/download actions
+
+### TUI Support
+
+- S3 Storage section in unified resource tree
+- S3 connection nodes with bucket expansion
+- Object browsing with folder structure
+- (Planned) S3 connection wizard
+- (Planned) Upload to S3 from file browser
+
+### MinIO Development Testbed
+
+For local development, a MinIO Docker container can be started:
+
+```bash
+# In nix shell
+minio-start     # Start MinIO container
+minio-status    # Check container status
+minio-console   # Open MinIO web console
+minio-creds     # Show access credentials
+minio-mc        # Open MinIO CLI (mc)
+minio-stop      # Stop container
+minio-clean     # Remove container and volumes
+```
+
+Default credentials:
+- **Access Key**: `minioadmin`
+- **Secret Key**: `minioadmin`
+- **API Port**: `9000`
+- **Console Port**: `9001`
+- **Default Bucket**: `geospatial-data`
+
+---
+
+## Cloud-Native Format Conversion
+
+The application supports converting geospatial data to cloud-native formats optimized for streaming and partial access.
+
+### Supported Conversions
+
+| Source Format | Target Format | Tool | Description |
+|---------------|---------------|------|-------------|
+| GeoTIFF, TIFF, PNG, JPG | COG | GDAL | Cloud Optimized GeoTIFF |
+| LAS, LAZ, E57, PLY | COPC | PDAL | Cloud Optimized Point Cloud |
+| Shapefile, GeoJSON, GeoPackage, KML | GeoParquet | ogr2ogr | Cloud-optimized vector format |
+
+### Cloud Optimized GeoTIFF (COG)
+
+- Uses GDAL's `gdal_translate` with `-of COG` driver
+- Supports multiple compression options (LZW, DEFLATE, ZSTD, JPEG, WEBP)
+- Configurable overview resampling (NEAREST, BILINEAR, CUBIC, etc.)
+- Configurable block size for optimal streaming
+
+### Cloud Optimized Point Cloud (COPC)
+
+- Uses PDAL `translate` command with COPC writer
+- Produces `.copc.laz` files with spatial indexing
+- Supports multi-threaded processing
+- Compatible with Potree and other COPC viewers
+
+### GeoParquet
+
+- Uses ogr2ogr with Parquet driver
+- WKB geometry encoding for efficiency
+- ZSTD compression by default
+- Compatible with DuckDB, Apache Arrow, and Python geospatial libraries
+
+### Conversion Job Management
+
+Jobs are managed asynchronously with status tracking:
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Job queued for processing |
+| `running` | Conversion in progress |
+| `completed` | Successfully converted |
+| `failed` | Conversion failed with error |
+| `cancelled` | Job cancelled by user |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/conversion/tools` | GET | Check tool availability (GDAL, PDAL, ogr2ogr) |
+| `/api/conversion/jobs` | GET | List all conversion jobs |
+| `/api/conversion/jobs/{id}` | GET | Get job status and progress |
+| `/api/conversion/jobs/{id}` | DELETE | Cancel running job |
+
+### Tool Status Response
+
+```json
+{
+  "gdal": {
+    "available": true,
+    "version": "GDAL 3.8.0",
+    "tool": "gdal_translate",
+    "formats": ["COG", "GeoTIFF", "PNG", "JPEG"]
+  },
+  "pdal": {
+    "available": true,
+    "version": "PDAL 2.6.0",
+    "tool": "pdal",
+    "formats": ["COPC", "LAS", "LAZ"]
+  },
+  "ogr2ogr": {
+    "available": true,
+    "version": "GDAL 3.8.0",
+    "tool": "ogr2ogr",
+    "formats": ["GeoParquet", "Shapefile", "GeoJSON", "GeoPackage", "Parquet"]
+  }
+}
+```
+
+### Web UI Components
+
+- **Conversion Tool Status**: Visual indicators in S3ConnectionPanel showing tool availability
+- **Upload Dialog Conversion Options**: Toggle conversion and select target format during upload
+- **Progress Tracking**: Real-time conversion progress in upload dialog
+
+---
+
 ## Future Enhancements
 
 ### Planned Features
@@ -2024,6 +2275,7 @@ https://map.terria.io/#http://localhost:8080/api/terria/init/CONNECTION_ID.json
 | 0.12.0 | 2025 | Physics-based UI animations with spring motion, micro-interactions |
 | 0.13.0 | 2025 | GeoWebCache management, server synchronization, layer groups, dashboard |
 | 0.14.0 | 2025 | PostgreSQL raster import, table data viewer with infinite scroll, embedded 3D viewer |
+| 0.15.0 | 2025 | S3 storage integration (MinIO, AWS S3, Wasabi), cloud-native format conversion (COG, COPC, GeoParquet) |
 
 ---
 
