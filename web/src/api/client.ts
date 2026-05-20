@@ -757,7 +757,7 @@ export async function uploadFileForImport(
   })
 }
 
-export async function detectLayers(filePath: string): Promise<LayerInfo[]> {
+export async function detectLayers(filePath: string): Promise<Array<{ name: string }>> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/pg/detect-layers`, {
     method: 'POST',
@@ -765,13 +765,14 @@ export async function detectLayers(filePath: string): Promise<LayerInfo[]> {
     credentials: 'include',
     body: JSON.stringify({ filePath }),
   })
-  return handleResponse<LayerInfo[]>(response)
+  const data = await handleResponse<{ layers: string[]; file: string }>(response)
+  return data.layers.map((name) => ({ name }))
 }
 
 export async function startVectorImport(request: ImportRequest): Promise<{
-  job_id: string;
+  jobId: string;
   status: string;
-  message: string
+  error?: string;
 }> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/pg/import`, {
@@ -780,13 +781,13 @@ export async function startVectorImport(request: ImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ job_id: string; status: string; message: string }>(response)
+  return handleResponse<{ jobId: string; status: string; error?: string }>(response)
 }
 
 export async function startRasterImport(request: RasterImportRequest): Promise<{
-  job_id: string;
+  jobId: string;
   status: string;
-  message: string
+  error?: string;
 }> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/pg/import/raster`, {
@@ -795,7 +796,7 @@ export async function startRasterImport(request: RasterImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ job_id: string; status: string; message: string }>(response)
+  return handleResponse<{ jobId: string; status: string; error?: string }>(response)
 }
 
 export async function getImportJobStatus(jobId: string): Promise<ImportJob> {

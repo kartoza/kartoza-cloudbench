@@ -61,6 +61,11 @@ interface SelectedLayer {
   tableName: string
 }
 
+interface ImportJobEntry {
+  id: string
+  label: string
+}
+
 type UploadPhase =
   | 'idle'
   | 'chunking'
@@ -68,6 +73,7 @@ type UploadPhase =
   | 'detecting'
   | 'ready'
   | 'importing'
+  | 'tracking'
   | 'done'
   | 'error'
   | 'cancelled'
@@ -128,6 +134,8 @@ export default function PGUploadDialog() {
   const [targetSRID, setTargetSRID] = useState<number | undefined>(undefined)
   const [ogrStatus, setOgrStatus] = useState<api.OGR2OGRStatus | null>(null)
   const [ogrLoading, setOgrLoading] = useState(false)
+  const [importJobEntries, setImportJobEntries] = useState<ImportJobEntry[]>([])
+  const [importJobs, setImportJobs] = useState<Record<string, api.ImportJob>>({})
 
   const sessionIdRef = useRef<string | null>(null)
   const isPausedRef = useRef(false)
@@ -158,6 +166,8 @@ export default function PGUploadDialog() {
     setTargetSchema(initialSchema || 'public')
     setOverwrite(false)
     setTargetSRID(undefined)
+    setImportJobEntries([])
+    setImportJobs({})
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
@@ -173,6 +183,49 @@ export default function PGUploadDialog() {
         .finally(() => setOgrLoading(false))
     }
   }, [isOpen, resetState])
+
+  useEffect(() => {
+    if (phase !== 'tracking' || importJobEntries.length === 0) return
+
+    let cancelled = false
+
+    const poll = async () => {
+      if (cancelled) return
+      const results = await Promise.all(
+        importJobEntries.map(async ({ id }) => {
+          try {
+            const data = await api.getImportJobStatus(id)
+            return { id, data }
+          } catch {
+            return { id, data: null }
+          }
+        })
+      )
+      if (cancelled) return
+
+      const updated: Record<string, api.ImportJob> = {}
+      for (const { id, data } of results) {
+        if (data) updated[id] = data
+      }
+      setImportJobs(updated)
+
+      const allDone = importJobEntries.every(({ id }) => {
+        const job = updated[id]
+        return job?.status === 'completed' || job?.status === 'failed'
+      })
+      if (allDone) {
+        setPhase('done')
+        queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
+      }
+    }
+
+    poll()
+    const interval = setInterval(poll, 2000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [phase, importJobEntries, serviceName, queryClient])
 
   const handleFileSelect = useCallback((file: File) => {
     setSelectedFile(file)
@@ -306,16 +359,19 @@ export default function PGUploadDialog() {
     setPhase('importing')
 
     try {
+      const entries: ImportJobEntry[] = []
+
       if (isRaster) {
-        await api.startRasterImport({
+        const result = await api.startRasterImport({
           filePath: assembledPath,
           serviceName,
           schema: targetSchema,
           overwrite,
         })
+        entries.push({ id: result.jobId, label: selectedFile?.name ?? 'Raster import' })
       } else {
         for (const layer of selectedLayers.filter((l) => l.selected)) {
-          await api.startVectorImport({
+          const result = await api.startVectorImport({
             filePath: assembledPath,
             serviceName,
             schema: targetSchema,
@@ -324,12 +380,12 @@ export default function PGUploadDialog() {
             overwrite,
             srid: targetSRID,
           })
+          entries.push({ id: result.jobId, label: layer.name })
         }
       }
 
-      setPhase('done')
-      await queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
-      toast({ title: 'Import started', description: 'Data is being imported to PostgreSQL', status: 'success', duration: 3000 })
+      setImportJobEntries(entries)
+      setPhase('tracking')
     } catch (err) {
       const msg = (err as Error).message
       setErrorMsg(msg)
@@ -634,19 +690,66 @@ export default function PGUploadDialog() {
               </Alert>
             )}
 
-            {/* Success */}
-            {phase === 'done' && (
-              <Alert status="success" borderRadius="lg" variant="subtle">
-                <AlertIcon as={FiCheckCircle} />
-                <Text fontSize="sm">Import started successfully.</Text>
-              </Alert>
+            {/* Job tracking */}
+            {(phase === 'tracking' || phase === 'done') && importJobEntries.length > 0 && (
+              <>
+                <Divider />
+                <Box w="100%">
+                  <HStack mb={3}>
+                    <Icon as={FiDatabase} color="blue.500" />
+                    <Text fontWeight="600">Import Jobs</Text>
+                    {phase === 'tracking' && <Spinner size="sm" color="blue.500" />}
+                  </HStack>
+                  <VStack align="stretch" spacing={2}>
+                    {importJobEntries.map((entry) => {
+                      const job = importJobs[entry.id]
+                      const status = job?.status ?? 'pending'
+                      const progress = job?.progress ?? 0
+                      const statusColor =
+                        status === 'completed' ? 'green' :
+                        status === 'failed' ? 'red' :
+                        status === 'running' ? 'blue' : 'gray'
+                      return (
+                        <Box key={entry.id} p={3} bg={dropzoneBg} borderRadius="md" border="1px solid"
+                          borderColor={`${statusColor}.200`}>
+                          <HStack justify="space-between" mb={status === 'running' || status === 'pending' ? 2 : 0}>
+                            <HStack spacing={2} flex="1" minW={0}>
+                              {status === 'completed' && <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />}
+                              {status === 'failed' && <Icon as={FiX} color="red.500" flexShrink={0} />}
+                              {(status === 'running' || status === 'pending') && <Spinner size="xs" color="blue.500" flexShrink={0} />}
+                              <Text fontSize="sm" fontWeight="500" noOfLines={1}>{entry.label}</Text>
+                            </HStack>
+                            <Badge colorScheme={statusColor} flexShrink={0}>{status}</Badge>
+                          </HStack>
+                          {(status === 'running' || status === 'pending') && (
+                            <Progress
+                              value={progress}
+                              size="xs"
+                              colorScheme="blue"
+                              borderRadius="full"
+                              hasStripe
+                              isAnimated
+                            />
+                          )}
+                          {job?.message && status !== 'failed' && (
+                            <Text fontSize="xs" color="gray.500" mt={1}>{job.message}</Text>
+                          )}
+                          {status === 'failed' && (
+                            <Text fontSize="xs" color="red.500" mt={1}>{job?.error ?? job?.message}</Text>
+                          )}
+                        </Box>
+                      )
+                    })}
+                  </VStack>
+                </Box>
+              </>
             )}
           </VStack>
         </ModalBody>
 
         <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
-            {phase === 'done' ? 'Close' : 'Cancel'}
+            {phase === 'done' || phase === 'tracking' ? 'Close' : 'Cancel'}
           </Button>
 
           {phase === 'ready' && (
@@ -665,6 +768,12 @@ export default function PGUploadDialog() {
           {phase === 'importing' && (
             <Button colorScheme="green" isLoading loadingText="Importing…" borderRadius="lg" px={6}>
               Import to PostgreSQL
+            </Button>
+          )}
+
+          {phase === 'tracking' && (
+            <Button colorScheme="blue" isLoading loadingText="Tracking jobs…" borderRadius="lg" px={6}>
+              Tracking
             </Button>
           )}
 

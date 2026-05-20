@@ -482,10 +482,11 @@ class PGImportView(APIView):
             _import_jobs[job_id]["status"] = "failed"
             _import_jobs[job_id]["error"] = str(e)
 
-        return Response(
-            {"jobId": job_id, "status": _import_jobs[job_id]["status"]},
-            status=status.HTTP_202_ACCEPTED,
-        )
+        job = _import_jobs[job_id]
+        resp = {"jobId": job_id, "status": job["status"]}
+        if job["error"]:
+            resp["error"] = job["error"]
+        return Response(resp, status=status.HTTP_202_ACCEPTED)
 
 
 class PGImportStatusView(APIView):
@@ -585,7 +586,7 @@ class PGImportRasterView(APIView):
                 _import_jobs[job_id]["status"] = "failed"
                 _import_jobs[job_id]["error"] = raster_result.stderr
                 return Response(
-                    {"jobId": job_id, "status": "failed"},
+                    {"jobId": job_id, "status": "failed", "error": raster_result.stderr},
                     status=status.HTTP_202_ACCEPTED,
                 )
 
@@ -624,10 +625,11 @@ class PGImportRasterView(APIView):
             _import_jobs[job_id]["status"] = "failed"
             _import_jobs[job_id]["error"] = str(e)
 
-        return Response(
-            {"jobId": job_id, "status": _import_jobs[job_id]["status"]},
-            status=status.HTTP_202_ACCEPTED,
-        )
+        job = _import_jobs[job_id]
+        resp = {"jobId": job_id, "status": job["status"]}
+        if job["error"]:
+            resp["error"] = job["error"]
+        return Response(resp, status=status.HTTP_202_ACCEPTED)
 
 
 class PGDetectLayersView(APIView):
