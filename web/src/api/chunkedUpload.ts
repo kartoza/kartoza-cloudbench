@@ -139,6 +139,28 @@ export async function completePGUpload(
   return res.json()
 }
 
+export async function completeGeoServerUpload(
+  sessionId: string,
+  connId: string,
+  workspace: string,
+  storeName?: string,
+): Promise<{ path: string; filename: string; fileSize: number; sessionId: string; storeName: string }> {
+  const res = await fetch(`${API_BASE}/upload/complete/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken(),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ sessionId, storeName }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function cancelUpload(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/upload/session/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',

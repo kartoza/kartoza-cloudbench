@@ -798,6 +798,44 @@ export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
 }
 
 // ============================================================================
+// GeoServer Background Upload API
+// ============================================================================
+
+export interface GeoServerJob {
+  id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  storeName?: string
+  storeType?: string
+  error?: string
+}
+
+export async function startGeoServerUpload(
+  connId: string,
+  workspace: string,
+  filePath: string,
+  storeName: string,
+): Promise<{ jobId: string; status: string }> {
+  const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? ''
+  const response = await fetch(
+    `${API_BASE}/upload/start/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ filePath, storeName }),
+    },
+  )
+  return handleResponse<{ jobId: string; status: string }>(response)
+}
+
+export async function getGeoServerJobStatus(jobId: string): Promise<GeoServerJob> {
+  const response = await fetch(`${API_BASE}/upload/status/${encodeURIComponent(jobId)}`, {
+    credentials: 'include',
+  })
+  return handleResponse<GeoServerJob>(response)
+}
+
+// ============================================================================
 // Query Execution API
 // ============================================================================
 

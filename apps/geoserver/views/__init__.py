@@ -22,7 +22,7 @@ from .layers import (
     LayerStylesView,
 )
 from .styles import StyleDetailView, StyleListView
-from .uploads import UploadGeoPackageView, UploadGeoTiffView, UploadShapefileView
+from .uploads import GeoServerUploadCompleteView, GeoServerUploadStartView, GeoServerUploadStatusView
 from .workspaces import WorkspaceDetailView, WorkspaceListView
 
 __all__ = [
@@ -57,7 +57,7 @@ __all__ = [
     "LayerGroupListView",
     "LayerGroupDetailView",
     # Uploads
-    "UploadShapefileView",
-    "UploadGeoTiffView",
-    "UploadGeoPackageView",
+    "GeoServerUploadCompleteView",
+    "GeoServerUploadStartView",
+    "GeoServerUploadStatusView",
 ]

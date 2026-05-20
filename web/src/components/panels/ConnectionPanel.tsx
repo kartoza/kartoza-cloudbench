@@ -18,7 +18,7 @@ import {
   useDisclosure,
   VStack,
 } from '@chakra-ui/react'
-import { FiPlus, FiServer, FiSettings, FiUpload } from 'react-icons/fi'
+import { FiPlus, FiServer, FiSettings } from 'react-icons/fi'
 import { useQuery } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useConnectionStore } from '../../stores/connectionStore'
@@ -130,7 +130,7 @@ export default function ConnectionPanel({ connectionId }: ConnectionPanelProps) 
         </SimpleGrid>
 
         {/* Actions */}
-        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+        <SimpleGrid columns={{ base: 1 }} spacing={4}>
           <Button
             size="lg"
             variant="accent"
@@ -142,15 +142,6 @@ export default function ConnectionPanel({ connectionId }: ConnectionPanelProps) 
             py={8}
           >
             Create New Workspace
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            leftIcon={<FiUpload/>}
-            onClick={() => openDialog('upload', { mode: 'create' })}
-            py={8}
-          >
-            Upload Data
           </Button>
         </SimpleGrid>
       </PanelBody>
