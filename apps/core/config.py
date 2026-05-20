@@ -432,5 +432,14 @@ def get_qgis_projects_dir(user_id: "str | int" = "default") -> Path:
 
 
 def get_cache_dir() -> Path:
-    """Get the cache directory for temporary files."""
+    """Get the cache directory for temporary files.
+
+    Uses CLOUDBENCH_DATA_FOLDER when set so files are on a shared volume
+    accessible by Celery workers running in separate containers.
+    """
+    data_folder = os.environ.get("CLOUDBENCH_DATA_FOLDER")
+    if data_folder:
+        cache_dir = Path(data_folder) / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
     return Path(tempfile.gettempdir())

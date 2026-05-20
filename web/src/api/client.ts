@@ -687,14 +687,7 @@ export interface LayerInfo {
 
 export interface ImportJob {
   id: string
-  source_file: string
-  target_table: string
-  service: string
   status: 'pending' | 'running' | 'completed' | 'failed'
-  progress: number
-  message: string
-  started_at: string
-  completed_at?: string
   error?: string
 }
 
@@ -800,7 +793,7 @@ export async function startRasterImport(request: RasterImportRequest): Promise<{
 }
 
 export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
-  const response = await fetch(`${API_BASE}/pg/import/${jobId}`)
+  const response = await fetch(`${API_BASE}/pg/import/${jobId}`, { credentials: 'include' })
   return handleResponse<ImportJob>(response)
 }
 

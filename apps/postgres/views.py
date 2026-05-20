@@ -10,9 +10,9 @@ Provides endpoints for:
 
 import subprocess
 import time
-import uuid
 from pathlib import Path
 
+from celery.result import AsyncResult
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,6 +27,7 @@ from .client import (
     list_pg_services,
     update_pg_service,
 )
+from .tasks import run_raster_import, run_vector_import
 
 
 # === PostgreSQL Services ===
@@ -370,26 +371,18 @@ class PGQueryView(APIView):
 
 # === Data Import ===
 
-# Track import jobs
-_import_jobs: dict[str, dict] = {}
+_CELERY_STATE_MAP = {
+    "PENDING": "pending",
+    "STARTED": "running",
+    "SUCCESS": "completed",
+    "FAILURE": "failed",
+}
 
 
 class PGImportView(APIView):
     """Import data to PostgreSQL via ogr2ogr."""
 
     def post(self, request):
-        """Start a data import job.
-
-        Expected body:
-        {
-            "serviceName": "my_service",
-            "filePath": "/path/to/file.gpkg",
-            "schema": "public",
-            "tableName": "my_table",
-            "srid": 4326,
-            "overwrite": false
-        }
-        """
         service_name = request.data.get("serviceName")
         file_path = request.data.get("filePath")
         target_schema = request.data.get("schema", "public")
@@ -404,7 +397,6 @@ class PGImportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get service info
         try:
             service = get_pg_client(service_name, str(request.user.id)).service
         except ValueError:
@@ -413,111 +405,50 @@ class PGImportView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check file exists
         if not Path(file_path).exists():
             return Response(
                 {"error": f"File not found: {file_path}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Generate job ID
-        job_id = str(uuid.uuid4())
-
-        # Build ogr2ogr command
         pg_conn = f"PG:host={service.host} port={service.port} dbname={service.dbname} user={service.user} password={service.password}"
-
-        cmd = [
-            "ogr2ogr",
-            "-f", "PostgreSQL",
-            pg_conn,
-            file_path,
-        ]
-
-        if overwrite:
-            cmd.append("-overwrite")
-        else:
-            cmd.append("-append")
+        cmd = ["ogr2ogr", "-f", "PostgreSQL", pg_conn, file_path]
+        cmd.append("-overwrite" if overwrite else "-append")
 
         if table_name:
             cmd.extend(["-nln", f"{target_schema}.{table_name}"])
-
         if source_layer:
-            cmd.extend(["-sql", f"SELECT * FROM \"{source_layer}\""])
-
+            cmd.append(source_layer)
         if srid:
             cmd.extend(["-t_srs", f"EPSG:{srid}"])
 
-        # Start job in background
-        _import_jobs[job_id] = {
-            "id": job_id,
-            "status": "running",
-            "file": file_path,
-            "service": service_name,
-            "output": "",
-            "error": "",
-        }
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minute timeout
-            )
-
-            if result.returncode == 0:
-                _import_jobs[job_id]["status"] = "completed"
-                _import_jobs[job_id]["output"] = result.stdout
-            else:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = result.stderr
-
-        except subprocess.TimeoutExpired:
-            _import_jobs[job_id]["status"] = "timeout"
-            _import_jobs[job_id]["error"] = "Import timed out after 10 minutes"
-        except FileNotFoundError:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = "ogr2ogr not found. Please install GDAL."
-        except Exception as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = str(e)
-
-        job = _import_jobs[job_id]
-        resp = {"jobId": job_id, "status": job["status"]}
-        if job["error"]:
-            resp["error"] = job["error"]
-        return Response(resp, status=status.HTTP_202_ACCEPTED)
+        task = run_vector_import.delay(cmd, file_path)
+        return Response({"jobId": task.id, "status": "pending"}, status=status.HTTP_202_ACCEPTED)
 
 
 class PGImportStatusView(APIView):
     """Get import job status."""
 
     def get(self, request, job_id):
-        """Get status of an import job."""
-        if job_id not in _import_jobs:
-            return Response(
-                {"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        result = AsyncResult(job_id)
+        job_status = _CELERY_STATE_MAP.get(result.state, result.state.lower())
 
-        return Response(_import_jobs[job_id])
+        resp: dict = {"id": job_id, "status": job_status}
+
+        if result.state == "SUCCESS" and isinstance(result.result, dict):
+            if result.result.get("status") == "failed":
+                resp["status"] = "failed"
+                resp["error"] = result.result.get("error", "")
+        elif result.state == "FAILURE":
+            resp["error"] = str(result.result)
+
+        return Response(resp)
 
 
 class PGImportRasterView(APIView):
     """Import raster data to PostgreSQL via raster2pgsql."""
 
     def post(self, request):
-        """Start a raster import job.
-
-        Expected body:
-        {
-            "serviceName": "my_service",
-            "filePath": "/path/to/raster.tif",
-            "schema": "public",
-            "tableName": "my_raster",
-            "srid": 4326,
-            "tileSize": "100x100"
-        }
-        """
         service_name = request.data.get("serviceName")
         file_path = request.data.get("filePath")
         target_schema = request.data.get("schema", "public")
@@ -531,7 +462,6 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get service info
         try:
             service = get_pg_client(service_name, str(request.user.id)).service
         except ValueError:
@@ -540,96 +470,30 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check file exists
         if not Path(file_path).exists():
             return Response(
                 {"error": f"File not found: {file_path}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Generate job ID
-        job_id = str(uuid.uuid4())
-
-        # Build raster2pgsql command
-        full_table = f"{target_schema}.{table_name}"
-
-        cmd = [
+        raster_cmd = [
             "raster2pgsql",
             "-s", str(srid),
-            "-I",  # Create spatial index
-            "-C",  # Apply constraints
-            "-M",  # Vacuum analyze
+            "-I", "-C", "-M",
             "-t", tile_size,
             file_path,
-            full_table,
+            f"{target_schema}.{table_name}",
         ]
-
-        _import_jobs[job_id] = {
-            "id": job_id,
-            "status": "running",
-            "file": file_path,
-            "service": service_name,
-            "output": "",
-            "error": "",
+        conn_params = {
+            "host": service.host,
+            "port": service.port,
+            "user": service.user,
+            "password": service.password,
+            "dbname": service.dbname,
         }
 
-        try:
-            # raster2pgsql outputs SQL, pipe to psql
-            raster_result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-
-            if raster_result.returncode != 0:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = raster_result.stderr
-                return Response(
-                    {"jobId": job_id, "status": "failed", "error": raster_result.stderr},
-                    status=status.HTTP_202_ACCEPTED,
-                )
-
-            # Pipe SQL to psql
-            psql_cmd = [
-                "psql",
-                "-h", service.host,
-                "-p", str(service.port),
-                "-U", service.user,
-                "-d", service.dbname,
-            ]
-
-            psql_result = subprocess.run(
-                psql_cmd,
-                input=raster_result.stdout,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                env={**subprocess.os.environ, "PGPASSWORD": service.password},
-            )
-
-            if psql_result.returncode == 0:
-                _import_jobs[job_id]["status"] = "completed"
-                _import_jobs[job_id]["output"] = psql_result.stdout
-            else:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = psql_result.stderr
-
-        except subprocess.TimeoutExpired:
-            _import_jobs[job_id]["status"] = "timeout"
-            _import_jobs[job_id]["error"] = "Import timed out"
-        except FileNotFoundError as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = f"Tool not found: {e.filename}"
-        except Exception as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = str(e)
-
-        job = _import_jobs[job_id]
-        resp = {"jobId": job_id, "status": job["status"]}
-        if job["error"]:
-            resp["error"] = job["error"]
-        return Response(resp, status=status.HTTP_202_ACCEPTED)
+        task = run_raster_import.delay(raster_cmd, conn_params, file_path)
+        return Response({"jobId": task.id, "status": "pending"}, status=status.HTTP_202_ACCEPTED)
 
 
 class PGDetectLayersView(APIView):

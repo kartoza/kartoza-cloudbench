@@ -101,9 +101,18 @@ function formatEta(seconds: number): string {
   return `${m}m ${s}s`
 }
 
+const RASTER_EXTENSIONS = ['tif', 'tiff'] as const
+const VECTOR_EXTENSIONS = ['gpkg', 'zip', 'geojson', 'json', 'kml', 'fgb', 'csv'] as const
+const ACCEPTED_EXTENSIONS = [...RASTER_EXTENSIONS, ...VECTOR_EXTENSIONS]
+
 function isRasterFile(filename: string): boolean {
   const ext = filename.toLowerCase().split('.').pop() || ''
-  return ['tif', 'tiff', 'img', 'jp2', 'ecw', 'sid', 'asc', 'dem', 'hgt', 'nc', 'vrt'].includes(ext)
+  return (RASTER_EXTENSIONS as readonly string[]).includes(ext)
+}
+
+function isAcceptedFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  return (ACCEPTED_EXTENSIONS as readonly string[]).includes(ext)
 }
 
 export default function PGUploadDialog() {
@@ -132,6 +141,7 @@ export default function PGUploadDialog() {
   const [targetSchema, setTargetSchema] = useState('public')
   const [overwrite, setOverwrite] = useState(false)
   const [targetSRID, setTargetSRID] = useState<number | undefined>(undefined)
+  const [rasterTableName, setRasterTableName] = useState('')
   const [ogrStatus, setOgrStatus] = useState<api.OGR2OGRStatus | null>(null)
   const [ogrLoading, setOgrLoading] = useState(false)
   const [importJobEntries, setImportJobEntries] = useState<ImportJobEntry[]>([])
@@ -166,6 +176,7 @@ export default function PGUploadDialog() {
     setTargetSchema(initialSchema || 'public')
     setOverwrite(false)
     setTargetSRID(undefined)
+    setRasterTableName('')
     setImportJobEntries([])
     setImportJobs({})
     sessionIdRef.current = null
@@ -228,11 +239,18 @@ export default function PGUploadDialog() {
   }, [phase, importJobEntries, serviceName, queryClient])
 
   const handleFileSelect = useCallback((file: File) => {
+    if (!isAcceptedFile(file.name)) {
+      setErrorMsg(`Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(', ')}`)
+      setPhase('error')
+      return
+    }
     setSelectedFile(file)
     setPhase('idle')
     setErrorMsg('')
     setAssembledPath(null)
     setSelectedLayers([])
+    const baseName = file.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    setRasterTableName(baseName)
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -366,6 +384,7 @@ export default function PGUploadDialog() {
           filePath: assembledPath,
           serviceName,
           schema: targetSchema,
+          tableName: rasterTableName,
           overwrite,
         })
         entries.push({ id: result.jobId, label: selectedFile?.name ?? 'Raster import' })
@@ -502,14 +521,14 @@ export default function PGUploadDialog() {
                     </Box>
                     <VStack spacing={1}>
                       <Text fontWeight="600" color="gray.700">Drop a file here or click to browse</Text>
-                      <Text fontSize="sm" color="gray.500">GeoPackage, Shapefile, GeoJSON, GeoTIFF, and more</Text>
+                      <Text fontSize="sm" color="gray.500">GeoPackage, Zipped Shapefile, GeoJSON, GeoTIFF, KML, FlatGeobuf, CSV</Text>
                     </VStack>
                   </VStack>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".gpkg,.shp,.zip,.geojson,.json,.kml,.tif,.tiff,.gml"
+                  accept={ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',')}
                   style={{ display: 'none' }}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
                 />
@@ -662,6 +681,12 @@ export default function PGUploadDialog() {
                   </Button>
                   <Collapse in={showAdvanced}>
                     <VStack spacing={4} mt={3} align="stretch" p={3} bg={dropzoneBg} borderRadius="md">
+                      {isRaster && (
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">Table Name</FormLabel>
+                          <Input size="sm" value={rasterTableName} onChange={(e) => setRasterTableName(e.target.value)} placeholder="e.g. my_raster" />
+                        </FormControl>
+                      )}
                       <FormControl>
                         <FormLabel fontSize="sm">Target Schema</FormLabel>
                         <Input size="sm" value={targetSchema} onChange={(e) => setTargetSchema(e.target.value)} placeholder="public" />
@@ -704,7 +729,6 @@ export default function PGUploadDialog() {
                     {importJobEntries.map((entry) => {
                       const job = importJobs[entry.id]
                       const status = job?.status ?? 'pending'
-                      const progress = job?.progress ?? 0
                       const statusColor =
                         status === 'completed' ? 'green' :
                         status === 'failed' ? 'red' :
@@ -723,19 +747,14 @@ export default function PGUploadDialog() {
                           </HStack>
                           {(status === 'running' || status === 'pending') && (
                             <Progress
-                              value={progress}
                               size="xs"
                               colorScheme="blue"
                               borderRadius="full"
-                              hasStripe
-                              isAnimated
+                              isIndeterminate
                             />
                           )}
-                          {job?.message && status !== 'failed' && (
-                            <Text fontSize="xs" color="gray.500" mt={1}>{job.message}</Text>
-                          )}
-                          {status === 'failed' && (
-                            <Text fontSize="xs" color="red.500" mt={1}>{job?.error ?? job?.message}</Text>
+                          {status === 'failed' && job?.error && (
+                            <Text fontSize="xs" color="red.500" mt={1}>{job.error}</Text>
                           )}
                         </Box>
                       )
@@ -756,7 +775,7 @@ export default function PGUploadDialog() {
             <Button
               colorScheme="green"
               onClick={handleImport}
-              isDisabled={!isRaster && selectedLayerCount === 0}
+              isDisabled={isRaster ? !rasterTableName : selectedLayerCount === 0}
               leftIcon={<FiDatabase />}
               borderRadius="lg"
               px={6}

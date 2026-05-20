@@ -4,19 +4,35 @@ volumes:
   static-data:
   media-data:
   cloudbench-folder:
+  redis-data:
 
 services:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   django:
     image: kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
     env_file: .env
     environment:
       - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
       - static-data:/app/staticfiles
       - media-data:/app/media
       - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     expose:
       - "8000"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
@@ -24,6 +40,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  celery:
+    image: kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
+    env_file: .env
+    environment:
+      - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - media-data:/app/media
+      - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    command: celery -A cloudbench worker -l info
+    depends_on:
+      redis:
+        condition: service_healthy
+      django:
+        condition: service_healthy
+    restart: on-failure
 
   nginx:
     image: nginx:1.27-alpine
