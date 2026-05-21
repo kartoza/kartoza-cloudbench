@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from celery.result import AsyncResult
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,13 +10,6 @@ from apps.upload.views import _assemble_file, _get_session
 
 from ..client import get_geoserver_client
 from ..tasks import run_geoserver_upload
-
-_CELERY_STATE_MAP = {
-    "PENDING": "pending",
-    "STARTED": "running",
-    "SUCCESS": "completed",
-    "FAILURE": "failed",
-}
 
 
 class GeoServerUploadCompleteView(APIView):
@@ -91,10 +83,18 @@ class GeoServerUploadStartView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        task = run_geoserver_upload.delay(
+        result = run_geoserver_upload(
             conn_id, str(request.user.id), workspace, store_name, file_path
         )
-        return Response({"jobId": task.id, "status": "pending"}, status=status.HTTP_202_ACCEPTED)
+        if result.get("status") == "completed":
+            return Response(
+                {"status": "completed", "storeName": result.get("storeName", ""), "storeType": result.get("storeType", "")},
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"status": "failed", "error": result.get("error", "")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 class GeoServerUploadStatusView(APIView):

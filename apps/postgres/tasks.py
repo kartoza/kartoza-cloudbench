@@ -3,8 +3,6 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-from celery import shared_task
-
 
 def _cleanup(file_path: str) -> None:
     try:
@@ -24,7 +22,6 @@ def _resolve_source(file_path: str) -> str:
     return str(extract_dir)
 
 
-@shared_task
 def run_vector_import(cmd: list, file_path: str) -> dict:
     try:
         source = _resolve_source(file_path)
@@ -46,7 +43,6 @@ def run_vector_import(cmd: list, file_path: str) -> dict:
         _cleanup(file_path)
 
 
-@shared_task
 def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> dict:
     try:
         import psycopg2  # noqa: PLC0415

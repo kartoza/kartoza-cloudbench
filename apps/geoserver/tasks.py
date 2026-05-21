@@ -1,8 +1,6 @@
 import shutil
 from pathlib import Path
 
-from celery import shared_task
-
 
 def _cleanup(file_path: str) -> None:
     try:
@@ -11,7 +9,6 @@ def _cleanup(file_path: str) -> None:
         pass
 
 
-@shared_task
 def run_geoserver_upload(
     conn_id: str,
     user_id: str,

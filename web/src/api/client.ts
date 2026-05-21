@@ -763,7 +763,6 @@ export async function detectLayers(filePath: string): Promise<Array<{ name: stri
 }
 
 export async function startVectorImport(request: ImportRequest): Promise<{
-  jobId: string;
   status: string;
   error?: string;
 }> {
@@ -774,11 +773,10 @@ export async function startVectorImport(request: ImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ jobId: string; status: string; error?: string }>(response)
+  return handleResponse<{ status: string; error?: string }>(response)
 }
 
 export async function startRasterImport(request: RasterImportRequest): Promise<{
-  jobId: string;
   status: string;
   error?: string;
 }> {
@@ -789,7 +787,7 @@ export async function startRasterImport(request: RasterImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ jobId: string; status: string; error?: string }>(response)
+  return handleResponse<{ status: string; error?: string }>(response)
 }
 
 export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
@@ -814,7 +812,7 @@ export async function startGeoServerUpload(
   workspace: string,
   filePath: string,
   storeName: string,
-): Promise<{ jobId: string; status: string }> {
+): Promise<{ status: string; storeName?: string; storeType?: string; error?: string }> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? ''
   const response = await fetch(
     `${API_BASE}/upload/start/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`,
@@ -825,7 +823,7 @@ export async function startGeoServerUpload(
       body: JSON.stringify({ filePath, storeName }),
     },
   )
-  return handleResponse<{ jobId: string; status: string }>(response)
+  return handleResponse<{ status: string; storeName?: string; storeType?: string; error?: string }>(response)
 }
 
 export async function getGeoServerJobStatus(jobId: string): Promise<GeoServerJob> {

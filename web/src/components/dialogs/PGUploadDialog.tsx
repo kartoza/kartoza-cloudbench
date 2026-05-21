@@ -61,9 +61,10 @@ interface SelectedLayer {
   tableName: string
 }
 
-interface ImportJobEntry {
-  id: string
+interface ImportResult {
   label: string
+  status: 'completed' | 'failed'
+  error?: string
 }
 
 type UploadPhase =
@@ -73,7 +74,6 @@ type UploadPhase =
   | 'detecting'
   | 'ready'
   | 'importing'
-  | 'tracking'
   | 'done'
   | 'error'
   | 'cancelled'
@@ -144,8 +144,7 @@ export default function PGUploadDialog() {
   const [rasterTableName, setRasterTableName] = useState('')
   const [ogrStatus, setOgrStatus] = useState<api.OGR2OGRStatus | null>(null)
   const [ogrLoading, setOgrLoading] = useState(false)
-  const [importJobEntries, setImportJobEntries] = useState<ImportJobEntry[]>([])
-  const [importJobs, setImportJobs] = useState<Record<string, api.ImportJob>>({})
+  const [importResults, setImportResults] = useState<ImportResult[]>([])
 
   const sessionIdRef = useRef<string | null>(null)
   const isPausedRef = useRef(false)
@@ -177,8 +176,7 @@ export default function PGUploadDialog() {
     setOverwrite(false)
     setTargetSRID(undefined)
     setRasterTableName('')
-    setImportJobEntries([])
-    setImportJobs({})
+    setImportResults([])
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
@@ -194,49 +192,6 @@ export default function PGUploadDialog() {
         .finally(() => setOgrLoading(false))
     }
   }, [isOpen, resetState])
-
-  useEffect(() => {
-    if (phase !== 'tracking' || importJobEntries.length === 0) return
-
-    let cancelled = false
-
-    const poll = async () => {
-      if (cancelled) return
-      const results = await Promise.all(
-        importJobEntries.map(async ({ id }) => {
-          try {
-            const data = await api.getImportJobStatus(id)
-            return { id, data }
-          } catch {
-            return { id, data: null }
-          }
-        })
-      )
-      if (cancelled) return
-
-      const updated: Record<string, api.ImportJob> = {}
-      for (const { id, data } of results) {
-        if (data) updated[id] = data
-      }
-      setImportJobs(updated)
-
-      const allDone = importJobEntries.every(({ id }) => {
-        const job = updated[id]
-        return job?.status === 'completed' || job?.status === 'failed'
-      })
-      if (allDone) {
-        setPhase('done')
-        queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
-      }
-    }
-
-    poll()
-    const interval = setInterval(poll, 2000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [phase, importJobEntries, serviceName, queryClient])
 
   const handleFileSelect = useCallback((file: File) => {
     if (!isAcceptedFile(file.name)) {
@@ -376,21 +331,25 @@ export default function PGUploadDialog() {
     if (!serviceName || !assembledPath) return
     setPhase('importing')
 
-    try {
-      const entries: ImportJobEntry[] = []
+    const results: ImportResult[] = []
 
-      if (isRaster) {
-        const result = await api.startRasterImport({
+    if (isRaster) {
+      try {
+        await api.startRasterImport({
           filePath: assembledPath,
           serviceName,
           schema: targetSchema,
           tableName: rasterTableName,
           overwrite,
         })
-        entries.push({ id: result.jobId, label: selectedFile?.name ?? 'Raster import' })
-      } else {
-        for (const layer of selectedLayers.filter((l) => l.selected)) {
-          const result = await api.startVectorImport({
+        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'completed' })
+      } catch (err) {
+        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'failed', error: (err as Error).message })
+      }
+    } else {
+      for (const layer of selectedLayers.filter((l) => l.selected)) {
+        try {
+          await api.startVectorImport({
             filePath: assembledPath,
             serviceName,
             schema: targetSchema,
@@ -399,18 +358,16 @@ export default function PGUploadDialog() {
             overwrite,
             srid: targetSRID,
           })
-          entries.push({ id: result.jobId, label: layer.name })
+          results.push({ label: layer.name, status: 'completed' })
+        } catch (err) {
+          results.push({ label: layer.name, status: 'failed', error: (err as Error).message })
         }
       }
-
-      setImportJobEntries(entries)
-      setPhase('tracking')
-    } catch (err) {
-      const msg = (err as Error).message
-      setErrorMsg(msg)
-      setPhase('error')
-      toast({ title: 'Import failed', description: msg, status: 'error', duration: 5000 })
     }
+
+    setImportResults(results)
+    setPhase('done')
+    queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
   }
 
   const toggleLayerSelection = (layerName: string) => {
@@ -715,46 +672,32 @@ export default function PGUploadDialog() {
               </Alert>
             )}
 
-            {/* Job tracking */}
-            {(phase === 'tracking' || phase === 'done') && importJobEntries.length > 0 && (
+            {/* Import results */}
+            {phase === 'done' && importResults.length > 0 && (
               <>
                 <Divider />
                 <Box w="100%">
                   <HStack mb={3}>
                     <Icon as={FiDatabase} color="blue.500" />
-                    <Text fontWeight="600">Import Jobs</Text>
-                    {phase === 'tracking' && <Spinner size="sm" color="blue.500" />}
+                    <Text fontWeight="600">Import Results</Text>
                   </HStack>
                   <VStack align="stretch" spacing={2}>
-                    {importJobEntries.map((entry) => {
-                      const job = importJobs[entry.id]
-                      const status = job?.status ?? 'pending'
-                      const statusColor =
-                        status === 'completed' ? 'green' :
-                        status === 'failed' ? 'red' :
-                        status === 'running' ? 'blue' : 'gray'
+                    {importResults.map((entry, i) => {
+                      const statusColor = entry.status === 'completed' ? 'green' : 'red'
                       return (
-                        <Box key={entry.id} p={3} bg={dropzoneBg} borderRadius="md" border="1px solid"
+                        <Box key={i} p={3} bg={dropzoneBg} borderRadius="md" border="1px solid"
                           borderColor={`${statusColor}.200`}>
-                          <HStack justify="space-between" mb={status === 'running' || status === 'pending' ? 2 : 0}>
+                          <HStack justify="space-between">
                             <HStack spacing={2} flex="1" minW={0}>
-                              {status === 'completed' && <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />}
-                              {status === 'failed' && <Icon as={FiX} color="red.500" flexShrink={0} />}
-                              {(status === 'running' || status === 'pending') && <Spinner size="xs" color="blue.500" flexShrink={0} />}
+                              {entry.status === 'completed'
+                                ? <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
+                                : <Icon as={FiX} color="red.500" flexShrink={0} />}
                               <Text fontSize="sm" fontWeight="500" noOfLines={1}>{entry.label}</Text>
                             </HStack>
-                            <Badge colorScheme={statusColor} flexShrink={0}>{status}</Badge>
+                            <Badge colorScheme={statusColor} flexShrink={0}>{entry.status}</Badge>
                           </HStack>
-                          {(status === 'running' || status === 'pending') && (
-                            <Progress
-                              size="xs"
-                              colorScheme="blue"
-                              borderRadius="full"
-                              isIndeterminate
-                            />
-                          )}
-                          {status === 'failed' && job?.error && (
-                            <Text fontSize="xs" color="red.500" mt={1}>{job.error}</Text>
+                          {entry.status === 'failed' && entry.error && (
+                            <Text fontSize="xs" color="red.500" mt={1}>{entry.error}</Text>
                           )}
                         </Box>
                       )
@@ -768,7 +711,7 @@ export default function PGUploadDialog() {
 
         <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
-            {phase === 'done' || phase === 'tracking' ? 'Close' : 'Cancel'}
+            {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
 
           {phase === 'ready' && (
@@ -787,12 +730,6 @@ export default function PGUploadDialog() {
           {phase === 'importing' && (
             <Button colorScheme="green" isLoading loadingText="Importing…" borderRadius="lg" px={6}>
               Import to PostgreSQL
-            </Button>
-          )}
-
-          {phase === 'tracking' && (
-            <Button colorScheme="blue" isLoading loadingText="Tracking jobs…" borderRadius="lg" px={6}>
-              Tracking
             </Button>
           )}
 

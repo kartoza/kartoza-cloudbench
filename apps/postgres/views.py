@@ -422,8 +422,13 @@ class PGImportView(APIView):
         if srid:
             cmd.extend(["-t_srs", f"EPSG:{srid}"])
 
-        task = run_vector_import.delay(cmd, file_path)
-        return Response({"jobId": task.id, "status": "pending"}, status=status.HTTP_202_ACCEPTED)
+        result = run_vector_import(cmd, file_path)
+        if result.get("status") == "completed":
+            return Response({"status": "completed"}, status=status.HTTP_200_OK)
+        return Response(
+            {"status": "failed", "error": result.get("error", "")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 class PGImportStatusView(APIView):
@@ -492,8 +497,13 @@ class PGImportRasterView(APIView):
             "dbname": service.dbname,
         }
 
-        task = run_raster_import.delay(raster_cmd, conn_params, file_path)
-        return Response({"jobId": task.id, "status": "pending"}, status=status.HTTP_202_ACCEPTED)
+        result = run_raster_import(raster_cmd, conn_params, file_path)
+        if result.get("status") == "completed":
+            return Response({"status": "completed"}, status=status.HTTP_200_OK)
+        return Response(
+            {"status": "failed", "error": result.get("error", "")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 class PGDetectLayersView(APIView):

@@ -47,9 +47,12 @@ import {
   CHUNK_SIZE,
 } from '../../api/chunkedUpload'
 
-interface GeoServerJobEntry {
-  id: string
+interface GeoServerUploadResult {
   label: string
+  status: 'completed' | 'failed'
+  storeName?: string
+  storeType?: string
+  error?: string
 }
 
 type UploadPhase =
@@ -58,7 +61,6 @@ type UploadPhase =
   | 'finalizing'
   | 'ready'
   | 'uploading_gs'
-  | 'tracking'
   | 'done'
   | 'error'
   | 'cancelled'
@@ -115,8 +117,7 @@ export default function UploadDialog() {
   const [etaSeconds, setEtaSeconds] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
   const [assembledPath, setAssembledPath] = useState<string | null>(null)
-  const [jobEntries, setJobEntries] = useState<GeoServerJobEntry[]>([])
-  const [jobs, setJobs] = useState<Record<string, api.GeoServerJob>>({})
+  const [uploadResult, setUploadResult] = useState<GeoServerUploadResult | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
   const isPausedRef = useRef(false)
@@ -141,8 +142,7 @@ export default function UploadDialog() {
     setEtaSeconds(0)
     setErrorMsg('')
     setAssembledPath(null)
-    setJobEntries([])
-    setJobs({})
+    setUploadResult(null)
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
@@ -151,52 +151,6 @@ export default function UploadDialog() {
   useEffect(() => {
     if (isOpen) resetState()
   }, [isOpen, resetState])
-
-  // Job polling
-  useEffect(() => {
-    if (phase !== 'tracking' || jobEntries.length === 0) return
-
-    let cancelled = false
-
-    const poll = async () => {
-      if (cancelled) return
-      const results = await Promise.all(
-        jobEntries.map(async ({ id }) => {
-          try {
-            const data = await api.getGeoServerJobStatus(id)
-            return { id, data }
-          } catch {
-            return { id, data: null }
-          }
-        }),
-      )
-      if (cancelled) return
-
-      const updated: Record<string, api.GeoServerJob> = {}
-      for (const { id, data } of results) {
-        if (data) updated[id] = data
-      }
-      setJobs(updated)
-
-      const allDone = jobEntries.every(({ id }) => {
-        const job = updated[id]
-        return job?.status === 'completed' || job?.status === 'failed'
-      })
-      if (allDone) {
-        setPhase('done')
-        queryClient.invalidateQueries({ queryKey: ['datastores', connectionId, workspace] })
-        queryClient.invalidateQueries({ queryKey: ['coveragestores', connectionId, workspace] })
-        queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
-      }
-    }
-
-    poll()
-    const interval = setInterval(poll, 2000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [phase, jobEntries, connectionId, workspace, queryClient])
 
   const handleFileSelect = useCallback((file: File) => {
     setSelectedFile(file)
@@ -322,16 +276,17 @@ export default function UploadDialog() {
     if (!connectionId || !workspace || !assembledPath || !storeName) return
     setPhase('uploading_gs')
 
+    const label = selectedFile?.name ?? storeName
     try {
       const result = await api.startGeoServerUpload(connectionId, workspace, assembledPath, storeName)
-      setJobEntries([{ id: result.jobId, label: selectedFile?.name ?? storeName }])
-      setPhase('tracking')
+      setUploadResult({ label, status: 'completed', storeName: result.storeName, storeType: result.storeType })
     } catch (err) {
-      const msg = (err as Error).message
-      setErrorMsg(msg)
-      setPhase('error')
-      toast({ title: 'Failed to start upload', description: msg, status: 'error', duration: 5000 })
+      setUploadResult({ label, status: 'failed', error: (err as Error).message })
     }
+    setPhase('done')
+    queryClient.invalidateQueries({ queryKey: ['datastores', connectionId, workspace] })
+    queryClient.invalidateQueries({ queryKey: ['coveragestores', connectionId, workspace] })
+    queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
   }
 
   const handleClose = () => {
@@ -552,7 +507,7 @@ export default function UploadDialog() {
                   {phase === 'uploading_gs' && (
                     <HStack spacing={2} color="blue.500">
                       <Spinner size="sm" />
-                      <Text fontSize="sm">Queuing GeoServer upload…</Text>
+                      <Text fontSize="sm">Uploading to GeoServer…</Text>
                     </HStack>
                   )}
                 </VStack>
@@ -568,81 +523,40 @@ export default function UploadDialog() {
               </Box>
             )}
 
-            {/* Job tracking */}
-            {(phase === 'tracking' || phase === 'done') && jobEntries.length > 0 && (
+            {/* Upload result */}
+            {phase === 'done' && uploadResult && (
               <>
                 <Divider />
                 <Box w="100%">
                   <HStack mb={3}>
                     <Icon as={FiLayers} color="blue.500" />
-                    <Text fontWeight="600">GeoServer Upload Jobs</Text>
-                    {phase === 'tracking' && <Spinner size="sm" color="blue.500" />}
+                    <Text fontWeight="600">Upload Result</Text>
                   </HStack>
-                  <VStack align="stretch" spacing={2}>
-                    {jobEntries.map((entry) => {
-                      const job = jobs[entry.id]
-                      const jobStatus = job?.status ?? 'pending'
-                      const statusColor =
-                        jobStatus === 'completed'
-                          ? 'green'
-                          : jobStatus === 'failed'
-                          ? 'red'
-                          : jobStatus === 'running'
-                          ? 'blue'
-                          : 'gray'
-                      return (
-                        <Box
-                          key={entry.id}
-                          p={3}
-                          bg={dropzoneBg}
-                          borderRadius="md"
-                          border="1px solid"
-                          borderColor={`${statusColor}.200`}
-                        >
-                          <HStack
-                            justify="space-between"
-                            mb={jobStatus === 'running' || jobStatus === 'pending' ? 2 : 0}
-                          >
-                            <HStack spacing={2} flex="1" minW={0}>
-                              {jobStatus === 'completed' && (
-                                <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
-                              )}
-                              {jobStatus === 'failed' && (
-                                <Icon as={FiX} color="red.500" flexShrink={0} />
-                              )}
-                              {(jobStatus === 'running' || jobStatus === 'pending') && (
-                                <Spinner size="xs" color="blue.500" flexShrink={0} />
-                              )}
-                              <Text fontSize="sm" fontWeight="500" noOfLines={1}>
-                                {entry.label}
-                              </Text>
-                              {job?.storeType && (
-                                <Badge colorScheme="blue" fontSize="xs">
-                                  {job.storeType}
-                                </Badge>
-                              )}
-                            </HStack>
-                            <Badge colorScheme={statusColor} flexShrink={0}>
-                              {jobStatus}
-                            </Badge>
-                          </HStack>
-                          {(jobStatus === 'running' || jobStatus === 'pending') && (
-                            <Progress
-                              size="xs"
-                              colorScheme="blue"
-                              borderRadius="full"
-                              isIndeterminate
-                            />
-                          )}
-                          {jobStatus === 'failed' && job?.error && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              {job.error}
-                            </Text>
-                          )}
-                        </Box>
-                      )
-                    })}
-                  </VStack>
+                  <Box
+                    p={3}
+                    bg={dropzoneBg}
+                    borderRadius="md"
+                    border="1px solid"
+                    borderColor={uploadResult.status === 'completed' ? 'green.200' : 'red.200'}
+                  >
+                    <HStack justify="space-between">
+                      <HStack spacing={2} flex="1" minW={0}>
+                        {uploadResult.status === 'completed'
+                          ? <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
+                          : <Icon as={FiX} color="red.500" flexShrink={0} />}
+                        <Text fontSize="sm" fontWeight="500" noOfLines={1}>{uploadResult.label}</Text>
+                        {uploadResult.storeType && (
+                          <Badge colorScheme="blue" fontSize="xs">{uploadResult.storeType}</Badge>
+                        )}
+                      </HStack>
+                      <Badge colorScheme={uploadResult.status === 'completed' ? 'green' : 'red'} flexShrink={0}>
+                        {uploadResult.status}
+                      </Badge>
+                    </HStack>
+                    {uploadResult.status === 'failed' && uploadResult.error && (
+                      <Text fontSize="xs" color="red.500" mt={1}>{uploadResult.error}</Text>
+                    )}
+                  </Box>
                 </Box>
               </>
             )}
@@ -651,7 +565,7 @@ export default function UploadDialog() {
 
         <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
-            {phase === 'done' || phase === 'tracking' ? 'Close' : 'Cancel'}
+            {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
 
           {/* Upload chunks button */}
@@ -695,14 +609,8 @@ export default function UploadDialog() {
           )}
 
           {phase === 'uploading_gs' && (
-            <Button colorScheme="green" isLoading loadingText="Queuing…" borderRadius="lg" px={6}>
+            <Button colorScheme="green" isLoading loadingText="Uploading…" borderRadius="lg" px={6}>
               Send to GeoServer
-            </Button>
-          )}
-
-          {phase === 'tracking' && (
-            <Button colorScheme="blue" isLoading loadingText="Tracking…" borderRadius="lg" px={6}>
-              Tracking
             </Button>
           )}
         </ModalFooter>
