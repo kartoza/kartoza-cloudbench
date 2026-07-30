@@ -347,7 +347,9 @@ export default function PGUploadDialog() {
         results.push({ label: selectedFile?.name ?? 'Raster import', status: 'failed', error: (err as Error).message })
       }
     } else {
-      for (const layer of selectedLayers.filter((l) => l.selected)) {
+      const layersToImport = selectedLayers.filter((l) => l.selected)
+      for (let i = 0; i < layersToImport.length; i++) {
+        const layer = layersToImport[i]
         try {
           await api.startVectorImport({
             filePath: assembledPath,
@@ -357,6 +359,7 @@ export default function PGUploadDialog() {
             sourceLayer: layer.name,
             overwrite,
             srid: targetSRID,
+            cleanupSource: i === layersToImport.length - 1,
           })
           results.push({ label: layer.name, status: 'completed' })
         } catch (err) {

@@ -699,6 +699,8 @@ export interface ImportRequest {
   srid?: number
   overwrite?: boolean
   sourceLayer?: string
+  /** True on the last layer of a multi-layer import so the backend removes the uploaded source file. */
+  cleanupSource?: boolean
 }
 
 export interface RasterImportRequest {
