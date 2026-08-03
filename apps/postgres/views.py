@@ -390,6 +390,7 @@ class PGImportView(APIView):
         source_layer = request.data.get("sourceLayer")
         srid = request.data.get("srid")
         overwrite = request.data.get("overwrite", False)
+        cleanup_source = bool(request.data.get("cleanupSource", False))
 
         if not service_name or not file_path:
             return Response(
@@ -422,7 +423,7 @@ class PGImportView(APIView):
         if srid:
             cmd.extend(["-t_srs", f"EPSG:{srid}"])
 
-        result = run_vector_import(cmd, file_path)
+        result = run_vector_import(cmd, file_path, delete_source=cleanup_source)
         if result.get("status") == "completed":
             return Response({"status": "completed"}, status=status.HTTP_200_OK)
         return Response(

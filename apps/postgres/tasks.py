@@ -4,9 +4,22 @@ import zipfile
 from pathlib import Path
 
 
-def _cleanup(file_path: str) -> None:
+def _cleanup(file_path: str, delete_source: bool = False) -> None:
+    """Remove per-call scratch state, and the uploaded source once it's done.
+
+    A multi-layer file (e.g. a GeoPackage with several layers) is imported
+    via one request per layer, all sharing the same uploaded file_path.
+    The zip-extraction scratch dir is regenerated on every call so it's
+    always safe to remove. The source file itself is only removed when
+    delete_source is True, i.e. this is the last (or only) import request
+    for this upload -- removing it earlier would break later layers.
+    """
     try:
-        shutil.rmtree(Path(file_path).parent, ignore_errors=True)
+        parent = Path(file_path).parent
+        if delete_source:
+            shutil.rmtree(parent, ignore_errors=True)
+        else:
+            shutil.rmtree(parent / "extracted", ignore_errors=True)
     except Exception:
         pass
 
@@ -22,7 +35,7 @@ def _resolve_source(file_path: str) -> str:
     return str(extract_dir)
 
 
-def run_vector_import(cmd: list, file_path: str) -> dict:
+def run_vector_import(cmd: list, file_path: str, delete_source: bool = False) -> dict:
     try:
         source = _resolve_source(file_path)
         # Replace the file_path entry in cmd with the resolved source
@@ -40,7 +53,7 @@ def run_vector_import(cmd: list, file_path: str) -> dict:
     except Exception as e:
         return {"status": "failed", "error": str(e)}
     finally:
-        _cleanup(file_path)
+        _cleanup(file_path, delete_source)
 
 
 def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> dict:
@@ -73,4 +86,6 @@ def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> di
     except Exception as e:
         return {"status": "failed", "error": str(e)}
     finally:
-        _cleanup(file_path)
+        # A raster import is always a single request for its file, so the
+        # source can be removed unconditionally once this call is done.
+        _cleanup(file_path, delete_source=True)
