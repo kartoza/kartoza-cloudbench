@@ -61,6 +61,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.trusted_header_auth.TrustedHeaderAuthMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.COOPCOEPMiddleware",
@@ -247,6 +248,18 @@ LOGGING = {
 }
 
 CLOUDBENCH_MUST_AUTHENTICATED = False
+
+# Shared secret nginx attaches (as X-Internal-Token) alongside X-User-Id
+# once it has validated the caller's GeoHosting session via auth_request.
+# Empty by default so local/dev runs without a fronting proxy still work
+# with normal Django session auth.
+INTERNAL_SHARED_SECRET = os.environ.get("INTERNAL_SHARED_SECRET", "")
+
+# Shared secret the GeoHosting backend sends as
+# "Authorization: Bearer <token>" when pushing instance connection state to
+# /api/geohosting/instances/. Empty by default; that endpoint refuses all
+# requests until this is set.
+CLOUDBENCH_SERVICE_TOKEN = os.environ.get("CLOUDBENCH_SERVICE_TOKEN", "")
 
 # Celery
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
