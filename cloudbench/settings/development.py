@@ -4,7 +4,14 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+# Respect DJANGO_ALLOWED_HOSTS when set (e.g. "cloudbench" when this
+# service is reached by hostname from another container, such as
+# GeoHosting's dev-only proxy — see core/cloudbench_dev_proxy.py in the
+# GeoHosting repo). Falls back to plain localhost for non-Docker local
+# runs.
+ALLOWED_HOSTS = os.environ.get(  # noqa: F405
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]"
+).split(",")
 
 # In development, allow all CORS origins
 CORS_ALLOW_ALL_ORIGINS = True

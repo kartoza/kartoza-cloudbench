@@ -30,6 +30,9 @@ class TestTrustedHeaderAuthMiddleware:
         assert isinstance(request.user, TrustedHeaderUser)
         assert request.user.id == "7"
         assert request.user.is_authenticated is True
+        # DRF's SessionAuthentication checks is_active on request.user —
+        # a regression here 500s every DRF view for trusted-header requests.
+        assert request.user.is_active is True
 
     def test_ignores_mismatched_token(self, settings) -> None:
         """A wrong internal token must not authenticate the request."""

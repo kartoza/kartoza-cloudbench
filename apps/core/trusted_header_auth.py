@@ -16,17 +16,21 @@ class TrustedHeaderUser:
     """Minimal stand-in for a Django user, identified only by id.
 
     CloudBench has no user database of its own — its config storage is
-    keyed by a plain user id string — so this only needs to satisfy the
-    ``request.user.id`` / ``is_authenticated`` surface that existing views
-    already rely on.
+    keyed by a plain user id string — so this needs to satisfy the
+    ``request.user`` surface that existing views and DRF's
+    SessionAuthentication (which checks ``is_active``) rely on.
     """
 
     is_authenticated = True
     is_anonymous = False
+    is_active = True
+    is_staff = False
+    is_superuser = False
 
     def __init__(self, user_id: str) -> None:
         self.id = user_id
         self.pk = user_id
+        self.username = user_id
 
     def __str__(self) -> str:
         return self.id
