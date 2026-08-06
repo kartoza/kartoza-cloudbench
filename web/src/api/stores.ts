@@ -38,6 +38,23 @@ export async function deleteDataStore(connId: string, workspace: string, name: s
   return handleResponse<void>(response)
 }
 
+export async function connectDataStoreToPG(
+  connId: string,
+  workspace: string,
+  pgConnId: string,
+  options?: { name?: string; database?: string; schema?: string; description?: string; enabled?: boolean }
+): Promise<{ message: string }> {
+  const response = await fetch(
+    `${API_BASE}/datastores/${connId}/${workspace}/connect/${encodeURIComponent(pgConnId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options ?? {}),
+    }
+  )
+  return handleResponse<{ message: string }>(response)
+}
+
 export async function getAvailableFeatureTypes(connId: string, workspace: string, store: string): Promise<string[]> {
   const response = await fetch(`${API_BASE}/datastores/${connId}/${workspace}/${store}/available`)
   const result = await handleResponse<{ available: string[] }>(response)
@@ -48,14 +65,17 @@ export async function publishFeatureTypes(
   connId: string,
   workspace: string,
   store: string,
-  featureTypes: string[]
-): Promise<{ published: string[]; errors: string[] }> {
+  featureTypes: string[],
+  srs = 'EPSG:4326',
+): Promise<{ published: string[]; errors: Array<{ name: string; error: string }> }> {
+  const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/datastores/${connId}/${workspace}/${store}/publish`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ featureTypes }),
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+    credentials: 'include',
+    body: JSON.stringify({ featureTypes, srs }),
   })
-  return handleResponse<{ published: string[]; errors: string[] }>(response)
+  return handleResponse<{ published: string[]; errors: Array<{ name: string; error: string }> }>(response)
 }
 
 // Coverage Store API

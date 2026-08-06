@@ -5,77 +5,9 @@ Parses pg_service.conf files to extract connection information.
 
 import os
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-
-@dataclass
-class PGService:
-    """PostgreSQL service configuration."""
-
-    name: str
-    host: str = "localhost"
-    port: int = 5432
-    dbname: str = ""
-    user: str = ""
-    password: str = ""
-    sslmode: str = ""
-    options: dict[str, str] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "name": self.name,
-            "host": self.host,
-            "port": self.port,
-            "dbname": self.dbname,
-            "user": self.user,
-            "password": self.password,
-            "sslmode": self.sslmode,
-            "options": self.options,
-        }
-
-    def connection_string(self, include_password: bool = False) -> str:
-        """Generate a PostgreSQL connection string.
-
-        Args:
-            include_password: Whether to include password in string
-
-        Returns:
-            PostgreSQL connection string
-        """
-        parts = [f"host={self.host}", f"port={self.port}"]
-
-        if self.dbname:
-            parts.append(f"dbname={self.dbname}")
-        if self.user:
-            parts.append(f"user={self.user}")
-        if include_password and self.password:
-            parts.append(f"password={self.password}")
-        if self.sslmode:
-            parts.append(f"sslmode={self.sslmode}")
-
-        return " ".join(parts)
-
-    def dsn(self, include_password: bool = False) -> str:
-        """Generate a PostgreSQL DSN URL.
-
-        Args:
-            include_password: Whether to include password in DSN
-
-        Returns:
-            PostgreSQL DSN URL
-        """
-        auth = self.user
-        if include_password and self.password:
-            auth = f"{self.user}:{self.password}"
-
-        dsn = f"postgresql://{auth}@{self.host}:{self.port}"
-        if self.dbname:
-            dsn += f"/{self.dbname}"
-
-        return dsn
+from apps.core.models import PGService
 
 
 def get_pg_service_file_paths() -> list[Path]:

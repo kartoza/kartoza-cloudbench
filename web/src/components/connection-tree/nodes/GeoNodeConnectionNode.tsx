@@ -1,11 +1,14 @@
-import { Box, Text } from '@chakra-ui/react'
+import { Box } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
-import type { TreeNode, GeoNodeConnection } from '../../../types'
+import type { GeoNodeConnection, TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { GeoNodeResourceCategoryNode } from './GeoNodeResourceCategoryNode'
+import { GeoNodeRemoteServicesNode } from './GeoNodeRemoteServicesNode'
+import { API_BASE } from "../../../api";
+import { useOnlineStatus } from "../../../hooks/useOnlineStatus.ts";
 
 interface GeoNodeConnectionNodeProps {
   connection: GeoNodeConnection
@@ -13,6 +16,7 @@ interface GeoNodeConnectionNodeProps {
 
 export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps) {
   const nodeId = `geonodeconn-${connection.id}`
+  const isOnline = useOnlineStatus(`${API_BASE}/geonode/connections/${connection.id}/test`)
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
@@ -55,7 +59,20 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
     staleTime: 30000,
   })
 
-  const isLoading = datasetsLoading || mapsLoading || documentsLoading || geostoriesLoading || dashboardsLoading
+  const { data: remoteServicesData, isLoading: remoteServicesLoading } = useQuery({
+    queryKey: ['geonoderemoteservices', connection.id],
+    queryFn: () => api.getGeoNodeRemoteServices(connection.id),
+    enabled: isExpanded,
+    staleTime: 30000,
+  })
+
+  const isLoading =
+    datasetsLoading ||
+    mapsLoading ||
+    documentsLoading ||
+    geostoriesLoading ||
+    dashboardsLoading ||
+    remoteServicesLoading
 
   const node: TreeNode = {
     id: nodeId,
@@ -67,6 +84,7 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
   const isSelected = selectedNode?.id === nodeId
 
   const handleClick = () => {
+    if (isOnline === false) return
     selectNode(node)
     toggleNode(nodeId)
   }
@@ -77,9 +95,16 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
       mode: 'create',
       data: {
         connectionId: connection.id,
-        connectionName: connection.name,
+        connectionName: connection.name
       },
     })
+  }
+
+  const handleOpenAdmin = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    // GeoServer admin URL is typically the base URL + /web
+    const adminUrl = connection.url
+    window.open(adminUrl, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -90,6 +115,8 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
         isSelected={isSelected}
         isLoading={isLoading}
         onClick={handleClick}
+        isOnline={isOnline}
+        onOpenAdmin={handleOpenAdmin}
         onUpload={handleUpload}
         level={2}
       />
@@ -150,18 +177,12 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
             isLoading={dashboardsLoading}
           />
 
-          {!isLoading &&
-            (!datasetsData?.datasets?.length &&
-             !mapsData?.maps?.length &&
-             !documentsData?.documents?.length &&
-             !geostoriesData?.geostories?.length &&
-             !dashboardsData?.dashboards?.length) && (
-            <Box px={2} py={2} ml={3 * 4}>
-              <Text color="gray.500" fontSize="sm">
-                No resources found
-              </Text>
-            </Box>
-          )}
+          {/* Remote Services */}
+          <GeoNodeRemoteServicesNode
+            connectionId={connection.id}
+            services={remoteServicesData?.services || []}
+            isLoading={remoteServicesLoading}
+          />
         </>
       )}
     </Box>

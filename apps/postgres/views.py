@@ -9,24 +9,25 @@ Provides endpoints for:
 """
 
 import subprocess
-import tempfile
-import uuid
+import time
 from pathlib import Path
 
+from celery.result import AsyncResult
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.config import config_manager, get_cache_dir
+from apps.core.models import PGService
+from apps.upload.views import _assemble_file, _get_session
 
-from . import schema
-from .service import (
-    PGService,
-    delete_service,
-    get_service,
-    list_services,
-    write_service,
+from .client import (
+    add_pg_service,
+    delete_pg_service,
+    get_pg_client,
+    list_pg_services,
+    update_pg_service,
 )
+from .tasks import run_raster_import, run_vector_import
 
 
 # === PostgreSQL Services ===
@@ -36,54 +37,36 @@ class PGServiceListView(APIView):
     """List and create PostgreSQL services."""
 
     def get(self, request):
-        """List all PostgreSQL services from pg_service.conf."""
-        services = list_services()
-
-        # Include state from config
-        config = config_manager.config
-        state_map = {s.name: s.is_parsed for s in config.pg_services}
-
-        result = []
-        for name in services:
-            svc = get_service(name)
-            if svc:
-                result.append({
-                    "name": svc.name,
-                    "host": svc.host,
-                    "port": svc.port,
-                    "dbname": svc.dbname,
-                    "user": svc.user,
-                    "isParsed": state_map.get(name, False),
-                })
-
-        return Response(result)
+        """List all PostgreSQL services."""
+        return Response([
+            {
+                "name": svc.name,
+                "host": svc.host,
+                "port": svc.port,
+                "dbname": svc.dbname,
+                "user": svc.user,
+                "sslmode": svc.sslmode,
+            }
+            for svc in list_pg_services(str(request.user.id))
+        ])
 
     def post(self, request):
-        """Create a new PostgreSQL service.
-
-        Expected body:
-        {
-            "name": "my_service",
-            "host": "localhost",
-            "port": 5432,
-            "dbname": "mydb",
-            "user": "myuser",
-            "password": "mypassword",
-            "sslmode": "prefer"
-        }
-        """
+        """Create a new PostgreSQL service."""
         name = request.data.get("name")
         if not name:
             return Response(
                 {"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if service already exists
-        if get_service(name):
+        user_id = str(request.user.id)
+        try:
+            get_pg_client(name, user_id)
             return Response(
                 {"error": f"Service '{name}' already exists"},
                 status=status.HTTP_409_CONFLICT,
             )
+        except ValueError:
+            pass
 
         service = PGService(
             name=name,
@@ -94,17 +77,11 @@ class PGServiceListView(APIView):
             password=request.data.get("password", ""),
             sslmode=request.data.get("sslmode", ""),
         )
-
-        write_service(service)
+        add_pg_service(service, user_id)
 
         return Response(
-            {
-                "name": service.name,
-                "host": service.host,
-                "port": service.port,
-                "dbname": service.dbname,
-                "user": service.user,
-            },
+            {"name": service.name, "host": service.host, "port": service.port,
+             "dbname": service.dbname, "user": service.user},
             status=status.HTTP_201_CREATED,
         )
 
@@ -114,12 +91,13 @@ class PGServiceDetailView(APIView):
 
     def get(self, request, name):
         """Get service details."""
-        service = get_service(name)
-        if not service:
+        try:
+            client = get_pg_client(name, str(request.user.id))
+        except ValueError:
             return Response(
                 {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
             )
-
+        service = client.service
         return Response({
             "name": service.name,
             "host": service.host,
@@ -132,66 +110,129 @@ class PGServiceDetailView(APIView):
 
     def put(self, request, name):
         """Update a service."""
-        service = get_service(name)
-        if not service:
+        user_id = str(request.user.id)
+        try:
+            client = get_pg_client(name, user_id)
+        except ValueError:
             return Response(
                 {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
             )
-
-        # Update fields
-        if "host" in request.data:
-            service.host = request.data["host"]
-        if "port" in request.data:
-            service.port = int(request.data["port"])
-        if "dbname" in request.data:
-            service.dbname = request.data["dbname"]
-        if "user" in request.data:
-            service.user = request.data["user"]
-        if "password" in request.data:
-            service.password = request.data["password"]
-        if "sslmode" in request.data:
-            service.sslmode = request.data["sslmode"]
-
-        write_service(service)
-
+        data = request.data
+        updated = client.service.model_copy(update={
+            k: (int(data[k]) if k == "port" else data[k])
+            for k in ("host", "port", "dbname", "user", "password", "sslmode")
+            if k in data
+        })
+        update_pg_service(updated, user_id)
         return Response({
-            "name": service.name,
-            "host": service.host,
-            "port": service.port,
-            "dbname": service.dbname,
-            "user": service.user,
+            "name": updated.name,
+            "host": updated.host,
+            "port": updated.port,
+            "dbname": updated.dbname,
+            "user": updated.user,
         })
 
     def delete(self, request, name):
         """Delete a service."""
-        if not delete_service(name):
+        if not delete_pg_service(name, str(request.user.id)):
             return Response(
                 {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
             )
-
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PGServiceTestView(APIView):
     """Test a PostgreSQL service connection."""
 
-    def post(self, request, name):
+    def get(self, request, name):
         """Test connection to a service."""
-        service = get_service(name)
-        if not service:
+        try:
+            client = get_pg_client(name, str(request.user.id))
+        except ValueError:
             return Response(
                 {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
             )
+        success, message = client.test_connection()
+        if not success:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response({"success": success, "message": message})
 
-        success, message = schema.test_connection(name)
+    def post(self, request, name):
+        """Test connection to a service."""
+        try:
+            client = get_pg_client(name, str(request.user.id))
+        except ValueError:
+            return Response(
+                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        success, message = client.test_connection()
+        return Response({"success": success, "message": message})
 
-        return Response({
-            "success": success,
-            "message": message,
-        })
+
+# === Stats ===
 
 
-# === Schema Browsing ===
+class PGSchemaStatsView(APIView):
+    """Get statistics for a specific schema."""
+
+    def get(self, request, service_name, schema_name):
+        try:
+            stats = get_pg_client(service_name, str(request.user.id)).get_schema_stats(schema_name)
+            return Response(stats)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response(
+                {"error": f"Database error: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
+class PGServiceStatsView(APIView):
+    """Get server statistics for a PostgreSQL service."""
+
+    def get(self, request, name):
+        try:
+            stats = get_pg_client(name, str(request.user.id)).get_stats()
+            return Response(stats)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response(
+                {"error": f"Database error: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+class PGDatabaseNameListView(APIView):
+    """List database names for a PostgreSQL service."""
+
+    def get(self, request, service_name):
+        try:
+            databases = get_pg_client(service_name, str(request.user.id)).list_databases()
+            return Response(databases)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response(
+                {"error": f"Database error: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
+class PGSchemaNameListView(APIView):
+    """List schema names for a given database (lightweight, for dropdowns)."""
+
+    def get(self, request, service_name, database_name):
+        try:
+            names = get_pg_client(service_name, str(request.user.id)).list_schema_names(database_name)
+            return Response(names)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response(
+                {"error": f"Database error: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
 
 class PGSchemaListView(APIView):
@@ -200,7 +241,7 @@ class PGSchemaListView(APIView):
     def get(self, request, service_name):
         """List all schemas."""
         try:
-            schemas = schema.list_schemas(service_name)
+            schemas = get_pg_client(service_name, str(request.user.id)).list_schemas()
             return Response({"schemas": schemas})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -217,7 +258,7 @@ class PGTableListView(APIView):
     def get(self, request, service_name, schema_name):
         """List all tables in a schema."""
         try:
-            tables = schema.list_tables(service_name, schema_name)
+            tables = get_pg_client(service_name, str(request.user.id)).list_tables(schema_name)
             return Response({"tables": tables})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -234,9 +275,9 @@ class PGTableDetailView(APIView):
     def get(self, request, service_name, schema_name, table_name):
         """Get table columns and metadata."""
         try:
-            columns = schema.get_table_columns(service_name, schema_name, table_name)
-            row_count = schema.get_table_row_count(service_name, schema_name, table_name)
-
+            client = get_pg_client(service_name, str(request.user.id))
+            columns = client.get_table_columns(schema_name, table_name)
+            row_count = client.get_table_row_count(schema_name, table_name)
             return Response({
                 "schema": schema_name,
                 "table": table_name,
@@ -268,8 +309,8 @@ class PGTableDataView(APIView):
             offset = int(request.query_params.get("offset", 0))
             order_by = request.query_params.get("orderBy")
 
-            data = schema.get_table_data(
-                service_name, schema_name, table_name, limit, offset, order_by
+            data = get_pg_client(service_name, str(request.user.id)).get_table_data(
+                schema_name, table_name, limit, offset, order_by
             )
 
             return Response(data)
@@ -306,8 +347,19 @@ class PGQueryView(APIView):
         limit = request.data.get("limit", 1000)
 
         try:
-            result = schema.execute_query(service_name, query, limit=limit)
-            return Response(result)
+            t0 = time.monotonic()
+            result = get_pg_client(service_name, str(request.user.id)).execute_query(query, limit=limit)
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return Response({
+                "success": True,
+                "sql": query,
+                "result": {
+                    "columns": result["columns"],
+                    "rows": result["rows"],
+                    "row_count": result["rowCount"],
+                    "duration_ms": elapsed_ms,
+                },
+            })
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -319,32 +371,26 @@ class PGQueryView(APIView):
 
 # === Data Import ===
 
-# Track import jobs
-_import_jobs: dict[str, dict] = {}
+_CELERY_STATE_MAP = {
+    "PENDING": "pending",
+    "STARTED": "running",
+    "SUCCESS": "completed",
+    "FAILURE": "failed",
+}
 
 
 class PGImportView(APIView):
     """Import data to PostgreSQL via ogr2ogr."""
 
     def post(self, request):
-        """Start a data import job.
-
-        Expected body:
-        {
-            "serviceName": "my_service",
-            "filePath": "/path/to/file.gpkg",
-            "schema": "public",
-            "tableName": "my_table",
-            "srid": 4326,
-            "overwrite": false
-        }
-        """
         service_name = request.data.get("serviceName")
         file_path = request.data.get("filePath")
         target_schema = request.data.get("schema", "public")
         table_name = request.data.get("tableName")
+        source_layer = request.data.get("sourceLayer")
         srid = request.data.get("srid")
         overwrite = request.data.get("overwrite", False)
+        cleanup_source = bool(request.data.get("cleanupSource", False))
 
         if not service_name or not file_path:
             return Response(
@@ -352,83 +398,37 @@ class PGImportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get service info
-        service = get_service(service_name)
-        if not service:
+        try:
+            service = get_pg_client(service_name, str(request.user.id)).service
+        except ValueError:
             return Response(
                 {"error": f"Service not found: {service_name}"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check file exists
         if not Path(file_path).exists():
             return Response(
                 {"error": f"File not found: {file_path}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Generate job ID
-        job_id = str(uuid.uuid4())
-
-        # Build ogr2ogr command
         pg_conn = f"PG:host={service.host} port={service.port} dbname={service.dbname} user={service.user} password={service.password}"
-
-        cmd = [
-            "ogr2ogr",
-            "-f", "PostgreSQL",
-            pg_conn,
-            file_path,
-        ]
-
-        if overwrite:
-            cmd.append("-overwrite")
-        else:
-            cmd.append("-append")
+        cmd = ["ogr2ogr", "-f", "PostgreSQL", pg_conn, file_path]
+        cmd.append("-overwrite" if overwrite else "-append")
 
         if table_name:
             cmd.extend(["-nln", f"{target_schema}.{table_name}"])
-
+        if source_layer:
+            cmd.append(source_layer)
         if srid:
             cmd.extend(["-t_srs", f"EPSG:{srid}"])
 
-        # Start job in background
-        _import_jobs[job_id] = {
-            "id": job_id,
-            "status": "running",
-            "file": file_path,
-            "service": service_name,
-            "output": "",
-            "error": "",
-        }
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minute timeout
-            )
-
-            if result.returncode == 0:
-                _import_jobs[job_id]["status"] = "completed"
-                _import_jobs[job_id]["output"] = result.stdout
-            else:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = result.stderr
-
-        except subprocess.TimeoutExpired:
-            _import_jobs[job_id]["status"] = "timeout"
-            _import_jobs[job_id]["error"] = "Import timed out after 10 minutes"
-        except FileNotFoundError:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = "ogr2ogr not found. Please install GDAL."
-        except Exception as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = str(e)
-
+        result = run_vector_import(cmd, file_path, delete_source=cleanup_source)
+        if result.get("status") == "completed":
+            return Response({"status": "completed"}, status=status.HTTP_200_OK)
         return Response(
-            {"jobId": job_id, "status": _import_jobs[job_id]["status"]},
-            status=status.HTTP_202_ACCEPTED,
+            {"status": "failed", "error": result.get("error", "")},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
 
@@ -436,31 +436,25 @@ class PGImportStatusView(APIView):
     """Get import job status."""
 
     def get(self, request, job_id):
-        """Get status of an import job."""
-        if job_id not in _import_jobs:
-            return Response(
-                {"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        result = AsyncResult(job_id)
+        job_status = _CELERY_STATE_MAP.get(result.state, result.state.lower())
 
-        return Response(_import_jobs[job_id])
+        resp: dict = {"id": job_id, "status": job_status}
+
+        if result.state == "SUCCESS" and isinstance(result.result, dict):
+            if result.result.get("status") == "failed":
+                resp["status"] = "failed"
+                resp["error"] = result.result.get("error", "")
+        elif result.state == "FAILURE":
+            resp["error"] = str(result.result)
+
+        return Response(resp)
 
 
 class PGImportRasterView(APIView):
     """Import raster data to PostgreSQL via raster2pgsql."""
 
     def post(self, request):
-        """Start a raster import job.
-
-        Expected body:
-        {
-            "serviceName": "my_service",
-            "filePath": "/path/to/raster.tif",
-            "schema": "public",
-            "tableName": "my_raster",
-            "srid": 4326,
-            "tileSize": "100x100"
-        }
-        """
         service_name = request.data.get("serviceName")
         file_path = request.data.get("filePath")
         target_schema = request.data.get("schema", "public")
@@ -474,102 +468,42 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get service info
-        service = get_service(service_name)
-        if not service:
+        try:
+            service = get_pg_client(service_name, str(request.user.id)).service
+        except ValueError:
             return Response(
                 {"error": f"Service not found: {service_name}"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check file exists
         if not Path(file_path).exists():
             return Response(
                 {"error": f"File not found: {file_path}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Generate job ID
-        job_id = str(uuid.uuid4())
-
-        # Build raster2pgsql command
-        full_table = f"{target_schema}.{table_name}"
-
-        cmd = [
+        raster_cmd = [
             "raster2pgsql",
             "-s", str(srid),
-            "-I",  # Create spatial index
-            "-C",  # Apply constraints
-            "-M",  # Vacuum analyze
+            "-I", "-C", "-M",
             "-t", tile_size,
             file_path,
-            full_table,
+            f"{target_schema}.{table_name}",
         ]
-
-        _import_jobs[job_id] = {
-            "id": job_id,
-            "status": "running",
-            "file": file_path,
-            "service": service_name,
-            "output": "",
-            "error": "",
+        conn_params = {
+            "host": service.host,
+            "port": service.port,
+            "user": service.user,
+            "password": service.password,
+            "dbname": service.dbname,
         }
 
-        try:
-            # raster2pgsql outputs SQL, pipe to psql
-            raster_result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-
-            if raster_result.returncode != 0:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = raster_result.stderr
-                return Response(
-                    {"jobId": job_id, "status": "failed"},
-                    status=status.HTTP_202_ACCEPTED,
-                )
-
-            # Pipe SQL to psql
-            psql_cmd = [
-                "psql",
-                "-h", service.host,
-                "-p", str(service.port),
-                "-U", service.user,
-                "-d", service.dbname,
-            ]
-
-            psql_result = subprocess.run(
-                psql_cmd,
-                input=raster_result.stdout,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                env={**subprocess.os.environ, "PGPASSWORD": service.password},
-            )
-
-            if psql_result.returncode == 0:
-                _import_jobs[job_id]["status"] = "completed"
-                _import_jobs[job_id]["output"] = psql_result.stdout
-            else:
-                _import_jobs[job_id]["status"] = "failed"
-                _import_jobs[job_id]["error"] = psql_result.stderr
-
-        except subprocess.TimeoutExpired:
-            _import_jobs[job_id]["status"] = "timeout"
-            _import_jobs[job_id]["error"] = "Import timed out"
-        except FileNotFoundError as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = f"Tool not found: {e.filename}"
-        except Exception as e:
-            _import_jobs[job_id]["status"] = "failed"
-            _import_jobs[job_id]["error"] = str(e)
-
+        result = run_raster_import(raster_cmd, conn_params, file_path)
+        if result.get("status") == "completed":
+            return Response({"status": "completed"}, status=status.HTTP_200_OK)
         return Response(
-            {"jobId": job_id, "status": _import_jobs[job_id]["status"]},
-            status=status.HTTP_202_ACCEPTED,
+            {"status": "failed", "error": result.get("error", "")},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
 
@@ -629,3 +563,127 @@ class PGDetectLayersView(APIView):
             return Response(
                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class OGR2OGRStatusView(APIView):
+    """Check ogr2ogr and raster2pgsql availability and capabilities."""
+
+    def get(self, request):
+        def run(cmd):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                return r.returncode == 0, r.stdout + r.stderr
+            except FileNotFoundError:
+                return False, ""
+
+        # ogr2ogr version
+        ogr_available, ogr_out = run(["ogr2ogr", "--version"])
+        ogr_version = ogr_out.strip().split("\n")[0] if ogr_available else ""
+
+        # raster2pgsql version
+        raster_available, raster_out = run(["raster2pgsql", "-?"])
+        raster_version = ""
+        if raster_available:
+            for line in raster_out.split("\n"):
+                if "RELEASE" in line or "version" in line.lower():
+                    raster_version = line.strip()
+                    break
+
+        # Supported formats via ogrinfo
+        supported_formats: list[str] = []
+        vector_extensions: dict[str, str] = {}
+        raster_extensions: dict[str, str] = {}
+        supported_extensions: dict[str, str] = {}
+
+        if ogr_available:
+            _, fmt_out = run(["ogrinfo", "--formats"])
+            for line in fmt_out.split("\n"):
+                line = line.strip()
+                if not line or line.startswith("Supported Formats"):
+                    continue
+                supported_formats.append(line)
+
+            # Common vector formats
+            vector_extensions = {
+                ".gpkg": "GeoPackage",
+                ".shp": "ESRI Shapefile",
+                ".geojson": "GeoJSON",
+                ".json": "GeoJSON",
+                ".kml": "KML",
+                ".csv": "CSV",
+                ".gml": "GML",
+                ".sqlite": "SQLite",
+                ".dxf": "DXF",
+            }
+            # Common raster formats
+            raster_extensions = {
+                ".tif": "GeoTIFF",
+                ".tiff": "GeoTIFF",
+                ".png": "PNG",
+                ".jpg": "JPEG",
+                ".jpeg": "JPEG",
+                ".img": "HFA",
+                ".vrt": "VRT",
+                ".nc": "NetCDF",
+                ".asc": "AAIGrid",
+            }
+            supported_extensions = {**vector_extensions, **raster_extensions}
+
+        return Response({
+            "available": ogr_available,
+            "version": ogr_version,
+            "raster_available": raster_available,
+            "raster_version": raster_version,
+            "supported_formats": supported_formats,
+            "supported_extensions": supported_extensions,
+            "vector_extensions": vector_extensions,
+            "raster_extensions": raster_extensions,
+        })
+
+
+class PGUploadCompleteView(APIView):
+    """Assemble a chunked upload for PG import — file is kept for detect-layers."""
+
+    def post(self, request):
+        """Assemble uploaded chunks and return the file path.
+
+        Expected body:
+        {
+            "sessionId": "uuid"
+        }
+        """
+        session_id = request.data.get("sessionId")
+        if not session_id:
+            return Response(
+                {"error": "sessionId is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = _get_session(session_id)
+        if not session:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not session.is_complete():
+            missing = session.total_chunks - len(session.received_chunks)
+            return Response(
+                {"error": f"Upload incomplete. Missing {missing} chunks."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            file_path = _assemble_file(session)
+            return Response({
+                "sessionId": session_id,
+                "filename": session.filename,
+                "fileSize": session.file_size,
+                "path": str(file_path),
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to assemble file: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+

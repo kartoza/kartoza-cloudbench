@@ -71,7 +71,6 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
-        "apps.accounts.authentication.APITokenAuthentication",
     ],
     "DEFAULT_PAGINATION_CLASS": None,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",

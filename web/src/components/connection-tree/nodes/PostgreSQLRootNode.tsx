@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
-import { Box, Text } from '@chakra-ui/react'
+import { Box, Text, useToast } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
+import { getCreatePostGISUrl } from '../../../config/env'
+import { openWindowWithCallback } from '../../../utils/openWindowWithCallback'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { PGServiceNode } from './PGServiceNode'
 
@@ -15,9 +17,10 @@ export function PostgreSQLRootNode() {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const showHiddenPGServices = useUIStore((state) => state.settings.showHiddenPGServices)
+  const createUrl = getCreatePostGISUrl()
 
   // Fetch PostgreSQL services
-  const { data: pgServices, isLoading } = useQuery({
+  const { data: pgServices, isLoading, refetch } = useQuery({
     queryKey: ['pgservices'],
     queryFn: () => api.getPGServices(),
     staleTime: 30000,
@@ -44,6 +47,7 @@ export function PostgreSQLRootNode() {
   const isSelected = selectedNode?.id === nodeId
 
   const openDialog = useUIStore((state) => state.openDialog)
+  const toast = useToast()
 
   const handleClick = () => {
     selectNode(node)
@@ -52,7 +56,11 @@ export function PostgreSQLRootNode() {
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation()
-    openDialog('pgdashboard', { mode: 'create' })
+    if (createUrl) {
+      openWindowWithCallback(createUrl, () => refetch(), toast)
+    } else {
+      openDialog('pgdashboard', { mode: 'create' })
+    }
   }
 
   return (
@@ -72,7 +80,7 @@ export function PostgreSQLRootNode() {
           {!filteredPGServices || filteredPGServices.length === 0 ? (
             <Box px={2} py={3} ml={2 * 4}>
               <Text color="gray.500" fontSize="sm">
-                No PostgreSQL services. Click + to add one.
+                No PostgreSQL connections found.
               </Text>
             </Box>
           ) : (
@@ -80,6 +88,7 @@ export function PostgreSQLRootNode() {
               <PGServiceNode
                 key={svc.name}
                 service={svc}
+                ableToDelete={!createUrl}
               />
             ))
           )}

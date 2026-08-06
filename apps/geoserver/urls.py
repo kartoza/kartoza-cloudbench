@@ -23,6 +23,11 @@ urlpatterns = [
         name="datastore-list",
     ),
     path(
+        "datastores/<str:conn_id>/<str:workspace>/connect/<str:pg_conn_id>",
+        views.DataStoreConnectPGView.as_view(),
+        name="datastore-connect-pg",
+    ),
+    path(
         "datastores/<str:conn_id>/<str:workspace>/<str:store>",
         views.DataStoreDetailView.as_view(),
         name="datastore-detail",
@@ -31,6 +36,11 @@ urlpatterns = [
         "datastores/<str:conn_id>/<str:workspace>/<str:store>/available",
         views.DataStoreAvailableView.as_view(),
         name="datastore-available",
+    ),
+    path(
+        "datastores/<str:conn_id>/<str:workspace>/<str:store>/publish",
+        views.DataStorePublishView.as_view(),
+        name="datastore-publish",
     ),
     # Coverage Stores
     path(
@@ -115,20 +125,20 @@ urlpatterns = [
         views.LayerGroupDetailView.as_view(),
         name="layergroup-detail",
     ),
-    # File Uploads
+    # Chunked upload → background task flow
     path(
-        "upload/shapefile/<str:conn_id>/<str:workspace>",
-        views.UploadShapefileView.as_view(),
-        name="upload-shapefile",
+        "upload/complete/<str:conn_id>/<str:workspace>",
+        views.GeoServerUploadCompleteView.as_view(),
+        name="geoserver-upload-complete",
     ),
     path(
-        "upload/geotiff/<str:conn_id>/<str:workspace>",
-        views.UploadGeoTiffView.as_view(),
-        name="upload-geotiff",
+        "upload/start/<str:conn_id>/<str:workspace>",
+        views.GeoServerUploadStartView.as_view(),
+        name="geoserver-upload-start",
     ),
     path(
-        "upload/geopackage/<str:conn_id>/<str:workspace>",
-        views.UploadGeoPackageView.as_view(),
-        name="upload-geopackage",
+        "upload/status/<str:job_id>",
+        views.GeoServerUploadStatusView.as_view(),
+        name="geoserver-upload-status",
     ),
 ]

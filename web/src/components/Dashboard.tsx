@@ -1,59 +1,70 @@
-import { useRef, useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { PanelHeader } from './Panel/PanelHeader'
 import {
-  Box,
-  Flex,
-  VStack,
-  HStack,
-  Text,
-  Icon,
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Badge,
+  Box,
+  Button,
+  Flex,
+  HStack,
+  Icon,
+  IconButton,
   Progress,
-  Spinner,
   SimpleGrid,
+  Spinner,
   Stat,
   StatLabel,
   StatNumber,
-  Alert,
-  AlertIcon,
-  AlertTitle,
-  AlertDescription,
+  Text,
   Tooltip,
-  IconButton,
-  Button,
+  VStack,
 } from '@chakra-ui/react'
-import { keyframes, css } from '@emotion/react'
+import { css, keyframes } from '@emotion/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  FiServer,
-  FiLayers,
-  FiDatabase,
-  FiCheckCircle,
-  FiAlertTriangle,
-  FiXCircle,
-  FiRefreshCw,
-  FiClock,
-  FiHardDrive,
   FiActivity,
-  FiTable,
+  FiAlertTriangle,
+  FiCheckCircle,
+  FiClock,
+  FiDatabase,
   FiEye,
   FiEyeOff,
+  FiHardDrive,
+  FiLayers,
+  FiRefreshCw,
+  FiServer,
   FiSettings,
+  FiTable,
+  FiXCircle,
 } from 'react-icons/fi'
 import { SiPostgresql } from 'react-icons/si'
 import * as api from '../api'
 import type { ServerStatus } from '../types'
 import { useUIStore } from '../stores/uiStore'
 import { useTreeStore } from '../stores/treeStore'
+import { PanelBody } from "./Panel/PanelBody";
+import { Panel } from "./Panel";
 
 // Keyframe animations
 const pulseKeyframes = keyframes`
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 `
 
 const spinKeyframes = keyframes`
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 `
 
 // Format bytes to human readable
@@ -73,7 +84,12 @@ interface SparklineProps {
   color?: string
 }
 
-function Sparkline({ data, width = 80, height = 20, color = '#38B2AC' }: SparklineProps) {
+function Sparkline({
+                     data,
+                     width = 80,
+                     height = 20,
+                     color = '#38B2AC'
+                   }: SparklineProps) {
   if (data.length < 2) return null
 
   const min = Math.min(...data)
@@ -87,7 +103,8 @@ function Sparkline({ data, width = 80, height = 20, color = '#38B2AC' }: Sparkli
   }).join(' ')
 
   return (
-    <svg width={width} height={height} style={{ display: 'inline-block', marginLeft: '4px' }}>
+    <svg width={width} height={height}
+         style={{ display: 'inline-block', marginLeft: '4px' }}>
       <polyline
         points={points}
         fill="none"
@@ -118,7 +135,10 @@ function getPingHistory(connectionId: string): number[] {
 }
 
 // Store for tracking online status of PG services (lazy checked)
-const pgOnlineStatusMap = new Map<string, { online: boolean | null; lastChecked: number }>()
+const pgOnlineStatusMap = new Map<string, {
+  online: boolean | null;
+  lastChecked: number
+}>()
 const PG_STATUS_CACHE_MS = 60000 // Cache status for 60 seconds
 
 // PostgreSQL Service Card
@@ -130,7 +150,13 @@ interface PGServiceCardProps {
   isTogglingHidden: boolean
 }
 
-function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isTogglingHidden }: PGServiceCardProps) {
+function PGServiceCard({
+                         service,
+                         onParse,
+                         isParsing,
+                         onToggleHidden,
+                         isTogglingHidden
+                       }: PGServiceCardProps) {
   const [onlineStatus, setOnlineStatus] = useState<boolean | null>(null)
   const [isCheckingOnline, setIsCheckingOnline] = useState(false)
 
@@ -156,10 +182,16 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
       try {
         const result = await api.testPGService(service.name)
         setOnlineStatus(result.success)
-        pgOnlineStatusMap.set(service.name, { online: result.success, lastChecked: now })
+        pgOnlineStatusMap.set(service.name, {
+          online: result.success,
+          lastChecked: now
+        })
       } catch {
         setOnlineStatus(false)
-        pgOnlineStatusMap.set(service.name, { online: false, lastChecked: now })
+        pgOnlineStatusMap.set(service.name, {
+          online: false,
+          lastChecked: now
+        })
       } finally {
         setIsCheckingOnline(false)
       }
@@ -219,7 +251,7 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
         <Tooltip label={service.hidden ? 'Show service' : 'Hide service'}>
           <IconButton
             aria-label={service.hidden ? 'Show' : 'Hide'}
-            icon={<Icon as={service.hidden ? FiEye : FiEyeOff} />}
+            icon={<Icon as={service.hidden ? FiEye : FiEyeOff}/>}
             size="xs"
             variant="ghost"
             colorScheme={service.hidden ? 'blue' : 'gray'}
@@ -230,7 +262,7 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
         <Tooltip label={getStatusLabel()}>
           <span>
             {isCheckingOnline ? (
-              <Spinner size="sm" color="blue.500" />
+              <Spinner size="sm" color="blue.500"/>
             ) : (
               <Icon
                 as={getStatusIcon()}
@@ -245,9 +277,11 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
       {/* Service info */}
       <VStack align="start" spacing={3}>
         <HStack>
-          <Icon as={SiPostgresql} color={service.hidden ? 'gray.400' : 'blue.600'} boxSize={6} />
+          <Icon as={SiPostgresql}
+                color={service.hidden ? 'gray.400' : 'blue.600'} boxSize={6}/>
           <VStack align="start" spacing={0}>
-            <Text fontWeight="bold" fontSize="lg" noOfLines={1} color={service.hidden ? 'gray.500' : undefined}>
+            <Text fontWeight="bold" fontSize="lg" noOfLines={1}
+                  color={service.hidden ? 'gray.500' : undefined}>
               {service.name}
             </Text>
             <Text fontSize="xs" color="gray.500" noOfLines={1}>
@@ -266,7 +300,7 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
         {/* Stats or action */}
         {service.hidden ? (
           <Alert status="info" variant="subtle" borderRadius="md" py={2}>
-            <AlertIcon boxSize={4} />
+            <AlertIcon boxSize={4}/>
             <Text fontSize="sm">This service is hidden</Text>
           </Alert>
         ) : service.is_parsed ? (
@@ -274,18 +308,19 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
             <Stat size="sm">
               <StatLabel fontSize="xs" color="gray.500">
                 <HStack spacing={1}>
-                  <Icon as={FiTable} boxSize={3} />
+                  <Icon as={FiTable} boxSize={3}/>
                   <Text>Status</Text>
                 </HStack>
               </StatLabel>
-              <StatNumber fontSize="md" color={onlineStatus === true ? 'green.600' : onlineStatus === false ? 'red.600' : 'blue.600'}>
+              <StatNumber fontSize="md"
+                          color={onlineStatus === true ? 'green.600' : onlineStatus === false ? 'red.600' : 'blue.600'}>
                 {onlineStatus === true ? 'Online' : onlineStatus === false ? 'Offline' : 'Parsed'}
               </StatNumber>
             </Stat>
             <Stat size="sm">
               <StatLabel fontSize="xs" color="gray.500">
                 <HStack spacing={1}>
-                  <Icon as={FiDatabase} boxSize={3} />
+                  <Icon as={FiDatabase} boxSize={3}/>
                   <Text>User</Text>
                 </HStack>
               </StatLabel>
@@ -299,7 +334,7 @@ function PGServiceCard({ service, onParse, isParsing, onToggleHidden, isToggling
             size="sm"
             colorScheme="blue"
             variant="outline"
-            leftIcon={<FiDatabase />}
+            leftIcon={<FiDatabase/>}
             onClick={onParse}
             isLoading={isParsing}
             loadingText="Parsing..."
@@ -369,7 +404,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
       {/* Server info */}
       <VStack align="start" spacing={3}>
         <HStack>
-          <Icon as={FiServer} color="kartoza.500" boxSize={6} />
+          <Icon as={FiServer} color="kartoza.500" boxSize={6}/>
           <VStack align="start" spacing={0}>
             <Text fontWeight="bold" fontSize="lg" noOfLines={1}>
               {server.connectionName}
@@ -394,7 +429,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
               <Stat size="sm">
                 <StatLabel fontSize="xs" color="gray.500">
                   <HStack spacing={1}>
-                    <Icon as={FiLayers} boxSize={3} />
+                    <Icon as={FiLayers} boxSize={3}/>
                     <Text>Layers</Text>
                   </HStack>
                 </StatLabel>
@@ -406,7 +441,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
               <Stat size="sm">
                 <StatLabel fontSize="xs" color="gray.500">
                   <HStack spacing={1}>
-                    <Icon as={FiDatabase} boxSize={3} />
+                    <Icon as={FiDatabase} boxSize={3}/>
                     <Text>Stores</Text>
                   </HStack>
                 </StatLabel>
@@ -421,7 +456,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
               <Box w="100%">
                 <HStack justify="space-between" mb={1}>
                   <HStack spacing={1}>
-                    <Icon as={FiHardDrive} boxSize={3} color="gray.500" />
+                    <Icon as={FiHardDrive} boxSize={3} color="gray.500"/>
                     <Text fontSize="xs" color="gray.500">Memory</Text>
                   </HStack>
                   <Text fontSize="xs" color="gray.600">
@@ -439,17 +474,18 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
 
             {/* Response time with sparkline */}
             <HStack spacing={2} fontSize="xs" color="gray.500" w="100%">
-              <Icon as={FiClock} boxSize={3} />
+              <Icon as={FiClock} boxSize={3}/>
               <Text>Response: {server.responseTimeMs}ms</Text>
               {pingHistory.length >= 2 && (
-                <Sparkline data={pingHistory} width={60} height={16} color="#38B2AC" />
+                <Sparkline data={pingHistory} width={60} height={16}
+                           color="#38B2AC"/>
               )}
             </HStack>
           </>
         ) : (
           <Box w="100%">
             <Alert status="error" variant="subtle" borderRadius="md" py={2}>
-              <AlertIcon boxSize={4} />
+              <AlertIcon boxSize={4}/>
               <Text fontSize="sm" noOfLines={2}>
                 {server.error || 'Server is offline'}
               </Text>
@@ -481,14 +517,14 @@ export default function Dashboard() {
     const nodeType = selectedNode.type
     // Show only GeoServer if a GeoServer-related node is selected
     if (nodeType === 'geoserver' || nodeType === 'connection' || nodeType === 'workspace' ||
-        nodeType === 'datastores' || nodeType === 'coveragestores' || nodeType === 'datastore' ||
-        nodeType === 'coveragestore' || nodeType === 'layers' || nodeType === 'layer' ||
-        nodeType === 'styles' || nodeType === 'style' || nodeType === 'layergroups' || nodeType === 'layergroup') {
+      nodeType === 'datastores' || nodeType === 'coveragestores' || nodeType === 'datastore' ||
+      nodeType === 'coveragestore' || nodeType === 'layers' || nodeType === 'layer' ||
+      nodeType === 'styles' || nodeType === 'style' || nodeType === 'layergroups' || nodeType === 'layergroup') {
       return 'geoserver'
     }
     // Show only PostgreSQL if a PostgreSQL-related node is selected
     if (nodeType === 'postgresql' || nodeType === 'pgservice' || nodeType === 'pgschema' ||
-        nodeType === 'pgtable' || nodeType === 'pgview' || nodeType === 'pgcolumn') {
+      nodeType === 'pgtable' || nodeType === 'pgview' || nodeType === 'pgcolumn') {
       return 'postgresql'
     }
     // Default: show all (CloudBench root or unknown)
@@ -562,7 +598,7 @@ export default function Dashboard() {
     return (
       <Flex h="100%" align="center" justify="center">
         <VStack spacing={4}>
-          <Spinner size="xl" color="kartoza.500" thickness="4px" />
+          <Spinner size="xl" color="kartoza.500" thickness="4px"/>
           <Text color="gray.500">Loading server status...</Text>
         </VStack>
       </Flex>
@@ -573,7 +609,7 @@ export default function Dashboard() {
     return (
       <Flex h="100%" align="center" justify="center" p={8}>
         <Alert status="error" borderRadius="lg">
-          <AlertIcon />
+          <AlertIcon/>
           <AlertTitle>Failed to load dashboard</AlertTitle>
           <AlertDescription>{(error as Error).message}</AlertDescription>
         </Alert>
@@ -592,7 +628,7 @@ export default function Dashboard() {
     return (
       <Flex h="100%" align="center" justify="center" p={8}>
         <VStack spacing={4} textAlign="center">
-          <Icon as={FiServer} boxSize={16} color="gray.300" />
+          <Icon as={FiServer} boxSize={16} color="gray.300"/>
           <Text color="gray.500" fontSize="lg">No servers configured</Text>
           <Text color="gray.400" fontSize="sm">
             Add a GeoServer connection or PostgreSQL service to get started
@@ -607,20 +643,11 @@ export default function Dashboard() {
   const alertServers = data?.servers.filter(s => !s.online) || []
 
   return (
-    <Flex h="100%" direction="column">
-      {/* Header with gradient - fixed at top */}
-      <Flex
-        justify="space-between"
-        align="center"
-        p={4}
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
-        color="white"
-        flexShrink={0}
-        borderTopRadius="lg"
-      >
+    <Panel>
+      <PanelHeader>
         <HStack spacing={3}>
           <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
-            <Icon as={FiActivity} boxSize={5} color="white" />
+            <Icon as={FiActivity} boxSize={5} color="white"/>
           </Box>
           <Text fontSize="xl" fontWeight="bold">Server Dashboard</Text>
         </HStack>
@@ -628,38 +655,43 @@ export default function Dashboard() {
           {/* Summary stats */}
           <HStack spacing={6} display={{ base: 'none', md: 'flex' }}>
             <HStack spacing={2}>
-              <Icon as={FiCheckCircle} color="green.200" />
-              <Text fontWeight="bold" color="white">{data?.onlineCount || 0}</Text>
+              <Icon as={FiCheckCircle} color="green.200"/>
+              <Text fontWeight="bold"
+                    color="white">{data?.onlineCount || 0}</Text>
               <Text color="whiteAlpha.800">Online</Text>
             </HStack>
             {(data?.offlineCount || 0) > 0 && (
               <HStack spacing={2}>
-                <Icon as={FiXCircle} color="red.200" />
-                <Text fontWeight="bold" color="white">{data?.offlineCount || 0}</Text>
+                <Icon as={FiXCircle} color="red.200"/>
+                <Text fontWeight="bold"
+                      color="white">{data?.offlineCount || 0}</Text>
                 <Text color="whiteAlpha.800">Offline</Text>
               </HStack>
             )}
             <HStack spacing={2}>
-              <Icon as={FiLayers} color="purple.200" />
-              <Text fontWeight="bold" color="white">{data?.totalLayers || 0}</Text>
+              <Icon as={FiLayers} color="purple.200"/>
+              <Text fontWeight="bold"
+                    color="white">{data?.totalLayers || 0}</Text>
               <Text color="whiteAlpha.800">Layers</Text>
             </HStack>
             {hasPGServices && (
               <HStack spacing={2}>
-                <Icon as={SiPostgresql} color="blue.200" />
-                <Text fontWeight="bold" color="white">{filteredPGServices?.length || 0}</Text>
+                <Icon as={SiPostgresql} color="blue.200"/>
+                <Text fontWeight="bold"
+                      color="white">{filteredPGServices?.length || 0}</Text>
                 <Text color="whiteAlpha.800">PG Services</Text>
               </HStack>
             )}
             <HStack spacing={2}>
-              <Icon as={FiClock} color="whiteAlpha.700" />
-              <Text color="whiteAlpha.800">{data?.pingIntervalSecs || 60}s</Text>
+              <Icon as={FiClock} color="whiteAlpha.700"/>
+              <Text
+                color="whiteAlpha.800">{data?.pingIntervalSecs || 60}s</Text>
             </HStack>
           </HStack>
           <Tooltip label="Settings">
             <IconButton
               aria-label="Settings"
-              icon={<FiSettings />}
+              icon={<FiSettings/>}
               variant="ghost"
               color="white"
               _hover={{ bg: 'whiteAlpha.200' }}
@@ -669,7 +701,7 @@ export default function Dashboard() {
           <Tooltip label="Refresh status">
             <IconButton
               aria-label="Refresh"
-              icon={<FiRefreshCw />}
+              icon={<FiRefreshCw/>}
               variant="ghost"
               color="white"
               _hover={{ bg: 'whiteAlpha.200' }}
@@ -678,16 +710,10 @@ export default function Dashboard() {
             />
           </Tooltip>
         </HStack>
-      </Flex>
+      </PanelHeader>
 
       {/* Scrollable content area with centered cards */}
-      <Flex
-        flex={1}
-        overflowY="auto"
-        p={6}
-        justify="center"
-        align={(data?.servers.length || 0) + (filteredPGServices?.length || 0) <= 3 ? 'center' : 'flex-start'}
-      >
+      <PanelBody>
         <VStack spacing={6} maxW="1400px" w="100%">
           {/* GeoServer section */}
           {showGeoServerSection && (
@@ -702,7 +728,7 @@ export default function Dashboard() {
                   alignItems="center"
                   gap={2}
                 >
-                  <Icon as={FiServer} color="white" boxSize={4} />
+                  <Icon as={FiServer} color="white" boxSize={4}/>
                   <Text fontWeight="600" color="white" fontSize="sm">
                     GeoServer Connections ({data?.servers.length || 0})
                   </Text>
@@ -713,15 +739,16 @@ export default function Dashboard() {
               {alertServers.length > 0 && (
                 <Box mb={4}>
                   <HStack spacing={2} mb={2} justify="center">
-                    <Icon as={FiAlertTriangle} color="red.500" boxSize={4} />
+                    <Icon as={FiAlertTriangle} color="red.500" boxSize={4}/>
                     <Text fontSize="sm" fontWeight="medium" color="red.600">
                       Requires Attention ({alertServers.length})
                     </Text>
                   </HStack>
                   <Flex wrap="wrap" gap={4} justify="center">
                     {alertServers.map(server => (
-                      <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
-                        <ServerCard server={server} isAlert />
+                      <Box key={server.connectionId}
+                           w={{ base: '100%', md: '340px' }}>
+                        <ServerCard server={server} isAlert/>
                       </Box>
                     ))}
                   </Flex>
@@ -732,8 +759,9 @@ export default function Dashboard() {
               {healthyServers.length > 0 && (
                 <Flex wrap="wrap" gap={4} justify="center">
                   {healthyServers.map(server => (
-                    <Box key={server.connectionId} w={{ base: '100%', md: '340px' }}>
-                      <ServerCard server={server} />
+                    <Box key={server.connectionId}
+                         w={{ base: '100%', md: '340px' }}>
+                      <ServerCard server={server}/>
                     </Box>
                   ))}
                 </Flex>
@@ -754,7 +782,7 @@ export default function Dashboard() {
                   alignItems="center"
                   gap={2}
                 >
-                  <Icon as={SiPostgresql} color="white" boxSize={4} />
+                  <Icon as={SiPostgresql} color="white" boxSize={4}/>
                   <Text fontWeight="600" color="white" fontSize="sm">
                     PostgreSQL Services ({filteredPGServices?.length || 0})
                   </Text>
@@ -776,7 +804,7 @@ export default function Dashboard() {
             </Box>
           )}
         </VStack>
-      </Flex>
-    </Flex>
+      </PanelBody>
+    </Panel>
   )
 }

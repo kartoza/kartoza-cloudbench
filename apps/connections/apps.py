@@ -8,4 +8,5 @@ class ConnectionsConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.connections"
+    label = "cloudbench_connections"
     verbose_name = "GeoServer Connections"

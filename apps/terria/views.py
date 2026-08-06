@@ -10,12 +10,13 @@ import httpx
 from typing import Any
 
 from django.http import HttpResponse, StreamingHttpResponse
+from django.urls import reverse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.config import get_config
-from apps.geoserver.client import GeoServerClientManager
+from apps.geoserver.client import get_geoserver_client
 
 
 def generate_terria_item(
@@ -85,7 +86,7 @@ class TerriaConnectionCatalogView(APIView):
         Returns a Terria catalog JSON with all workspaces and layers.
         """
         try:
-            config = get_config()
+            config = get_config(request.user.id)
             conn = config.get_connection(conn_id)
             if not conn:
                 return Response(
@@ -93,8 +94,7 @@ class TerriaConnectionCatalogView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            manager = GeoServerClientManager()
-            client = manager.get_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Get all workspaces and their layers
             workspaces = client.list_workspaces()
@@ -150,7 +150,7 @@ class TerriaWorkspaceCatalogView(APIView):
     def get(self, request, conn_id, workspace):
         """Export all layers from a workspace."""
         try:
-            config = get_config()
+            config = get_config(request.user.id)
             conn = config.get_connection(conn_id)
             if not conn:
                 return Response(
@@ -158,8 +158,7 @@ class TerriaWorkspaceCatalogView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            manager = GeoServerClientManager()
-            client = manager.get_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             layers = client.list_layers(workspace)
             items = [
@@ -192,7 +191,7 @@ class TerriaLayerCatalogView(APIView):
     def get(self, request, conn_id, workspace, layer):
         """Export a single layer."""
         try:
-            config = get_config()
+            config = get_config(request.user.id)
             conn = config.get_connection(conn_id)
             if not conn:
                 return Response(
@@ -200,8 +199,7 @@ class TerriaLayerCatalogView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            manager = GeoServerClientManager()
-            client = manager.get_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             layer_info = client.get_layer(workspace, layer)
             if not layer_info:
@@ -276,7 +274,7 @@ class TerriaInitView(APIView):
 
     def get(self, request):
         """Get Terria init JSON."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_connections()
 
         # Build init config with all connections as catalog sources
@@ -288,7 +286,7 @@ class TerriaInitView(APIView):
                 "name": conn.name,
                 "description": f"GeoServer at {conn.url}",
                 "isOpen": False,
-                "url": f"/api/terria/connection/{conn.id}",
+                "url": reverse("terria-connection-catalog", kwargs={"conn_id": conn.id}),
             })
 
         init_config = {

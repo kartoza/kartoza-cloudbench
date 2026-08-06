@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
-import { Box, Text } from '@chakra-ui/react'
+import { Box, Text, useToast } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
+import { getCreateGeoNodeUrl } from '../../../config/env'
+import { openWindowWithCallback } from '../../../utils/openWindowWithCallback'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { GeoNodeConnectionNode } from './GeoNodeConnectionNode'
 
@@ -15,9 +17,10 @@ export function GeoNodeRootNode() {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
+  const toast = useToast()
 
   // Fetch GeoNode connections
-  const { data: connections, isLoading } = useQuery({
+  const { data: connections, isLoading, refetch } = useQuery({
     queryKey: ['geonodeconnections'],
     queryFn: () => api.getGeoNodeConnections(),
     staleTime: 30000,
@@ -45,7 +48,12 @@ export function GeoNodeRootNode() {
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation()
-    openDialog('geonode', { mode: 'create', data: {} })
+    const createUrl = getCreateGeoNodeUrl()
+    if (createUrl) {
+      openWindowWithCallback(createUrl, () => refetch(), toast)
+    } else {
+      openDialog('geonode', { mode: 'create', data: {} })
+    }
   }
 
   return (
@@ -65,7 +73,7 @@ export function GeoNodeRootNode() {
           {!connections || connections.length === 0 ? (
             <Box px={2} py={3} ml={2 * 4}>
               <Text color="gray.500" fontSize="sm">
-                No GeoNode connections. Click + to add one.
+                No GeoNode connections found.
               </Text>
             </Box>
           ) : (

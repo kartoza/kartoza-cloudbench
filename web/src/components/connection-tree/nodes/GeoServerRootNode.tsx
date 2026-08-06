@@ -1,22 +1,27 @@
 import { useEffect } from 'react'
-import { Box, Text } from '@chakra-ui/react'
+import { Box, Text, useToast } from '@chakra-ui/react'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
-import type { TreeNode } from '../../../types'
+import { useConnectionStore } from '../../../stores/connectionStore'
+import type { Connection, TreeNode } from '../../../types'
+import { getCreateGeoServerUrl } from '../../../config/env'
+import { openWindowWithCallback } from '../../../utils/openWindowWithCallback'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { ConnectionNode } from './ConnectionNode'
 
-interface GeoServerRootNodeProps {
-  connections: { id: string; name: string; url: string }[]
-}
-
-export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
+export function GeoServerRootNode() {
   const nodeId = 'geoserver'
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
+  const createUrl = getCreateGeoServerUrl()
+  const toast = useToast()
+
+  const connections = useConnectionStore((state) => state.connections)
+  const isLoading = useConnectionStore((state) => state.isLoading)
+  const fetchConnections = useConnectionStore((state) => state.fetchConnections)
 
   // Auto-expand GeoServer section on mount
   useEffect(() => {
@@ -40,7 +45,13 @@ export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation()
-    openDialog('connection', { mode: 'create' })
+    if (createUrl) {
+      openWindowWithCallback(createUrl, () => {
+        void fetchConnections()
+      }, toast)
+    } else {
+      openDialog('connection', { mode: 'create' })
+    }
   }
 
   return (
@@ -49,27 +60,28 @@ export function GeoServerRootNode({ connections }: GeoServerRootNodeProps) {
         node={node}
         isExpanded={isExpanded}
         isSelected={isSelected}
-        isLoading={false}
+        isLoading={isLoading}
         onClick={handleClick}
         onAdd={handleAdd}
         level={1}
-        count={connections.length}
+        count={connections?.length}
       />
       {isExpanded && (
         <>
-          {connections.length === 0 ? (
+          {!connections || connections.length === 0 ? (
             <Box px={2} py={3} ml={2 * 4}>
               <Text color="gray.500" fontSize="sm">
-                No connections yet. Click + to add one.
+                No GeoServer connections found.
               </Text>
             </Box>
           ) : (
-            connections.map((conn) => (
+            connections.map((conn: Connection) => (
               <ConnectionNode
                 key={conn.id}
                 connectionId={conn.id}
                 name={conn.name}
                 url={conn.url}
+                ableToDelete={!createUrl}
               />
             ))
           )}

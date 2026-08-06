@@ -8,4 +8,5 @@ class SyncConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.sync"
+    label = "cloudbench_sync"
     verbose_name = "Server Synchronization"

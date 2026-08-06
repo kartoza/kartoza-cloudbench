@@ -1,37 +1,38 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  VStack,
+  Box,
+  Button,
   Card,
   CardBody,
-  HStack,
-  Box,
-  Icon,
-  Heading,
-  Text,
-  Spacer,
-  Button,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Tooltip,
   Center,
+  Heading,
+  HStack,
+  Icon,
   Spinner,
-  Flex,
+  Table,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tooltip,
+  Tr,
   useColorModeValue,
+  VStack,
 } from '@chakra-ui/react'
 import {
-  FiTable,
-  FiEye,
-  FiCode,
-  FiRefreshCw,
-  FiDownload,
   FiAlertCircle,
+  FiCode,
+  FiDownload,
+  FiEye,
+  FiRefreshCw,
+  FiTable,
 } from 'react-icons/fi'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
+import { Panel } from "../Panel";
+import { PanelHeader } from "../Panel/PanelHeader";
+import { PanelBody } from "../Panel/PanelBody";
 
 interface PGTablePanelProps {
   serviceName: string
@@ -40,7 +41,13 @@ interface PGTablePanelProps {
   isView?: boolean
 }
 
-export default function PGTablePanel({ serviceName, schemaName, tableName, isView = false }: PGTablePanelProps) {
+export default function PGTablePanel(
+  {
+    serviceName,
+    schemaName,
+    tableName,
+    isView = false
+  }: PGTablePanelProps) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [columns, setColumns] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -229,8 +236,9 @@ export default function PGTablePanel({ serviceName, schemaName, tableName, isVie
     return (
       <Center h="400px">
         <VStack spacing={4}>
-          <Spinner size="xl" color="blue.500" thickness="4px" />
-          <Text color="gray.500">Loading {isView ? 'view' : 'table'} data...</Text>
+          <Spinner size="xl" color="blue.500" thickness="4px"/>
+          <Text
+            color="gray.500">Loading {isView ? 'view' : 'table'} data...</Text>
         </VStack>
       </Center>
     )
@@ -240,7 +248,7 @@ export default function PGTablePanel({ serviceName, schemaName, tableName, isVie
     return (
       <Center h="400px">
         <VStack spacing={4}>
-          <Icon as={FiAlertCircle} boxSize={12} color="red.500" />
+          <Icon as={FiAlertCircle} boxSize={12} color="red.500"/>
           <Text color="red.500" fontWeight="medium">{error}</Text>
           <Button colorScheme="blue" onClick={handleRefresh}>
             Retry
@@ -251,194 +259,195 @@ export default function PGTablePanel({ serviceName, schemaName, tableName, isVie
   }
 
   return (
-    <VStack spacing={4} align="stretch" h="100%">
+    <Panel>
       {/* Header Card */}
-      <Card
-        bg={isView ? 'linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)' : 'linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)'}
-        color="white"
-      >
-        <CardBody py={6} px={6}>
-          <Flex align="center" wrap="wrap" gap={4}>
-            <HStack spacing={4}>
-              <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
-                <Icon as={isView ? FiEye : FiTable} boxSize={6} />
-              </Box>
-              <VStack align="start" spacing={0}>
-                <Heading size="md">{tableName}</Heading>
-                <HStack spacing={2} opacity={0.9}>
-                  <Text fontSize="sm">{schemaName}</Text>
-                  <Text fontSize="sm">|</Text>
-                  <Text fontSize="sm">{isView ? 'View' : 'Table'}</Text>
-                  <Text fontSize="sm">|</Text>
-                  <Text fontSize="sm">{totalLoaded.toLocaleString()} rows loaded</Text>
-                  {hasMore && <Text fontSize="sm">(more available)</Text>}
-                </HStack>
-              </VStack>
+      <PanelHeader>
+        <HStack spacing={4}>
+          <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
+            <Icon as={isView ? FiEye : FiTable} boxSize={6}/>
+          </Box>
+          <VStack align="start" spacing={0}>
+            <Heading size="md" color="white">{tableName}</Heading>
+            <HStack spacing={2} opacity={0.9}>
+              <Text fontSize="sm">{schemaName}</Text>
+              <Text fontSize="sm">|</Text>
+              <Text fontSize="sm">{isView ? 'View' : 'Table'}</Text>
+              <Text fontSize="sm">|</Text>
+              <Text fontSize="sm">{totalLoaded.toLocaleString()} rows
+                loaded</Text>
+              {hasMore && <Text fontSize="sm">(more available)</Text>}
             </HStack>
-            <Spacer />
-            <HStack wrap="wrap" gap={2}>
-              <Button
-                variant="solid"
-                bg="whiteAlpha.200"
-                color="white"
-                size="sm"
-                _hover={{ bg: 'whiteAlpha.300' }}
-                leftIcon={<FiRefreshCw />}
-                onClick={handleRefresh}
-              >
-                Refresh
-              </Button>
-              <Button
-                variant="solid"
-                bg="whiteAlpha.200"
-                color="white"
-                size="sm"
-                _hover={{ bg: 'whiteAlpha.300' }}
-                leftIcon={<FiDownload />}
-                onClick={handleExportCSV}
-                isDisabled={rows.length === 0}
-              >
-                Export CSV
-              </Button>
-              <Button
-                variant="outline"
-                color="white"
-                borderColor="whiteAlpha.400"
-                size="sm"
-                _hover={{ bg: 'whiteAlpha.200' }}
-                leftIcon={<FiCode />}
-                onClick={() => setPGQuery({
-                  serviceName,
-                  schemaName,
-                  tableName,
-                  initialSQL: `SELECT * FROM "${schemaName}"."${tableName}" LIMIT 100`,
-                })}
-              >
-                SQL Query
-              </Button>
-            </HStack>
-          </Flex>
-        </CardBody>
-      </Card>
+          </VStack>
+        </HStack>
+        <HStack wrap="wrap" gap={2}>
+          <Button
+            variant="solid"
+            bg="whiteAlpha.200"
+            color="white"
+            size="sm"
+            _hover={{ bg: 'whiteAlpha.300' }}
+            leftIcon={<FiRefreshCw/>}
+            onClick={handleRefresh}
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="solid"
+            bg="whiteAlpha.200"
+            color="white"
+            size="sm"
+            _hover={{ bg: 'whiteAlpha.300' }}
+            leftIcon={<FiDownload/>}
+            onClick={handleExportCSV}
+            isDisabled={rows.length === 0}
+          >
+            Export CSV
+          </Button>
+          <Button
+            variant="outline"
+            color="white"
+            borderColor="whiteAlpha.400"
+            size="sm"
+            _hover={{ bg: 'whiteAlpha.200' }}
+            leftIcon={<FiCode/>}
+            onClick={() => setPGQuery({
+              serviceName,
+              schemaName,
+              tableName,
+              initialSQL: `SELECT *
+                           FROM "${schemaName}"."${tableName}" LIMIT 100`,
+            })}
+          >
+            SQL Query
+          </Button>
+        </HStack>
+      </PanelHeader>
 
       {/* Data Table */}
-      <Card bg={cardBg} flex="1" overflow="hidden" minH={0} display="flex" flexDirection="column">
-        <CardBody p={0} flex="1" minH={0} display="flex" flexDirection="column">
-          {rows.length === 0 ? (
-            <Center h="200px">
-              <VStack spacing={2}>
-                <Icon as={FiTable} boxSize={8} color="gray.400" />
-                <Text color="gray.500">No data in this {isView ? 'view' : 'table'}</Text>
-              </VStack>
-            </Center>
-          ) : (
-            <Box
-              ref={tableContainerRef}
-              flex="1"
-              minH={0}
-              overflowY="auto"
-              overflowX="auto"
-              onScroll={handleScroll}
-            >
-              <Table size="sm" variant="simple">
-                <Thead position="sticky" top={0} bg={headerBg} zIndex={1}>
-                  <Tr>
-                    <Th
-                      borderColor={borderColor}
-                      py={3}
-                      fontSize="xs"
-                      textTransform="none"
-                      color="gray.500"
-                      w="50px"
-                    >
-                      #
-                    </Th>
-                    {columns.map((col, idx) => (
+      <PanelBody>
+        <Card
+          bg={cardBg} flex="1" overflow="hidden" minH={0} display="flex"
+          flexDirection="column">
+          <CardBody p={0} flex="1" minH={0} display="flex"
+                    flexDirection="column">
+            {rows.length === 0 ? (
+              <Center h="200px">
+                <VStack spacing={2}>
+                  <Icon as={FiTable} boxSize={8} color="gray.400"/>
+                  <Text color="gray.500">No data in
+                    this {isView ? 'view' : 'table'}</Text>
+                </VStack>
+              </Center>
+            ) : (
+              <Box
+                ref={tableContainerRef}
+                flex="1"
+                minH={0}
+                overflowY="auto"
+                overflowX="auto"
+                onScroll={handleScroll}
+              >
+                <Table size="sm" variant="simple">
+                  <Thead position="sticky" top={0} bg={headerBg} zIndex={1}>
+                    <Tr>
                       <Th
-                        key={idx}
                         borderColor={borderColor}
                         py={3}
                         fontSize="xs"
-                        whiteSpace="nowrap"
-                      >
-                        {getColumnName(col)}
-                      </Th>
-                    ))}
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {rows.map((row, rowIdx) => (
-                    <Tr
-                      key={rowIdx}
-                      _hover={{ bg: tableBg }}
-                    >
-                      <Td
-                        borderColor={borderColor}
-                        fontSize="xs"
+                        textTransform="none"
                         color="gray.500"
-                        py={2}
+                        w="50px"
                       >
-                        {rowIdx + 1}
-                      </Td>
-                      {columns.map((col, colIdx) => {
-                        const colName = getColumnName(col)
-                        const cellValue = row[colName]
-                        return (
-                          <Td
-                            key={colIdx}
-                            borderColor={borderColor}
-                            fontSize="xs"
-                            py={2}
-                            maxW="300px"
-                            overflow="hidden"
-                            textOverflow="ellipsis"
-                            whiteSpace="nowrap"
-                          >
-                            <Tooltip
-                              label={formatCellValue(cellValue)}
-                              placement="top"
-                              hasArrow
-                              fontSize="xs"
-                              openDelay={500}
-                            >
-                              <Text
-                                as="span"
-                                color={cellValue === null ? 'gray.400' : undefined}
-                                fontStyle={cellValue === null ? 'italic' : undefined}
-                              >
-                                {formatCellValue(cellValue)}
-                              </Text>
-                            </Tooltip>
-                          </Td>
-                        )
-                      })}
+                        #
+                      </Th>
+                      {columns.map((col, idx) => (
+                        <Th
+                          key={idx}
+                          borderColor={borderColor}
+                          py={3}
+                          fontSize="xs"
+                          whiteSpace="nowrap"
+                        >
+                          {getColumnName(col)}
+                        </Th>
+                      ))}
                     </Tr>
-                  ))}
-                </Tbody>
-              </Table>
+                  </Thead>
+                  <Tbody>
+                    {rows.map((row, rowIdx) => (
+                      <Tr
+                        key={rowIdx}
+                        _hover={{ bg: tableBg }}
+                      >
+                        <Td
+                          borderColor={borderColor}
+                          fontSize="xs"
+                          color="gray.500"
+                          py={2}
+                        >
+                          {rowIdx + 1}
+                        </Td>
+                        {columns.map((col, colIdx) => {
+                          const colName = getColumnName(col)
+                          const cellValue = row[colName]
+                          return (
+                            <Td
+                              key={colIdx}
+                              borderColor={borderColor}
+                              fontSize="xs"
+                              py={2}
+                              maxW="300px"
+                              overflow="hidden"
+                              textOverflow="ellipsis"
+                              whiteSpace="nowrap"
+                            >
+                              <Tooltip
+                                label={formatCellValue(cellValue)}
+                                placement="top"
+                                hasArrow
+                                fontSize="xs"
+                                openDelay={500}
+                              >
+                                <Text
+                                  as="span"
+                                  color={cellValue === null ? 'gray.400' : undefined}
+                                  fontStyle={cellValue === null ? 'italic' : undefined}
+                                >
+                                  {formatCellValue(cellValue)}
+                                </Text>
+                              </Tooltip>
+                            </Td>
+                          )
+                        })}
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
 
-              {/* Loading more indicator */}
-              {loadingMore && (
-                <Center py={4}>
-                  <HStack spacing={2}>
-                    <Spinner size="sm" color="blue.500" />
-                    <Text fontSize="sm" color="gray.500">Loading more rows...</Text>
-                  </HStack>
-                </Center>
-              )}
+                {/* Loading more indicator */}
+                {loadingMore && (
+                  <Center py={4}>
+                    <HStack spacing={2}>
+                      <Spinner size="sm" color="blue.500"/>
+                      <Text fontSize="sm" color="gray.500">Loading more
+                        rows...</Text>
+                    </HStack>
+                  </Center>
+                )}
 
-              {/* End of data indicator */}
-              {!hasMore && rows.length > 0 && (
-                <Center py={4}>
-                  <Text fontSize="sm" color="gray.500">
-                    All {totalLoaded.toLocaleString()} rows loaded
-                  </Text>
-                </Center>
-              )}
-            </Box>
-          )}
-        </CardBody>
-      </Card>
-    </VStack>
+                {/* End of data indicator */}
+                {!hasMore && rows.length > 0 && (
+                  <Center py={4}>
+                    <Text fontSize="sm" color="gray.500">
+                      All {totalLoaded.toLocaleString()} rows loaded
+                    </Text>
+                  </Center>
+                )}
+              </Box>
+            )}
+          </CardBody>
+        </Card>
+      </PanelBody>
+    </Panel>
   )
 }

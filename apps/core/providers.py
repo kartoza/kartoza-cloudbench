@@ -6,36 +6,15 @@ Uses a separate JSON config file for provider settings.
 
 import json
 import os
-import threading
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .models import ProvidersConfig, ProviderConfig
+from .utilities import file_lock
+
 # Provider configuration file name
 PROVIDERS_FILE = "providers.json"
-
-
-class ProviderConfig(BaseModel):
-    """Configuration for a single provider type."""
-
-    id: str
-    name: str
-    description: str
-    enabled: bool = True
-    experimental: bool = False
-
-
-class ProvidersConfig(BaseModel):
-    """Main providers configuration."""
-
-    providers: list[ProviderConfig] = Field(default_factory=list)
-
-    class Config:
-        """Pydantic configuration."""
-
-        extra = "allow"
-
 
 # Default provider configurations
 DEFAULT_PROVIDERS: list[dict[str, Any]] = [
@@ -99,65 +78,49 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
 
 
 class ProvidersManager:
-    """Thread-safe providers configuration manager.
+    """Per-user providers configuration manager.
 
     Manages provider enablement/disablement settings.
     """
 
-    _instance: "ProvidersManager | None" = None
-    _lock = threading.RLock()
-
-    def __new__(cls) -> "ProvidersManager":
-        """Singleton pattern for providers manager."""
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._config = None
-                    cls._instance._initialized = False
-        return cls._instance
+    def __init__(self, user_id: str = "default") -> None:
+        """Initialise manager for the given user."""
+        self._user_id = user_id
+        self._config: "ProvidersConfig | None" = None
 
     @property
     def config(self) -> ProvidersConfig:
         """Get the current providers configuration, loading if necessary."""
-        with self._lock:
-            if self._config is None:
-                self._config = self._load()
-            return self._config
+        if self._config is None:
+            self._config = self._load()
+        return self._config
 
     def reload(self) -> ProvidersConfig:
         """Force reload providers configuration from disk."""
-        with self._lock:
-            self._config = self._load()
-            return self._config
+        self._config = self._load()
+        return self._config
 
     def save(self) -> None:
-        """Save providers configuration to disk atomically."""
-        with self._lock:
-            if self._config is None:
-                return
+        """Save providers configuration to disk atomically with file locking."""
+        if self._config is None:
+            return
 
-            path = self._config_path()
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+        path = self._config_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
-            # Atomic write using temp file
+        with file_lock(path):
             tmp_path = path + ".tmp"
             with open(tmp_path, "w") as f:
                 json.dump(self._config.model_dump(by_alias=True), f, indent=2)
-
             os.replace(tmp_path, path)
 
     def _config_path(self) -> str:
         """Get the path to the providers config file."""
-        from .config import CONFIG_DIR
-
-        config_home = os.environ.get("XDG_CONFIG_HOME")
-        if not config_home:
-            config_home = os.path.join(str(Path.home()), ".config")
-        return os.path.join(config_home, CONFIG_DIR, PROVIDERS_FILE)
+        from .utilities import get_cloudbench_config_path
+        return get_cloudbench_config_path(PROVIDERS_FILE, self._user_id)
 
     def _load(self) -> ProvidersConfig:
-        """Load providers configuration from disk."""
+        """Load providers configuration from disk with file locking."""
         path = self._config_path()
 
         if not os.path.exists(path):
@@ -169,15 +132,15 @@ class ProvidersManager:
             self.save()
             return config
 
-        try:
+        with file_lock(path, exclusive=False):
             with open(path) as f:
                 data = json.load(f)
 
+        try:
             # Merge with defaults to ensure new providers are added
             loaded_config = ProvidersConfig.model_validate(data)
             loaded_ids = {p.id for p in loaded_config.providers}
 
-            # Add any new default providers that don't exist in saved config
             for default_provider in DEFAULT_PROVIDERS:
                 if default_provider["id"] not in loaded_ids:
                     loaded_config.providers.append(
@@ -213,25 +176,25 @@ class ProvidersManager:
 
     def set_provider_enabled(self, provider_id: str, enabled: bool) -> bool:
         """Set the enabled state for a provider."""
-        with self._lock:
-            for provider in self.config.providers:
-                if provider.id == provider_id:
-                    provider.enabled = enabled
-                    self.save()
-                    return True
-            return False
+        for provider in self.config.providers:
+            if provider.id == provider_id:
+                provider.enabled = enabled
+                self.save()
+                return True
+        return False
 
     def get_enabled_provider_ids(self) -> set[str]:
         """Get a set of enabled provider IDs for quick lookup."""
         return {p.id for p in self.config.providers if p.enabled}
 
 
-# Global providers manager instance
-def get_providers_manager() -> ProvidersManager:
-    """Get the providers manager singleton."""
-    return ProvidersManager()
+def get_providers_manager(
+        user_id: "str | int" = "default") -> ProvidersManager:
+    """Get the ProvidersManager for the given user."""
+    return ProvidersManager(str(user_id))
 
 
-def is_provider_enabled(provider_id: str) -> bool:
-    """Check if a provider is enabled."""
-    return get_providers_manager().is_provider_enabled(provider_id)
+def is_provider_enabled(provider_id: str,
+                        user_id: "str | int" = "default") -> bool:
+    """Check if a provider is enabled for the given user."""
+    return get_providers_manager(user_id).is_provider_enabled(provider_id)

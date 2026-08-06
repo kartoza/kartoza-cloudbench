@@ -16,7 +16,7 @@ class LayerListView(APIView):
     def get(self, request, conn_id, workspace):
         """List all layers."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             layers = client.list_layers(workspace)
             return Response(layers)
         except GeoServerError:
@@ -29,7 +29,7 @@ class LayerDetailView(APIView):
     def get(self, request, conn_id, workspace, layer):
         """Get layer details."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             lyr = client.get_layer(workspace, layer)
             return Response({"layer": lyr})
         except GeoServerError as e:
@@ -38,7 +38,7 @@ class LayerDetailView(APIView):
     def put(self, request, conn_id, workspace, layer):
         """Update layer properties."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             enabled = request.data.get("enabled")
             advertised = request.data.get("advertised")
             queryable = request.data.get("queryable")
@@ -59,7 +59,7 @@ class LayerDetailView(APIView):
     def delete(self, request, conn_id, workspace, layer):
         """Delete a layer."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             recurse = get_recurse_param(request)
             client.delete_layer(workspace, layer, recurse=recurse)
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -73,7 +73,7 @@ class LayerCountView(APIView):
     def get(self, request, conn_id, workspace, layer):
         """Get layer feature count."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             count = client.get_layer_feature_count(workspace, layer)
             return Response({"count": count})
         except GeoServerError as e:
@@ -86,7 +86,7 @@ class LayerMetadataView(APIView):
     def get(self, request, conn_id, workspace, layer):
         """Get layer metadata."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             metadata = client.get_layer_metadata(workspace, layer)
             return Response(metadata)
         except GeoServerError as e:
@@ -99,7 +99,7 @@ class LayerStylesView(APIView):
     def get(self, request, conn_id, workspace, layer):
         """Get layer styles."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             styles = client.get_layer_styles(workspace, layer)
             return Response(styles)
         except GeoServerError as e:
@@ -108,7 +108,7 @@ class LayerStylesView(APIView):
     def put(self, request, conn_id, workspace, layer):
         """Update layer styles."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             default_style = request.data.get("defaultStyle")
             additional_styles = request.data.get("additionalStyles", [])
 

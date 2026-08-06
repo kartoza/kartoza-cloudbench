@@ -22,7 +22,7 @@ class QFieldCloudConnectionListView(APIView):
 
     def get(self, request):
         """List all QFieldCloud connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_qfieldcloud_connections()
         return Response([
             {
@@ -46,7 +46,7 @@ class QFieldCloudConnectionListView(APIView):
             token=data.get("token", ""),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_qfieldcloud_connection(conn)
 
         return Response(
@@ -71,6 +71,7 @@ class QFieldCloudConnectionTestView(APIView):
             username=data.get("username", ""),
             password=data.get("password"),
             token=data.get("token"),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -88,7 +89,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -107,7 +108,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -132,7 +133,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_qfieldcloud_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},

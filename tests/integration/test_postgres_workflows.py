@@ -3,9 +3,11 @@
 Tests complex interactions with PostgreSQL services using mocks.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -307,6 +309,133 @@ class TestPostgresImportWorkflow:
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "Service not found" in response.json()["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestPostgresImportCleanup:
+    """Tests that /api/pg/import only deletes the uploaded source file once
+    the caller signals it's no longer needed via cleanupSource.
+
+    Regression coverage for a bug where a multi-layer file (e.g. a
+    GeoPackage) was imported via one request per layer, all sharing the
+    same uploaded file path, but the source was deleted after the very
+    first layer -- breaking every subsequent layer's import.
+    """
+
+    @pytest.fixture
+    def authenticated_client(self, api_client: APIClient) -> APIClient:
+        """PGImportView requires IsAuthenticated; force_authenticate skips
+        the real auth backend so no DB-backed user is needed.
+        """
+        api_client.force_authenticate(user=get_user_model()())
+        return api_client
+
+    @pytest.fixture
+    def mock_pg_import_client(self):
+        """Mock get_pg_client() as used by PGImportView."""
+        with patch("apps.postgres.views.get_pg_client") as mock_get_client:
+            mock_service = MagicMock()
+            mock_service.host = "localhost"
+            mock_service.port = 5432
+            mock_service.dbname = "testdb"
+            mock_service.user = "testuser"
+            mock_service.password = "testpass"
+            mock_client = MagicMock()
+            mock_client.service = mock_service
+            mock_get_client.return_value = mock_client
+            yield mock_get_client
+
+    @pytest.fixture
+    def uploaded_gpkg(self, tmp_path: Path) -> Path:
+        upload_dir = tmp_path / "session-abc"
+        upload_dir.mkdir()
+        file_path = upload_dir / "combined.gpkg"
+        file_path.write_bytes(b"fake gpkg content")
+        return file_path
+
+    def test_import_without_cleanup_flag_keeps_file(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        """Default behaviour (no cleanupSource) must not delete the source,
+        since another layer of the same upload may still need it.
+        """
+        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            response = authenticated_client.post(
+                "/api/pg/import",
+                {
+                    "serviceName": "test_service",
+                    "filePath": str(uploaded_gpkg),
+                    "sourceLayer": "aoi",
+                    "tableName": "aoi",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert uploaded_gpkg.exists()
+
+    def test_import_with_cleanup_flag_removes_file(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        """cleanupSource=True (the last layer) must remove the whole
+        upload dir, including the source file.
+        """
+        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            response = authenticated_client.post(
+                "/api/pg/import",
+                {
+                    "serviceName": "test_service",
+                    "filePath": str(uploaded_gpkg),
+                    "sourceLayer": "camps",
+                    "tableName": "camps",
+                    "cleanupSource": True,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert not uploaded_gpkg.parent.exists()
+
+    def test_multi_layer_import_sequence(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        """Mirrors PGUploadDialog's per-layer loop for a 3-layer GeoPackage."""
+        layers = ["aoi", "boundary_lines", "camps"]
+        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            for i, layer in enumerate(layers):
+                response = authenticated_client.post(
+                    "/api/pg/import",
+                    {
+                        "serviceName": "test_service",
+                        "filePath": str(uploaded_gpkg),
+                        "sourceLayer": layer,
+                        "tableName": layer,
+                        "cleanupSource": i == len(layers) - 1,
+                    },
+                    format="json",
+                )
+                assert response.status_code == status.HTTP_200_OK, (
+                    f"layer {layer} failed: {response.json()}"
+                )
+                if i < len(layers) - 1:
+                    assert uploaded_gpkg.exists(), (
+                        f"source must survive after layer {layer}"
+                    )
+
+        assert not uploaded_gpkg.parent.exists()
 
 
 @pytest.mark.integration

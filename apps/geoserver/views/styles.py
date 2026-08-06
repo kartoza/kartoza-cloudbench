@@ -16,7 +16,7 @@ class StyleListView(APIView):
     def get(self, request, conn_id, workspace):
         """List all styles."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             styles = client.list_styles(workspace)
             return Response(styles)
         except GeoServerError:
@@ -25,7 +25,7 @@ class StyleListView(APIView):
     def post(self, request, conn_id, workspace):
         """Create a new style."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             name = request.data.get("name")
             content = request.data.get("content")
             style_format = request.data.get("format", "sld")
@@ -51,7 +51,7 @@ class StyleDetailView(APIView):
     def get(self, request, conn_id, workspace, style):
         """Get style details and content."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             style_info = client.get_style(style, workspace)
             content, style_format = client.get_style_content(style, workspace)
             return Response({
@@ -65,7 +65,7 @@ class StyleDetailView(APIView):
     def put(self, request, conn_id, workspace, style):
         """Update style content."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             content = request.data.get("content")
             style_format = request.data.get("format", "sld")
 
@@ -83,7 +83,7 @@ class StyleDetailView(APIView):
     def delete(self, request, conn_id, workspace, style):
         """Delete a style."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             purge = request.query_params.get("purge", "false").lower() == "true"
             client.delete_style(style, workspace, purge=purge)
             return Response(status=status.HTTP_204_NO_CONTENT)

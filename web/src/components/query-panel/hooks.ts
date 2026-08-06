@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { SchemaInfo, QueryResult, AIResponse } from './types'
+import { getApiBase } from '../../config/env'
 
 /**
  * Hook to manage schema loading
@@ -13,7 +14,7 @@ export function useSchemas(serviceName: string, initialSchema?: string) {
 
   useEffect(() => {
     setLoadingSchemas(true)
-    fetch(`/api/pg/services/${encodeURIComponent(serviceName)}/schemas`)
+    fetch(`${getApiBase()}/pg/services/${encodeURIComponent(serviceName)}/schemas`)
       .then(res => res.json())
       .then(data => {
         if (data.schemas) {
@@ -39,7 +40,7 @@ export function useAIProvider() {
   const [aiProviderAvailable, setAiProviderAvailable] = useState(true)
 
   useEffect(() => {
-    fetch('/api/ai/providers')
+    fetch(`${getApiBase()}/ai/providers`)
       .then(res => res.json())
       .then(data => {
         const active = data.providers?.find((p: { active: boolean }) => p.active)
@@ -75,14 +76,12 @@ export function useQueryExecution(serviceName: string, limit: number) {
     }
 
     try {
-      const response = await fetch('/api/query/execute', {
+      const response = await fetch(`${getApiBase()}/pg/services/${encodeURIComponent(serviceName)}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sql,
-          service_name: serviceName,
-          max_rows: limit,
-          offset: appendResults ? (result?.rows.length || 0) : 0,
+          query: sql,
+          limit,
         }),
       })
 
@@ -137,7 +136,7 @@ export function useAIQuery(serviceName: string, selectedSchema: string, limit: n
     onError('')
 
     try {
-      const response = await fetch('/api/ai/query', {
+      const response = await fetch(`${getApiBase()}/ai/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

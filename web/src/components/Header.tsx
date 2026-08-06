@@ -22,6 +22,7 @@ import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevro
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
+import { useMemo } from "react";
 
 interface HeaderProps {
   onSearchClick?: () => void
@@ -32,6 +33,7 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
   const openDialog = useUIStore((state) => state.openDialog)
   const fetchConnections = useConnectionStore((state) => state.fetchConnections)
   const selectedNode = useTreeStore((state) => state.selectedNode)
+  const isIframe = useMemo(() => window.self !== window.top, [])
 
   const handleUpload = () => {
     if (!selectedNode) {
@@ -86,6 +88,51 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
       bg: 'gray.50',
     },
     transition: 'all 0.2s ease',
+  }
+
+  if (isIframe) {
+    return (
+      <Box
+        bg="white"
+        px={4}
+        py={2}
+        borderBottom="1px solid"
+        borderBottomColor="gray.100"
+        boxShadow="0 1px 3px rgba(0, 0, 0, 0.04)"
+      >
+        <Box w="100%" onClick={onSearchClick} cursor="pointer">
+          <InputGroup size="sm">
+            <InputLeftElement pointerEvents="none">
+              <FiSearch color="#9E9E9E" />
+            </InputLeftElement>
+            <Input
+              placeholder="Search..."
+              bg="gray.50"
+              border="1px solid"
+              borderColor="gray.200"
+              color="gray.700"
+              _placeholder={{ color: 'gray.400' }}
+              _hover={{ borderColor: 'gray.300', bg: 'gray.100' }}
+              _focus={{ borderColor: 'kartoza.500', bg: 'white' }}
+              borderRadius="full"
+              readOnly
+              cursor="pointer"
+            />
+            <HStack
+              position="absolute"
+              right={3}
+              top="50%"
+              transform="translateY(-50%)"
+              spacing={1}
+            >
+              <Kbd size="xs" bg="gray.100" color="gray.500" borderColor="gray.200" fontSize="10px">
+                ⌘K
+              </Kbd>
+            </HStack>
+          </InputGroup>
+        </Box>
+      </Box>
+    )
   }
 
   return (

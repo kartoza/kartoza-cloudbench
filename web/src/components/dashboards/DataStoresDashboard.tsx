@@ -22,6 +22,7 @@ import { useQuery } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
 import StoreCard from '../cards/StoreCard'
+import { PGEditorMode, PGStore } from "../dialogs/GeoServerDataStoreEditorDialog/types.ts";
 
 interface DataStoresDashboardProps {
   connectionId: string
@@ -75,7 +76,7 @@ export default function DataStoresDashboard({
           size="lg"
           variant="accent"
           leftIcon={<FiPlus />}
-          onClick={() => openDialog('datastore', { mode: 'create', data: { connectionId, workspace } })}
+          onClick={() => openDialog(PGStore.DATASTORE, { mode: PGEditorMode.CREATE, data: { connectionId, workspace } })}
           py={8}
         >
           Create New Data Store
@@ -84,7 +85,7 @@ export default function DataStoresDashboard({
           size="lg"
           variant="outline"
           leftIcon={<FiUpload />}
-          onClick={() => openDialog('upload', { mode: 'create', data: { connectionId, workspace } })}
+          onClick={() => openDialog(PGStore.COVERAGE_STORE, { mode: PGEditorMode.CREATE, data: { connectionId, workspace } })}
           py={8}
         >
           Upload Shapefile / GeoPackage

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from apps.core.config import get_config
-from apps.geoserver.client import GeoServerClientManager
+from apps.geoserver.client import get_geoserver_client
 
 
 @dataclass
@@ -41,9 +41,9 @@ class SearchResult:
 class SearchService:
     """Service for universal search across all resources."""
 
-    def __init__(self):
+    def __init__(self, user_id: str = "default"):
         """Initialize search service."""
-        self.client_manager = GeoServerClientManager()
+        self._user_id = user_id
 
     def search(
         self,
@@ -91,7 +91,7 @@ class SearchService:
     def _search_connections(self, query: str) -> list[SearchResult]:
         """Search GeoServer connections."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_connections():
             if query in conn.name.lower() or query in conn.url.lower():
@@ -122,11 +122,11 @@ class SearchService:
     def _search_layers(self, query: str) -> list[SearchResult]:
         """Search GeoServer layers."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_connections():
             try:
-                client = self.client_manager.get_client(conn.id)
+                client = get_geoserver_client(conn.id, self._user_id)
                 workspaces = client.list_workspaces()
 
                 for ws in workspaces:
@@ -209,7 +209,7 @@ class SearchService:
     def _search_buckets(self, query: str) -> list[SearchResult]:
         """Search S3 buckets."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_s3_connections():
             try:
@@ -270,6 +270,6 @@ class SearchService:
         return suggestions
 
 
-def get_search_service() -> SearchService:
-    """Get the search service singleton."""
-    return SearchService()
+def get_search_service(user_id: str = "default") -> SearchService:
+    """Get a search service for the given user."""
+    return SearchService(user_id)

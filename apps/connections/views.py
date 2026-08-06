@@ -1,19 +1,17 @@
 """Views for connections app - GeoServer connection CRUD."""
 
-from datetime import datetime
-
 import httpx
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.config import Connection, config_manager
-from apps.core.managers import client_manager
-
+from apps.core.config import get_config
+from apps.core.managers import make_client
 from .serializers import ConnectionResponseSerializer, ConnectionSerializer
 
 
-def test_geoserver_connection(url: str, username: str, password: str) -> tuple[bool, str, dict]:
+def test_geoserver_connection(url: str, username: str, password: str) -> tuple[
+    bool, str, dict]:
     """Test a GeoServer connection.
 
     Returns:
@@ -42,18 +40,24 @@ def test_geoserver_connection(url: str, username: str, password: str) -> tuple[b
                         geoserver_version = resource.get("Version", "Unknown")
                         break
 
-                return True, "Connection successful", {"version": geoserver_version}
+                return True, "Connection successful", {
+                    "version": geoserver_version}
             elif response.status_code == 401:
                 return False, "Authentication failed - invalid credentials", {}
             elif response.status_code == 403:
                 return False, "Access forbidden - check user permissions", {}
             elif response.status_code == 404:
                 return False, "GeoServer REST API not found at this URL", {}
+            elif response.status_code == 503:
+                server_header = response.headers.get("server", "").lower()
+                if "nginx" in server_header:
+                    return False, "Service unavailable - nginx proxy cannot reach GeoServer", {}
+                return False, "Service unavailable - GeoServer may be starting up", {}
             else:
                 return False, f"Connection failed with status {response.status_code}", {}
 
     except httpx.ConnectError:
-        return False, "Could not connect to server - check URL and network", {}
+        return False, "Domain not found or host unreachable - check the URL", {}
     except httpx.TimeoutException:
         return False, "Connection timed out", {}
     except Exception as e:
@@ -65,6 +69,7 @@ class ConnectionListView(APIView):
 
     def get(self, request):
         """List all GeoServer connections."""
+        config_manager = get_config(request.user.id)
         connections = config_manager.config.connections
         serializer = ConnectionResponseSerializer(connections, many=True)
         return Response(serializer.data)
@@ -72,14 +77,17 @@ class ConnectionListView(APIView):
     def post(self, request):
         """Create a new GeoServer connection."""
         serializer = ConnectionSerializer(data=request.data)
+        config_manager = get_config(request.user.id)
         if serializer.is_valid():
             conn = serializer.create(serializer.validated_data)
             config_manager.add_connection(conn)
 
             response_serializer = ConnectionResponseSerializer(conn)
-            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            return Response(response_serializer.data,
+                            status=status.HTTP_201_CREATED)
 
-        return Response({"error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": serializer.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
 
 
 class ConnectionTestView(APIView):
@@ -105,7 +113,8 @@ class ConnectionTestView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        success, message, info = test_geoserver_connection(url, username, password)
+        success, message, info = test_geoserver_connection(url, username,
+                                                           password)
 
         return Response(
             {
@@ -121,10 +130,12 @@ class ConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get a specific connection by ID."""
+        config_manager = get_config(request.user.id)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response(
-                {"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND
+                {"error": "Connection not found"},
+                status=status.HTTP_404_NOT_FOUND
             )
 
         serializer = ConnectionResponseSerializer(conn)
@@ -132,35 +143,37 @@ class ConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
+        config_manager = get_config(request.user.id)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response(
-                {"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND
+                {"error": "Connection not found"},
+                status=status.HTTP_404_NOT_FOUND
             )
 
-        serializer = ConnectionSerializer(conn, data=request.data, partial=True)
+        serializer = ConnectionSerializer(conn, data=request.data,
+                                          partial=True)
         if serializer.is_valid():
             updated_conn = serializer.update(conn, serializer.validated_data)
             config_manager.update_connection(updated_conn)
 
-            # Remove cached client so it gets recreated with new credentials
-            client_manager.remove_client(conn_id)
-
             response_serializer = ConnectionResponseSerializer(updated_conn)
             return Response(response_serializer.data)
 
-        return Response({"error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": serializer.errors},
+                        status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, conn_id):
         """Delete a connection."""
+        config_manager = get_config(request.user.id)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response(
-                {"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND
+                {"error": "Connection not found"},
+                status=status.HTTP_404_NOT_FOUND
             )
 
         config_manager.remove_connection(conn_id)
-        client_manager.remove_client(conn_id)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -168,25 +181,34 @@ class ConnectionDetailView(APIView):
 class ConnectionTestExistingView(APIView):
     """Test an existing saved connection."""
 
-    def post(self, request, conn_id):
-        """Test an existing connection."""
+    def _test(self, request, conn_id):
+        config_manager = get_config(request.user.id)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response(
-                {"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND
+                {"error": "Connection not found"},
+                status=status.HTTP_404_NOT_FOUND
             )
-
         success, message, info = test_geoserver_connection(
             conn.url, conn.username, conn.password
         )
+        return success, message, info
 
-        return Response(
-            {
-                "success": success,
-                "message": message,
-                "info": info,
-            }
-        )
+    def get(self, request, conn_id):
+        success, message, info = self._test(request, conn_id)
+        if not success:
+            return Response(
+                {"error": "Url can't be reached"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        else:
+            return Response(
+                {"status": 200, "ok": True}
+            )
+
+    def post(self, request, conn_id):
+        success, message, info = self._test(request, conn_id)
+        return Response({"success": success, "message": message, "info": info})
 
 
 class ConnectionInfoView(APIView):
@@ -194,16 +216,16 @@ class ConnectionInfoView(APIView):
 
     def get(self, request, conn_id):
         """Get GeoServer server information."""
+        config_manager = get_config(request.user.id)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response(
-                {"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND
+                {"error": "Connection not found"},
+                status=status.HTTP_404_NOT_FOUND
             )
 
         try:
-            client = client_manager.get_client(
-                conn_id, conn.url, conn.username, conn.password
-            )
+            client = make_client(conn.url, conn.username, conn.password)
 
             # Get server version
             version_response = client.get("/rest/about/version.json")

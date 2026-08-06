@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from apps.core.config import SyncConfiguration, SyncOptions, get_config
-from apps.geoserver.client import GeoServerClientManager
+from apps.geoserver.client import get_geoserver_client
 
 
 @dataclass
@@ -93,9 +93,9 @@ class SyncJobManager:
 class SyncService:
     """Service for synchronizing GeoServer resources."""
 
-    def __init__(self):
+    def __init__(self, user_id: str = "default"):
         """Initialize sync service."""
-        self.client_manager = GeoServerClientManager()
+        self._user_id = user_id
         self.job_manager = SyncJobManager()
 
     def sync_workspaces(
@@ -114,8 +114,8 @@ class SyncService:
         Returns:
             Sync results
         """
-        source = self.client_manager.get_client(source_id)
-        dest = self.client_manager.get_client(dest_id)
+        source = get_geoserver_client(source_id, self._user_id)
+        dest = get_geoserver_client(dest_id, self._user_id)
 
         results = {
             "workspaces": {"created": 0, "skipped": 0, "errors": []},
@@ -170,8 +170,8 @@ class SyncService:
         Returns:
             Sync results
         """
-        source = self.client_manager.get_client(source_id)
-        dest = self.client_manager.get_client(dest_id)
+        source = get_geoserver_client(source_id, self._user_id)
+        dest = get_geoserver_client(dest_id, self._user_id)
 
         results = {
             "styles": {"created": 0, "updated": 0, "skipped": 0, "errors": []},
@@ -266,6 +266,6 @@ class SyncService:
         return results
 
 
-def get_sync_service() -> SyncService:
-    """Get the sync service singleton."""
-    return SyncService()
+def get_sync_service(user_id: str = "default") -> SyncService:
+    """Get a sync service for the given user."""
+    return SyncService(user_id)

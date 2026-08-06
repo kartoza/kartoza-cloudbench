@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { getApiBase } from '../config/env'
 import {
   Box,
   Card,
@@ -56,7 +57,7 @@ export default function GeoNodeMapPreview({
   // Build WMS tile URL using our proxy to avoid CORS issues
   const buildWmsTileUrl = (cacheBuster?: string): string => {
     // Use our backend proxy to avoid CORS issues with external GeoServers
-    const proxyUrl = `/api/geonode/connections/${connectionId}/wms`
+    const proxyUrl = `${getApiBase()}/geonode/connections/${connectionId}/wms`
 
     const params = new URLSearchParams({
       SERVICE: 'WMS',

@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from django.conf import settings
+from django.urls import reverse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -148,7 +149,7 @@ class StartPreviewView(APIView):
 
         # Return the preview URL pointing to our API
         # The frontend expects to fetch /api/layer and /api/metadata from this URL
-        preview_url = f"/api/preview/{session.id}"
+        preview_url = reverse("preview_layer", kwargs={"session_id": session.id}).removesuffix("/api/layer")
 
         return Response(
             {"url": preview_url},
@@ -173,7 +174,7 @@ class PreviewLayerView(APIView):
 
         try:
             # Get the GeoServer URL from the connection
-            client = get_geoserver_client(session.conn_id)
+            client = get_geoserver_client(session.conn_id, str(request.user.id))
             geoserver_url = client.connection.url.rstrip("/")
 
             return Response({
@@ -210,7 +211,7 @@ class PreviewMetadataView(APIView):
             )
 
         try:
-            client = get_geoserver_client(session.conn_id)
+            client = get_geoserver_client(session.conn_id, str(request.user.id))
 
             # Use the client's get_layer_metadata method
             layer_meta = client.get_layer_metadata(session.workspace, session.layer_name)

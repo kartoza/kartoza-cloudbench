@@ -83,6 +83,9 @@ export function getNodeIconComponent(type: NodeType | 'featuretype' | 'coverage'
       return FiBook
     case 'geonodedashboard':
       return FiBarChart2
+    case 'geonoderemoteservices':
+    case 'geonoderemoteservice':
+      return FiGlobe
     case 'iceberg':
       return TbSnowflake
     case 'icebergconnection':
@@ -182,6 +185,10 @@ export function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): strin
       return 'purple.400'
     case 'geonodedashboard':
       return 'orange.400'
+    case 'geonoderemoteservices':
+      return 'teal.500'
+    case 'geonoderemoteservice':
+      return 'teal.400'
     case 'iceberg':
       return 'cyan.500'
     case 'icebergconnection':

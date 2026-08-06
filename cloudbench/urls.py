@@ -38,8 +38,6 @@ urlpatterns = [
     path("health/", health_check, name="health-check"),
     # Admin interface (optional, can be disabled in production)
     path("admin/", admin.site.urls),
-    # API endpoints - versioned auth endpoints
-    path("api/", include("apps.accounts.urls")),
     # API endpoints - matching the existing Go backend paths exactly
     path("api/", include("apps.connections.urls")),
     path("api/", include("apps.geoserver.urls")),
@@ -61,7 +59,7 @@ urlpatterns = [
     path("api/", include("apps.iceberg.urls")),
     path("api/", include("apps.qgis.urls")),
     path("api/", include("apps.core.urls")),
-    path("api/preview/", include("apps.preview.urls")),
+    path("api/", include("apps.preview.urls")),
     # Viewer endpoint (Terria/Cesium)
     path("viewer/", include("apps.terria.viewer_urls")),
 ]

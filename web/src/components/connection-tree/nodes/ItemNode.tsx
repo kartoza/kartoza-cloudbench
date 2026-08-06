@@ -235,7 +235,6 @@ export function ItemNode({ connectionId, workspace, name, type, storeType }: Ite
             workspace={workspace}
             storeName={name}
             featureTypes={featureTypes || []}
-            availableFeatureTypes={availableFeatureTypes || []}
           />
         )
       )}

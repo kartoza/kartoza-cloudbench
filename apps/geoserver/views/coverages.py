@@ -15,7 +15,7 @@ class CoverageListView(APIView):
     def get(self, request, conn_id, workspace, store):
         """List all coverages."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             coverages = client.list_coverages(workspace, store)
             return Response(coverages)
         except GeoServerError:
@@ -28,7 +28,7 @@ class CoverageDetailView(APIView):
     def get(self, request, conn_id, workspace, store, coverage):
         """Get coverage details."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             cov = client.get_coverage(workspace, store, coverage)
             return Response({"coverage": cov})
         except GeoServerError as e:

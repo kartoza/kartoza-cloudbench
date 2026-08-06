@@ -8,4 +8,5 @@ class QgisConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.qgis"
+    label = "cloudbench_qgis"
     verbose_name = "QGIS Project Management"

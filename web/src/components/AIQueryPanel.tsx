@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../config/env';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiPlay, FiRefreshCw, FiAlertTriangle, FiCheck, FiCpu, FiDatabase, FiHelpCircle, FiEdit2 } from 'react-icons/fi';
 import { SQLEditor } from './SQLEditor';
@@ -47,7 +48,7 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
 
   // Check provider availability
   useEffect(() => {
-    fetch('/api/ai/providers')
+    fetch(`${getApiBase()}/ai/providers`)
       .then(res => res.json())
       .then(data => setProviders(data.providers || []))
       .catch(err => console.error('Failed to check providers:', err));
@@ -63,7 +64,7 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
     setResponse(null);
 
     try {
-      const res = await fetch('/api/ai/query', {
+      const res = await fetch(`${getApiBase()}/ai/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -94,7 +95,7 @@ export const AIQueryPanel: React.FC<AIQueryPanelProps> = ({ serviceName, schemaN
     setLoading(true);
 
     try {
-      const res = await fetch('/api/ai/execute', {
+      const res = await fetch(`${getApiBase()}/ai/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

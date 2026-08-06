@@ -361,7 +361,7 @@ function DataViewerContent({ dialogData, onClose }: DataViewerContentProps) {
           )}
           {data?.result && (
             <Badge colorScheme="green" fontSize="xs">
-              {data.result.execution_time_ms}ms
+              {data.result.duration_ms}ms
             </Badge>
           )}
         </HStack>

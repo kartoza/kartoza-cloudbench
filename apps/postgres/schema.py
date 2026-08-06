@@ -9,7 +9,8 @@ from typing import Any
 
 import psycopg2
 
-from .service import PGService, get_service
+from apps.core.models import PGService
+from .service import get_service
 
 
 @dataclass

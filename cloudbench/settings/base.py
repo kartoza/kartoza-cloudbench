@@ -31,8 +31,6 @@ INSTALLED_APPS = [
     # Third party apps
     "rest_framework",
     "corsheaders",
-    # Local apps - accounts must be first for custom User model
-    "apps.accounts",
     "apps.core",
     "apps.connections",
     "apps.geoserver",
@@ -63,6 +61,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.trusted_header_auth.TrustedHeaderAuthMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.COOPCOEPMiddleware",
@@ -138,9 +137,6 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Custom User model
-AUTH_USER_MODEL = "accounts.User"
-
 # Django REST Framework settings
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -153,7 +149,6 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
-        "apps.accounts.authentication.APITokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         # TODO: Change to IsAuthenticated once all endpoints are migrated
@@ -251,3 +246,25 @@ LOGGING = {
         },
     },
 }
+
+CLOUDBENCH_MUST_AUTHENTICATED = False
+
+# Shared secret nginx attaches (as X-Internal-Token) alongside X-User-Id
+# once it has validated the caller's GeoHosting session via auth_request.
+# Empty by default so local/dev runs without a fronting proxy still work
+# with normal Django session auth.
+INTERNAL_SHARED_SECRET = os.environ.get("INTERNAL_SHARED_SECRET", "")
+
+# Shared secret the GeoHosting backend sends as
+# "Authorization: Bearer <token>" when pushing instance connection state to
+# /api/geohosting/instances/. Empty by default; that endpoint refuses all
+# requests until this is set.
+CLOUDBENCH_SERVICE_TOKEN = os.environ.get("CLOUDBENCH_SERVICE_TOKEN", "")
+
+# Celery
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE

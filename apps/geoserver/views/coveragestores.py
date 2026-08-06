@@ -16,7 +16,7 @@ class CoverageStoreListView(APIView):
     def get(self, request, conn_id, workspace):
         """List all coverage stores."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             stores = client.list_coveragestores(workspace)
             return Response(stores)
         except GeoServerError:
@@ -25,7 +25,7 @@ class CoverageStoreListView(APIView):
     def post(self, request, conn_id, workspace):
         """Create a new coverage store."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             name = request.data.get("name")
             store_type = request.data.get("type", "GeoTIFF")
             url = request.data.get("url")
@@ -55,7 +55,7 @@ class CoverageStoreDetailView(APIView):
     def get(self, request, conn_id, workspace, store):
         """Get coverage store details."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             cs = client.get_coveragestore(workspace, store)
             return Response({"coverageStore": cs})
         except GeoServerError as e:
@@ -64,7 +64,7 @@ class CoverageStoreDetailView(APIView):
     def put(self, request, conn_id, workspace, store):
         """Update a coverage store."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             description = request.data.get("description")
             enabled = request.data.get("enabled")
             url = request.data.get("url")
@@ -95,7 +95,7 @@ class CoverageStoreDetailView(APIView):
     def delete(self, request, conn_id, workspace, store):
         """Delete a coverage store."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             recurse = get_recurse_param(request)
             client.delete_coveragestore(workspace, store, recurse=recurse)
             return Response(status=status.HTTP_204_NO_CONTENT)

@@ -8,16 +8,11 @@ Provides endpoints for:
 - Canceling uploads
 """
 
-import hashlib
-import os
 import shutil
-import threading
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
+from django.db import transaction
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -27,144 +22,29 @@ from apps.core.config import get_cache_dir
 from apps.core.exceptions import UploadError
 from apps.geoserver.client import get_geoserver_client
 
-
-@dataclass
-class UploadSession:
-    """Represents an active upload session."""
-
-    id: str
-    filename: str
-    file_size: int
-    chunk_size: int
-    total_chunks: int
-    received_chunks: set = field(default_factory=set)
-    temp_dir: Path = field(default_factory=Path)
-    workspace: str = ""
-    connection_id: str = ""
-    store_name: str = ""
-    created_at: datetime = field(default_factory=datetime.now)
-    completed: bool = False
-    error: str = ""
-
-    @property
-    def progress(self) -> float:
-        """Calculate upload progress percentage."""
-        if self.total_chunks == 0:
-            return 0.0
-        return len(self.received_chunks) / self.total_chunks * 100
-
-    @property
-    def bytes_received(self) -> int:
-        """Calculate bytes received so far."""
-        return len(self.received_chunks) * self.chunk_size
-
-    def is_complete(self) -> bool:
-        """Check if all chunks have been received."""
-        return len(self.received_chunks) == self.total_chunks
+from .models import UploadSession
 
 
-class UploadSessionManager:
-    """Thread-safe manager for upload sessions."""
-
-    _instance: "UploadSessionManager | None" = None
-    _lock = threading.RLock()
-
-    def __new__(cls) -> "UploadSessionManager":
-        """Singleton pattern for session manager."""
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._sessions: dict[str, UploadSession] = {}
-        return cls._instance
-
-    def create_session(
-        self,
-        filename: str,
-        file_size: int,
-        chunk_size: int,
-        workspace: str = "",
-        connection_id: str = "",
-        store_name: str = "",
-    ) -> UploadSession:
-        """Create a new upload session."""
-        with self._lock:
-            session_id = str(uuid.uuid4())
-
-            # Calculate total chunks
-            total_chunks = (file_size + chunk_size - 1) // chunk_size
-
-            # Create temp directory for chunks
-            cache_dir = get_cache_dir()
-            temp_dir = cache_dir / "uploads" / session_id
-            temp_dir.mkdir(parents=True, exist_ok=True)
-
-            session = UploadSession(
-                id=session_id,
-                filename=filename,
-                file_size=file_size,
-                chunk_size=chunk_size,
-                total_chunks=total_chunks,
-                temp_dir=temp_dir,
-                workspace=workspace,
-                connection_id=connection_id,
-                store_name=store_name,
-            )
-
-            self._sessions[session_id] = session
-            return session
-
-    def get_session(self, session_id: str) -> UploadSession | None:
-        """Get an upload session by ID."""
-        with self._lock:
-            return self._sessions.get(session_id)
-
-    def delete_session(self, session_id: str) -> None:
-        """Delete an upload session and clean up temp files."""
-        with self._lock:
-            session = self._sessions.pop(session_id, None)
-            if session and session.temp_dir.exists():
-                shutil.rmtree(session.temp_dir, ignore_errors=True)
-
-    def add_chunk(self, session_id: str, chunk_index: int, data: bytes) -> None:
-        """Add a chunk to an upload session."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if not session:
-                raise UploadError("Session not found", session_id)
-
-            # Write chunk to temp file
-            chunk_path = session.temp_dir / f"chunk_{chunk_index:06d}"
-            with open(chunk_path, "wb") as f:
-                f.write(data)
-
-            session.received_chunks.add(chunk_index)
-
-    def assemble_file(self, session_id: str) -> Path:
-        """Assemble chunks into final file."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if not session:
-                raise UploadError("Session not found", session_id)
-
-            if not session.is_complete():
-                missing = set(range(session.total_chunks)) - session.received_chunks
-                raise UploadError(f"Missing chunks: {missing}", session_id)
-
-            # Assemble file
-            final_path = session.temp_dir / session.filename
-            with open(final_path, "wb") as outfile:
-                for i in range(session.total_chunks):
-                    chunk_path = session.temp_dir / f"chunk_{i:06d}"
-                    with open(chunk_path, "rb") as chunk:
-                        outfile.write(chunk.read())
-
-            session.completed = True
-            return final_path
+def _get_session(session_id: str) -> UploadSession | None:
+    return UploadSession.objects.filter(session_id=session_id).first()
 
 
-# Global session manager
-session_manager = UploadSessionManager()
+def _assemble_file(session: UploadSession) -> Path:
+    if not session.is_complete():
+        missing = set(range(session.total_chunks)) - set(session.received_chunks)
+        raise UploadError(f"Missing chunks: {missing}", str(session.session_id))
+
+    upload_dir = Path(session.upload_dir)
+    final_path = upload_dir / session.filename
+    with open(final_path, "wb") as outfile:
+        for i in range(session.total_chunks):
+            chunk_path = upload_dir / f"chunk_{i:06d}"
+            with open(chunk_path, "rb") as chunk:
+                outfile.write(chunk.read())
+
+    session.completed = True
+    session.save(update_fields=["completed"])
+    return final_path
 
 
 class UploadInitView(APIView):
@@ -185,7 +65,7 @@ class UploadInitView(APIView):
         """
         filename = request.data.get("filename")
         file_size = request.data.get("fileSize")
-        chunk_size = request.data.get("chunkSize", 5 * 1024 * 1024)  # Default 5MB
+        chunk_size = request.data.get("chunkSize", 5 * 1024 * 1024)
         workspace = request.data.get("workspace", "")
         connection_id = request.data.get("connectionId", "")
         store_name = request.data.get("storeName", "")
@@ -196,7 +76,6 @@ class UploadInitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check file size limit
         max_size = getattr(settings, "UPLOAD_MAX_FILE_SIZE", 10 * 1024 * 1024 * 1024)
         if file_size > max_size:
             return Response(
@@ -204,18 +83,27 @@ class UploadInitView(APIView):
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
 
-        session = session_manager.create_session(
+        total_chunks = (file_size + chunk_size - 1) // chunk_size
+
+        session = UploadSession(
+            user=request.user if request.user.is_authenticated else None,
             filename=filename,
             file_size=file_size,
             chunk_size=chunk_size,
+            total_chunks=total_chunks,
             workspace=workspace,
             connection_id=connection_id,
             store_name=store_name,
         )
+        cache_dir = get_cache_dir()
+        upload_dir = cache_dir / "uploads" / str(session.session_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        session.upload_dir = str(upload_dir)
+        session.save()
 
         return Response(
             {
-                "sessionId": session.id,
+                "sessionId": str(session.session_id),
                 "filename": session.filename,
                 "fileSize": session.file_size,
                 "chunkSize": session.chunk_size,
@@ -256,7 +144,7 @@ class UploadChunkView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = session_manager.get_session(session_id)
+        session = _get_session(session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -271,7 +159,17 @@ class UploadChunkView(APIView):
 
         try:
             chunk_data = chunk_file.read()
-            session_manager.add_chunk(session_id, chunk_index, chunk_data)
+            chunk_path = Path(session.upload_dir) / f"chunk_{chunk_index:06d}"
+            with open(chunk_path, "wb") as f:
+                f.write(chunk_data)
+
+            with transaction.atomic():
+                session = UploadSession.objects.select_for_update().get(
+                    session_id=session_id
+                )
+                if chunk_index not in session.received_chunks:
+                    session.received_chunks = session.received_chunks + [chunk_index]
+                    session.save(update_fields=["received_chunks"])
 
             return Response(
                 {
@@ -309,7 +207,7 @@ class UploadCompleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = session_manager.get_session(session_id)
+        session = _get_session(session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -324,8 +222,7 @@ class UploadCompleteView(APIView):
             )
 
         try:
-            # Assemble the file
-            file_path = session_manager.assemble_file(session_id)
+            file_path = _assemble_file(session)
 
             result = {
                 "sessionId": session_id,
@@ -334,17 +231,14 @@ class UploadCompleteView(APIView):
                 "path": str(file_path),
             }
 
-            # Publish to GeoServer if requested
             if publish and session.connection_id and session.workspace:
                 final_store_name = store_name or session.store_name or Path(session.filename).stem
 
-                client = get_geoserver_client(session.connection_id)
+                client = get_geoserver_client(session.connection_id, str(request.user.id))
 
-                # Read the file
                 with open(file_path, "rb") as f:
                     data = f.read()
 
-                # Determine file type and upload
                 filename_lower = session.filename.lower()
                 if filename_lower.endswith(".zip") or filename_lower.endswith(".shp"):
                     client.upload_shapefile(session.workspace, final_store_name, data)
@@ -370,8 +264,9 @@ class UploadCompleteView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         finally:
-            # Clean up session
-            session_manager.delete_session(session_id)
+            upload_dir = Path(session.upload_dir)
+            if upload_dir.exists():
+                shutil.rmtree(upload_dir, ignore_errors=True)
 
 
 class UploadProgressView(APIView):
@@ -379,7 +274,7 @@ class UploadProgressView(APIView):
 
     def get(self, request, session_id):
         """Get upload progress."""
-        session = session_manager.get_session(session_id)
+        session = _get_session(session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -388,7 +283,7 @@ class UploadProgressView(APIView):
 
         return Response(
             {
-                "sessionId": session.id,
+                "sessionId": str(session.session_id),
                 "filename": session.filename,
                 "fileSize": session.file_size,
                 "receivedChunks": len(session.received_chunks),
@@ -406,14 +301,18 @@ class UploadCancelView(APIView):
 
     def delete(self, request, session_id):
         """Cancel and clean up an upload session."""
-        session = session_manager.get_session(session_id)
+        session = _get_session(session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        session_manager.delete_session(session_id)
+        upload_dir = Path(session.upload_dir)
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        session.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -452,7 +351,7 @@ class SimpleUploadView(APIView):
         final_store_name = store_name or Path(filename).stem
 
         try:
-            client = get_geoserver_client(connection_id)
+            client = get_geoserver_client(connection_id, str(request.user.id))
             data = uploaded_file.read()
 
             result = {
@@ -462,7 +361,6 @@ class SimpleUploadView(APIView):
                 "storeName": final_store_name,
             }
 
-            # Determine file type and upload
             filename_lower = filename.lower()
             if filename_lower.endswith(".zip") or filename_lower.endswith(".shp"):
                 client.upload_shapefile(workspace, final_store_name, data)

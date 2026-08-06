@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { getApiBase } from '../../config/env'
 import {
   Modal,
   ModalOverlay,
@@ -84,9 +85,9 @@ export function Globe3DDialog() {
     if (!connectionId || !workspace) return null
 
     if (nodeType === 'layergroup') {
-      return `/api/terria/story/${connectionId}/${workspace}/${layerName}`
+      return `${getApiBase()}/terria/story/${connectionId}/${workspace}/${layerName}`
     }
-    return `/api/terria/layer/${connectionId}/${workspace}/${layerName}`
+    return `${getApiBase()}/terria/layer/${connectionId}/${workspace}/${layerName}`
   }, [connectionId, workspace, layerName, nodeType])
 
   // Initialize Cesium viewer

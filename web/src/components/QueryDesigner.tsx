@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../config/env';
 import {
   FiPlay,
   FiSave,
@@ -113,7 +114,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
 
   // Load schema info
   useEffect(() => {
-    fetch(`/api/pg/services/${serviceName}/schema`)
+    fetch(`${getApiBase()}/pg/services/${serviceName}/schema`)
       .then(res => res.json())
       .then(data => {
         if (data.schemas) {
@@ -143,7 +144,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     setError('');
 
     try {
-      const res = await fetch('/api/query/build', {
+      const res = await fetch(`${getApiBase()}/query/build`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildDefinition()),
@@ -169,19 +170,32 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     setResult(null);
 
     try {
-      const res = await fetch('/api/query/execute', {
+      let sql = editableSQL && customSQL ? customSQL : generatedSQL;
+
+      if (!sql) {
+        const buildRes = await fetch(`${getApiBase()}/query/build`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildDefinition()),
+        });
+        const buildData = await buildRes.json();
+        if (!buildData.sql) {
+          setError(buildData.error || 'Failed to build query');
+          return;
+        }
+        sql = buildData.sql;
+        setGeneratedSQL(sql);
+        setShowSQL(true);
+      }
+
+      const res = await fetch(`${getApiBase()}/pg/services/${encodeURIComponent(serviceName)}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          definition: buildDefinition(),
-          service_name: serviceName,
-          max_rows: limit,
-        }),
+        body: JSON.stringify({ query: sql, limit }),
       });
 
       const data = await res.json();
       if (data.success) {
-        setGeneratedSQL(data.sql);
         setResult(data.result);
         setShowSQL(true);
       } else {
@@ -201,7 +215,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     }
 
     try {
-      const res = await fetch('/api/query/save', {
+      const res = await fetch(`${getApiBase()}/query/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

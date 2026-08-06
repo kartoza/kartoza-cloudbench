@@ -24,7 +24,7 @@ class SyncConfigListView(APIView):
 
     def get(self, request):
         """List all sync configurations."""
-        config = get_config()
+        config = get_config(request.user.id)
         configs = config.config.sync_configs
         return Response({
             "configs": [
@@ -65,7 +65,7 @@ class SyncConfigListView(APIView):
             options=options,
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_sync_config(sync_config)
 
         return Response(
@@ -82,7 +82,7 @@ class SyncConfigDetailView(APIView):
 
     def get(self, request, config_id):
         """Get sync configuration details."""
-        config = get_config()
+        config = get_config(request.user.id)
         sync_config = config.get_sync_config(config_id)
         if not sync_config:
             return Response(
@@ -104,7 +104,7 @@ class SyncConfigDetailView(APIView):
 
     def put(self, request, config_id):
         """Update a sync configuration."""
-        config = get_config()
+        config = get_config(request.user.id)
         sync_config = config.get_sync_config(config_id)
         if not sync_config:
             return Response(
@@ -138,7 +138,7 @@ class SyncConfigDetailView(APIView):
 
     def delete(self, request, config_id):
         """Delete a sync configuration."""
-        config = get_config()
+        config = get_config(request.user.id)
         config.remove_sync_config(config_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -164,7 +164,7 @@ class SyncStartView(APIView):
 
         if config_id:
             # Use saved configuration
-            config = get_config()
+            config = get_config(request.user.id)
             sync_config = config.get_sync_config(config_id)
             if not sync_config:
                 return Response(
@@ -207,7 +207,7 @@ class SyncStartView(APIView):
         def run_sync():
             try:
                 job_manager.update_job(job.id, status="running")
-                service = get_sync_service()
+                service = get_sync_service(str(request.user.id))
                 results = service.run_sync(sync_config, job.id)
                 job_manager.update_job(
                     job.id,
@@ -218,7 +218,7 @@ class SyncStartView(APIView):
 
                 # Update last synced time if using saved config
                 if config_id:
-                    config = get_config()
+                    config = get_config(request.user.id)
                     cfg = config.get_sync_config(config_id)
                     if cfg:
                         cfg.last_synced_at = datetime.utcnow().isoformat()

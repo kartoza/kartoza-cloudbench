@@ -17,7 +17,7 @@ import {
   Divider,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { FiFolder, FiDatabase, FiImage, FiLayers, FiUpload, FiPlus } from 'react-icons/fi'
+import { FiFolder, FiDatabase, FiImage, FiLayers, FiUpload, FiPlus, FiLink } from 'react-icons/fi'
 import { useQuery } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
@@ -133,13 +133,20 @@ export default function WorkspacePanel({
           <VStack align="stretch" spacing={4}>
             <Heading size="sm" color="gray.600">Quick Actions</Heading>
             <Divider />
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <Button
                 variant="accent"
                 leftIcon={<FiUpload />}
                 onClick={() => openDialog('upload', { mode: 'create', data: { connectionId, workspace } })}
               >
                 Upload Data
+              </Button>
+              <Button
+                variant="outline"
+                leftIcon={<FiLink />}
+                onClick={() => openDialog('pgconnect', { mode: 'create', data: { connectionId, workspace } })}
+              >
+                Connect to PostgreSQL
               </Button>
               <Button
                 variant="outline"

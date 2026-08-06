@@ -1,10 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect } from "react";
 import { Box } from '@chakra-ui/react'
-import { useConnectionStore } from '../../stores/connectionStore'
 import { CloudBenchRootNode } from './nodes'
+import { useConnectionStore } from "../../stores/connectionStore.ts";
 
 export default function ConnectionTree() {
-  const connections = useConnectionStore((state) => state.connections)
   const fetchConnections = useConnectionStore((state) => state.fetchConnections)
 
   useEffect(() => {
@@ -14,7 +13,7 @@ export default function ConnectionTree() {
   return (
     <Box>
       {/* CloudBench Root Node */}
-      <CloudBenchRootNode connections={connections} />
+      <CloudBenchRootNode/>
     </Box>
   )
 }

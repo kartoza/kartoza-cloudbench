@@ -1,10 +1,9 @@
 """Views for core app - settings and providers endpoints."""
 
-from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .config import config_manager
+from .config import get_config
 from .providers import get_providers_manager
 
 
@@ -16,7 +15,7 @@ class ProvidersView(APIView):
 
         Returns list of providers with their enabled/experimental status.
         """
-        providers = get_providers_manager().list_providers()
+        providers = get_providers_manager(request.user.id).list_providers()
         return Response(
             {
                 "providers": [
@@ -45,15 +44,16 @@ class ProvidersView(APIView):
         """
         data = request.data
         providers_updates = data.get("providers", [])
+        manager = get_providers_manager(request.user.id)
 
         for update in providers_updates:
             provider_id = update.get("id")
             enabled = update.get("enabled")
             if provider_id is not None and enabled is not None:
-                get_providers_manager().set_provider_enabled(provider_id, enabled)
+                manager.set_provider_enabled(provider_id, enabled)
 
         # Return updated list
-        providers = get_providers_manager().list_providers()
+        providers = manager.list_providers()
         return Response(
             {
                 "providers": [
@@ -78,7 +78,7 @@ class SettingsView(APIView):
 
         Returns theme, ping interval, and other app-wide settings.
         """
-        config = config_manager.config
+        config = get_config(request.user.id).config
         return Response(
             {
                 "theme": config.theme,
@@ -98,6 +98,7 @@ class SettingsView(APIView):
         }
         """
         data = request.data
+        config_manager = get_config(request.user.id)
 
         if "theme" in data:
             config_manager.config.theme = data["theme"]

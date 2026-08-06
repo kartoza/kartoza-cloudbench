@@ -80,7 +80,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
           )}
           {result && (
             <Badge colorScheme="gray" borderRadius="full">
-              {result.duration_ms.toFixed(2)}ms
+              {(result.duration_ms ?? 0).toFixed(2)}ms
             </Badge>
           )}
         </HStack>

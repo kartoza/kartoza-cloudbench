@@ -1,0 +1,29 @@
+version: '3.9'
+
+# Development overrides — mounts source code and builds image locally.
+# Usage: docker compose up  (automatically picks up this file)
+
+services:
+  django:
+    build:
+      context: ../
+      dockerfile: deployment/docker/Dockerfile
+      target: prod
+    volumes:
+      - ../apps:/app/apps
+      - ../cloudbench:/app/cloudbench
+      - ../tui:/app/tui
+      - ../manage.py:/app/manage.py
+      - static-data:/app/staticfiles
+      - media-data:/app/media
+      - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    environment:
+      - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
+      - DJANGO_DEBUG=true
+      - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    ports:
+      - "8000:8000"
+
+  nginx:
+    ports:
+      - "${HTTP_PORT:-8080}:80"

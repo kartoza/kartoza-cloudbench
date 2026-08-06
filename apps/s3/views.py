@@ -39,7 +39,7 @@ class S3ConnectionListView(APIView):
 
     def get(self, request):
         """List all S3 connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_s3_connections()
         return Response([
             {
@@ -67,7 +67,7 @@ class S3ConnectionListView(APIView):
             path_style=data.get("pathStyle", True),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_s3_connection(conn)
 
         return Response(
@@ -94,6 +94,7 @@ class S3ConnectionTestView(APIView):
             region=data.get("region", "us-east-1"),
             use_ssl=data.get("useSsl", True),
             path_style=data.get("pathStyle", True),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -111,7 +112,7 @@ class S3ConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_s3_connection(conn_id)
         if not conn:
             return Response(
@@ -132,7 +133,7 @@ class S3ConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_s3_connection(conn_id)
         if not conn:
             return Response(
@@ -160,7 +161,7 @@ class S3ConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_s3_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},

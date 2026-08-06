@@ -8,4 +8,5 @@ class S3Config(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.s3"
+    label = "cloudbench_s3"
     verbose_name = "S3 Storage"

@@ -8,4 +8,5 @@ class DashboardConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.dashboard"
+    label = "cloudbench_dashboard"
     verbose_name = "Dashboard Monitoring"

@@ -8,4 +8,5 @@ class QfieldcloudConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.qfieldcloud"
+    label = "cloudbench_qfieldcloud"
     verbose_name = "QFieldCloud Integration"

@@ -95,6 +95,8 @@ describe('connectionStore', () => {
             name: 'Test',
             url: 'http://test',
             username: 'admin',
+            password: '',
+            isActive: false,
           },
         ],
       })
@@ -117,6 +119,8 @@ describe('connectionStore', () => {
         name: 'Test',
         url: 'http://test',
         username: 'admin',
+        password: '',
+        isActive: false,
       }
 
       useConnectionStore.setState({

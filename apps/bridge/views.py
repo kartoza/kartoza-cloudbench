@@ -63,7 +63,7 @@ class BridgePostGISStoreView(APIView):
         }
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Create the datastore
             client.create_datastore(
@@ -102,7 +102,7 @@ class BridgePublishableTablesView(APIView):
         service_name = request.query_params.get("serviceName")
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Get available (unpublished) feature types from GeoServer
             available = client.list_available_featuretypes(workspace, store)
@@ -165,7 +165,7 @@ class BridgePublishLayerView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Create the feature type (publishes the layer)
             client.create_featuretype(
@@ -217,7 +217,7 @@ class BridgeBatchPublishView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             results = []
             for table_config in tables:

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../config/env';
 import { FiDatabase, FiServer, FiFolder, FiTable, FiArrowRight, FiCheck, FiX } from 'react-icons/fi';
 
 interface PGService {
@@ -47,7 +48,7 @@ export const BridgeWizard: React.FC<BridgeWizardProps> = ({ connections, onClose
 
   // Load PostgreSQL services
   useEffect(() => {
-    fetch('/api/pg/services')
+    fetch(`${getApiBase()}/pg/services`)
       .then(res => res.json())
       .then(data => setPgServices(data || []))
       .catch(err => console.error('Failed to load PG services:', err));
@@ -56,7 +57,7 @@ export const BridgeWizard: React.FC<BridgeWizardProps> = ({ connections, onClose
   // Load workspaces when GeoServer is selected
   useEffect(() => {
     if (selectedGeoServer) {
-      fetch(`/api/workspaces/${selectedGeoServer}`)
+      fetch(`${getApiBase()}/workspaces/${selectedGeoServer}`)
         .then(res => res.json())
         .then(data => setWorkspaces(data?.workspaces || []))
         .catch(err => console.error('Failed to load workspaces:', err));
@@ -66,7 +67,7 @@ export const BridgeWizard: React.FC<BridgeWizardProps> = ({ connections, onClose
   // Load tables when PG service and schema are selected
   useEffect(() => {
     if (selectedPgService) {
-      fetch(`/api/bridge/tables?service=${encodeURIComponent(selectedPgService)}`)
+      fetch(`${getApiBase()}/bridge/tables?service=${encodeURIComponent(selectedPgService)}`)
         .then(res => res.json())
         .then(data => setTables(data?.tables || []))
         .catch(err => console.error('Failed to load tables:', err));
@@ -119,7 +120,7 @@ export const BridgeWizard: React.FC<BridgeWizardProps> = ({ connections, onClose
     setError('');
 
     try {
-      const response = await fetch('/api/bridge', {
+      const response = await fetch(`${getApiBase()}/bridge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

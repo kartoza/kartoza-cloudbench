@@ -5,7 +5,13 @@ Imports all view classes for URL routing.
 
 from .coverages import CoverageDetailView, CoverageListView
 from .coveragestores import CoverageStoreDetailView, CoverageStoreListView
-from .datastores import DataStoreAvailableView, DataStoreDetailView, DataStoreListView
+from .datastores import (
+    DataStoreAvailableView,
+    DataStoreConnectPGView,
+    DataStoreDetailView,
+    DataStoreListView,
+    DataStorePublishView,
+)
 from .featuretypes import FeatureTypeDetailView, FeatureTypeListView
 from .layergroups import LayerGroupDetailView, LayerGroupListView
 from .layers import (
@@ -16,7 +22,7 @@ from .layers import (
     LayerStylesView,
 )
 from .styles import StyleDetailView, StyleListView
-from .uploads import UploadGeoPackageView, UploadGeoTiffView, UploadShapefileView
+from .uploads import GeoServerUploadCompleteView, GeoServerUploadStartView, GeoServerUploadStatusView
 from .workspaces import WorkspaceDetailView, WorkspaceListView
 
 __all__ = [
@@ -27,6 +33,8 @@ __all__ = [
     "DataStoreListView",
     "DataStoreDetailView",
     "DataStoreAvailableView",
+    "DataStorePublishView",
+    "DataStoreConnectPGView",
     # Coverage Stores
     "CoverageStoreListView",
     "CoverageStoreDetailView",
@@ -49,7 +57,7 @@ __all__ = [
     "LayerGroupListView",
     "LayerGroupDetailView",
     # Uploads
-    "UploadShapefileView",
-    "UploadGeoTiffView",
-    "UploadGeoPackageView",
+    "GeoServerUploadCompleteView",
+    "GeoServerUploadStartView",
+    "GeoServerUploadStatusView",
 ]
