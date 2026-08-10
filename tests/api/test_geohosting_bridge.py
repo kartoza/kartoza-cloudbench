@@ -6,10 +6,12 @@ CloudBench pulling it from GeoHosting's database.
 """
 
 import pytest
+from django.test import RequestFactory
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.core.config import get_config
+from apps.core.sso_auth import SignedSSOTokenAuthentication
 
 SERVICE_TOKEN = "test-service-token"
 
@@ -248,3 +250,47 @@ class TestGeoHostingInstanceView:
             **_auth_headers(),
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+@pytest.mark.api
+class TestGeoHostingSSOTokenView:
+    """Tests for /api/geohosting/sso-token/."""
+
+    def test_requires_service_token(self, api_client: APIClient) -> None:
+        """No Authorization header at all is rejected."""
+        response = api_client.post(
+            "/api/geohosting/sso-token/",
+            {"owner_user_id": "42"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_requires_owner_user_id(self, api_client: APIClient) -> None:
+        """A missing owner_user_id is a 400, not a token for nobody."""
+        response = api_client.post(
+            "/api/geohosting/sso-token/",
+            {},
+            format="json",
+            **_auth_headers(),
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_returns_a_token_that_authenticates_as_that_user(
+        self, api_client: APIClient
+    ) -> None:
+        """The minted token round-trips through SignedSSOTokenAuthentication."""
+        response = api_client.post(
+            "/api/geohosting/sso-token/",
+            {"owner_user_id": "42"},
+            format="json",
+            **_auth_headers(),
+        )
+        assert response.status_code == status.HTTP_200_OK
+        token = response.data["token"]
+
+        request = RequestFactory().get(
+            "/", HTTP_AUTHORIZATION=f"Token {token}"
+        )
+        user, _ = SignedSSOTokenAuthentication().authenticate(request)
+        assert user.id == "42"

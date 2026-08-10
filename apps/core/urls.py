@@ -17,4 +17,9 @@ urlpatterns = [
         geohosting_bridge.GeoHostingInstanceView.as_view(),
         name="geohosting-instance-detail",
     ),
+    path(
+        "geohosting/sso-token/",
+        geohosting_bridge.GeoHostingSSOTokenView.as_view(),
+        name="geohosting-sso-token",
+    ),
 ]

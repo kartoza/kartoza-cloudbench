@@ -61,10 +61,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "apps.core.trusted_header_auth.TrustedHeaderAuthMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.COOPCOEPMiddleware",
+    "apps.core.middleware.FrameAncestorsMiddleware",
 ]
 
 ROOT_URLCONF = "cloudbench.urls"
@@ -149,6 +148,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
+        "apps.core.sso_auth.SignedSSOTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         # TODO: Change to IsAuthenticated once all endpoints are migrated
@@ -249,17 +249,30 @@ LOGGING = {
 
 CLOUDBENCH_MUST_AUTHENTICATED = False
 
-# Shared secret nginx attaches (as X-Internal-Token) alongside X-User-Id
-# once it has validated the caller's GeoHosting session via auth_request.
-# Empty by default so local/dev runs without a fronting proxy still work
-# with normal Django session auth.
-INTERNAL_SHARED_SECRET = os.environ.get("INTERNAL_SHARED_SECRET", "")
-
-# Shared secret the GeoHosting backend sends as
-# "Authorization: Bearer <token>" when pushing instance connection state to
-# /api/geohosting/instances/. Empty by default; that endpoint refuses all
-# requests until this is set.
+# The one shared secret between GeoHosting and CloudBench. Used two ways:
+# - GeoHosting sends it as "Authorization: Bearer <token>" when calling
+#   /api/geohosting/instances/ and /api/geohosting/sso-token/ (see
+#   apps/core/geohosting_bridge.py). Empty by default; those endpoints
+#   refuse all requests until this is set.
+# - It's also the HMAC key used to sign/verify the short-lived SSO tokens
+#   handed to GeoHosting's frontend for the iframe handoff (see
+#   apps/core/sso_auth.py).
 CLOUDBENCH_SERVICE_TOKEN = os.environ.get("CLOUDBENCH_SERVICE_TOKEN", "")
+
+# How long a signed SSO token (see apps/core/sso_auth.py) stays valid
+# after being minted, in seconds. Default: 12 hours.
+CLOUDBENCH_SSO_TOKEN_MAX_AGE = int(
+    os.environ.get("CLOUDBENCH_SSO_TOKEN_MAX_AGE", 60 * 60 * 12)
+)
+
+# Origins allowed to embed CloudBench in an iframe (CSP frame-ancestors —
+# see apps/core/middleware.py). Comma-separated, e.g.
+# "https://geohosting.example.com". Empty means only 'self'.
+CLOUDBENCH_FRAME_ANCESTORS = [
+    origin
+    for origin in os.environ.get("CLOUDBENCH_FRAME_ANCESTORS", "").split(",")
+    if origin
+]
 
 # Celery
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
