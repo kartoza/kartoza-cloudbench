@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party apps
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
     "apps.core",
     "apps.connections",
@@ -148,7 +149,15 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
+        # Must come before TokenAuthentication: it returns None (falls
+        # through) on a token that isn't a valid signed SSO token, whereas
+        # TokenAuthentication *raises* AuthenticationFailed on a token that
+        # isn't a stored DRF token — and DRF aborts the whole authenticator
+        # chain on the first exception, never trying the rest. With the
+        # reverse order, every SSO-token request (the GeoHosting-embedded
+        # flow) would 401 with "Invalid token." before this class ever ran.
         "apps.core.sso_auth.SignedSSOTokenAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         # TODO: Change to IsAuthenticated once all endpoints are migrated

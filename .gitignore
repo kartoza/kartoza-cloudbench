@@ -50,6 +50,10 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Local Django dev database (admin/auth tables + upload session tracking —
+# not app data, that lives in the JSON config store instead)
+db.sqlite3
+
 # Node.js
 node_modules/
 web/node_modules/

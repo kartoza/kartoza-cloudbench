@@ -18,7 +18,7 @@
     {
       "label": "npm: dev server",
       "type": "shell",
-      "command": "npm run dev",
+      "command": "npm run dev -- --host 0.0.0.0",
       "options": {
         "cwd": "${workspaceFolder}/web"
       },
@@ -38,6 +38,64 @@
           "endsPattern": "Local:"
         }
       }
+    },
+    {
+      "label": "Django: Migrate",
+      "type": "shell",
+      "command": "make migrate",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Django: Make Migrations",
+      "type": "shell",
+      "command": "python manage.py makemigrations",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: Deploy up (standalone)",
+      "type": "shell",
+      "command": "make deploy-up",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "label": "CloudBench Standalone"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: Deploy down (standalone)",
+      "type": "shell",
+      "command": "make deploy-down",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: Deploy logs (standalone)",
+      "type": "shell",
+      "command": "make deploy-logs",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "label": "CloudBench Standalone"
+      },
+      "problemMatcher": []
     }
   ]
 }
