@@ -66,6 +66,44 @@ cd web && npm install && npm run build && cd ..
 python manage.py runserver 8080
 ```
 
+### Dev Container (VSCode)
+
+Just *Reopen in Container* (or `Dev Containers: Rebuild and Reopen in
+Container` from the command palette) — `deployment/.env` is created from
+`deployment/.template.env` automatically on first open if it doesn't
+already exist (`initializeCommand`, runs before the container starts).
+Edit it afterward if you need non-default admin credentials or a real
+`DJANGO_SECRET_KEY`. This builds the `vscode` target from
+`deployment/docker/Dockerfile`, bind-mounts the repo into the container, and
+attaches to the `django` service — Python, GDAL/PostGIS, and Node are all
+preinstalled, `pip install -e ".[dev]"` and `npm install` (for `web/`) run
+automatically on first create. `nginx` comes up alongside it from the same
+`docker-compose.yml`.
+
+Two services come up alongside each other, mirroring the same split
+GeoHosting's own devcontainer uses: `django` (which VS Code attaches to —
+`python manage.py runserver`, port 8000) and `vite` (`npm install && npm
+run dev`, port 5173), both published to the host automatically. No manual
+`npm run dev` needed — just wait for `vite`'s first-run dependency
+pre-bundle to finish (see note below).
+
+Visit `http://localhost:8000/` (**not** `0.0.0.0:8000` — Django's
+`ALLOWED_HOSTS` check rejects that Host header with a 400, and some
+browsers block navigating to `0.0.0.0` outright). It redirects to
+`http://localhost:5173/` for the actual UI once Vite is running.
+
+**First load after a fresh `npm install` can take 30s–2min and looks like
+a blank/hanging tab** — this is expected, not a bug. Vite has to
+pre-bundle every dependency (Cesium, MapLibre, Chakra UI, CodeMirror, ...)
+with esbuild the first time it runs against a given `node_modules`; while
+that's happening the dev server can't yet respond to `/@vite/client` or
+`/src/main.tsx`, which is exactly what a genuine hang would also look
+like. Check `docker compose logs -f vite` — if it's still printing
+`ready in Nms` from startup with no errors since, it's just working; give
+it a minute rather than restarting anything. This only happens once per
+`node_modules` (fresh clone, or after `node_modules` gets reinstalled) —
+normal restarts afterward are fast.
+
 ### Development
 
 ```bash
@@ -120,6 +158,50 @@ kartoza-cloudbench/
 └── static/                 # Compiled frontend assets
 ```
 
+## Deployment
+
+CloudBench is fully standalone — it does not require GeoHosting to run.
+See `deployment/` for a complete Docker Compose setup (Dockerfile, nginx,
+`.template.env`), the same layout GeoHosting itself uses.
+
+### Standalone
+
+```bash
+cp deployment/.template.env deployment/.env   # fill in ADMIN_USERNAME/PASSWORD, DJANGO_SECRET_KEY, etc.
+make deploy-up   # picks up docker-compose.override.yml automatically (dev mode, source-mounted)
+```
+
+Open the app (`http://localhost:${HTTP_PORT}`, default `8080` in the dev
+override) and sign in with `ADMIN_USERNAME`/`ADMIN_PASSWORD` from
+`deployment/.env` (created automatically on first boot by
+`deployment/docker/entrypoint.sh`) at the app's own login screen. From
+there, add your GeoServer/GeoNode/PostGIS connections manually via the UI —
+nothing GeoHosting-specific is required.
+
+Other useful targets (run from the repo root — see `make help`):
+
+```bash
+make deploy-build     # rebuild the image after a dependency change
+make deploy-up-prod   # base compose file only, no source mounts (closer to real prod)
+make deploy-logs      # follow logs from all services
+make deploy-shell     # Django shell inside the django container
+make deploy-migrate   # run migrations inside the django container
+make deploy-down      # stop everything
+```
+
+These are thin passthroughs to `deployment/Makefile` — run `docker compose`
+directly from inside `deployment/` instead if you prefer.
+
+### Embedded in GeoHosting (optional)
+
+If you *do* want this instance embedded in a GeoHosting deployment (SSO
+iframe handoff + automatic instance push-sync), set the
+`CLOUDBENCH_SERVICE_TOKEN` / `CLOUDBENCH_FRAME_ANCESTORS` /
+`CLOUDBENCH_SSO_TOKEN_MAX_AGE` variables in `.template.env` — matching
+GeoHosting's own `CLOUDBENCH_SERVICE_TOKEN`/`CLOUDBENCH_BASE_URL`/
+`CLOUDBENCH_FRONTEND_URL` (see `django_project/geohosting/cloudbench/README.md`
+in the GeoHosting repo). Leave them blank for standalone use.
+
 ## Configuration
 
 ### Environment Variables
@@ -162,6 +244,7 @@ password=secret
 
 The REST API is available under `/api/`:
 
+- `/api/auth/login/` - Standalone login (username/password → auth token)
 - `/api/connections` - GeoServer connections
 - `/api/workspaces/<conn_id>` - Workspaces
 - `/api/datastores/<conn_id>/<workspace>` - Data stores

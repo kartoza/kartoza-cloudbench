@@ -1,0 +1,87 @@
+version: '3.9'
+
+# Used only by .devcontainer/devcontainer.json (layered on top of
+# docker-compose.yml directly — NOT combined with docker-compose.override.yml,
+# which is the plain `docker compose up` dev override instead). Builds the
+# `vscode` Dockerfile target and bind-mounts the whole repo so VSCode can
+# attach to a running container with source, git, and tooling all in place.
+#
+# Two services, mirroring the same split GeoHosting's own devcontainer uses
+# for kartoza-cloudbench (django/webpack_cloudbench): one for the Django
+# backend, one for the Vite frontend. VS Code only attaches its editor
+# session to `django` (see devcontainer.json's `service`), but `vite` runs
+# alongside it automatically — no more remembering to manually run
+# `npm run dev` in an integrated terminal every time the container starts.
+
+volumes:
+  # Dedicated volumes, deliberately NOT shared with the base file's
+  # static-data/media-data/cloudbench-folder. Those get written by
+  # root-run containers (plain `make deploy-up`, `make deploy-up-prod`),
+  # and this service runs as the non-root `vscode` user — sharing a volume
+  # between the two hit PermissionError twice in one debugging session
+  # (once on staticfiles, once on cloudbench_data/providers.json) because
+  # whichever flow ran first left root-owned files behind for the other.
+  vscode-static-data:
+  vscode-media-data:
+  vscode-cloudbench-folder:
+
+services:
+  django:
+    build:
+      context: ../
+      dockerfile: deployment/docker/Dockerfile
+      target: vscode
+    # Distinct tag — MUST NOT reuse the base file's kartoza/cloudbench:$TAG.
+    # Any other service that referenced that tag without its own `build:`
+    # would silently run whatever the `vscode` target produces instead of
+    # `prod` (this bit us once already, with a since-removed celery
+    # service ending up as the non-root `vscode` user against paths only
+    # ever set up for root, crash-looping on PermissionError).
+    image: kartoza/cloudbench:vscode
+    volumes:
+      - ../:/app
+      - vscode-static-data:/app/staticfiles
+      - vscode-media-data:/app/media
+      - vscode-cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    environment:
+      - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
+      - DJANGO_DEBUG=true
+      # vite's proxy (changeOrigin: true) forwards Host: django:8000 —
+      # without this, Django's DisallowedHost check rejects every proxied
+      # request with an HTML error page instead of JSON, which the web app
+      # then shows as "Failed to load dashboard: Unknown error".
+      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,[::1],django
+    ports:
+      - "8000:8000"
+    # Let the image's own entrypoint.sh run as normal (migrate,
+    # collectstatic, create the ADMIN_USERNAME/ADMIN_PASSWORD superuser) —
+    # only swap the final command for runserver instead of gunicorn, for
+    # autoreload. An earlier version of this file replaced the entrypoint
+    # entirely to "skip collectstatic since static/ is bind-mount-shadowed
+    # anyway", which also silently skipped admin-user creation and made
+    # `admin`/`admin` login impossible in this container.
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+  vite:
+    # Same image as django (already has Node 20 + npm from the `vscode`
+    # stage) — no need for a second, separate image just for this.
+    image: kartoza/cloudbench:vscode
+    volumes:
+      - ../:/app
+    working_dir: /app/web
+    entrypoint: []
+    # --host 0.0.0.0 is required — Vite's default bind of localhost-only
+    # is unreachable through the `ports:` publish below (that's the actual
+    # cause the one time this looked like the dev server was hanging: it
+    # wasn't unreachable, it was mid dependency pre-bundle — see README).
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      # Separate container now, so this can't reach django via localhost
+      # anymore — cross-container calls go through compose's own DNS
+      # (service name "django"), same as how the GeoHosting-integrated
+      # webpack_cloudbench service reaches its "cloudbench" service.
+      - VITE_API_PROXY_TARGET=http://django:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - django

@@ -1,6 +1,8 @@
 .PHONY: all build build-web build-tui build-frontend clean clean-all dev dev-web dev-tui \
         install test lint format shell migrate kill-server redeploy help \
-        docs docs-build
+        docs docs-build \
+        deploy-build deploy-up deploy-up-prod deploy-down deploy-logs \
+        deploy-shell deploy-migrate deploy-test
 
 # Version from git tag or commit
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -197,6 +199,36 @@ install:
 	@echo "Installing dependencies..."
 	$(PIP) install -e ".[dev]"
 
+# === Standalone Deployment (Docker) ===
+# Thin passthrough to deployment/Makefile so you don't need to `cd deployment`
+# first. Requires deployment/.env (copy from deployment/.template.env).
+
+deploy-build:
+	@$(MAKE) -C deployment build
+
+# Dev mode: source-mounted, picks up docker-compose.override.yml automatically.
+deploy-up:
+	@$(MAKE) -C deployment up
+
+# Production mode: base compose file only, no source mounts.
+deploy-up-prod:
+	@$(MAKE) -C deployment up-prod
+
+deploy-down:
+	@$(MAKE) -C deployment down
+
+deploy-logs:
+	@$(MAKE) -C deployment logs
+
+deploy-shell:
+	@$(MAKE) -C deployment shell
+
+deploy-migrate:
+	@$(MAKE) -C deployment migrate
+
+deploy-test:
+	@$(MAKE) -C deployment test
+
 # === Legacy Go Targets (for backward compatibility during migration) ===
 
 build-go-tui:
@@ -246,6 +278,16 @@ help:
 	@echo "  install          Install package with dev dependencies"
 	@echo "  kill-server      Kill running server instances"
 	@echo "  redeploy         Kill, clean, rebuild, restart"
+	@echo ""
+	@echo "Standalone Deployment (Docker, see deployment/.template.env):"
+	@echo "  deploy-build     Build the production Docker image"
+	@echo "  deploy-up        Start full stack in dev mode (source-mounted)"
+	@echo "  deploy-up-prod   Start full stack in production mode"
+	@echo "  deploy-down      Stop the deployment stack"
+	@echo "  deploy-logs      Follow logs from all deployment services"
+	@echo "  deploy-shell     Open Django shell inside the django container"
+	@echo "  deploy-migrate   Run migrations inside the django container"
+	@echo "  deploy-test      Run tests inside the django container"
 	@echo ""
 	@echo "Legacy Go Targets:"
 	@echo "  build-go-tui     Build Go TUI binary"

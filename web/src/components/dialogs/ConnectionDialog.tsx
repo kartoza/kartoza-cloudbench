@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Modal,
@@ -28,7 +29,7 @@ import {
 import { FiEye, FiEyeOff, FiServer, FiCheck, FiDatabase } from 'react-icons/fi'
 import { useUIStore } from '../../stores/uiStore'
 import { useConnectionStore } from '../../stores/connectionStore'
-import { createPGService, testPGService, testConnectionDirect, type PGServiceCreate } from '../../api'
+import { createPGService, testPGServiceDirect, testConnectionDirect, type PGServiceCreate } from '../../api'
 import { springs } from '../../utils/animations'
 
 type ConnectionType = 'geoserver' | 'postgresql'
@@ -52,6 +53,7 @@ const fieldVariants = {
 }
 
 export default function ConnectionDialog() {
+  const queryClient = useQueryClient()
   const activeDialog = useUIStore((state) => state.activeDialog)
   const dialogData = useUIStore((state) => state.dialogData)
   const closeDialog = useUIStore((state) => state.closeDialog)
@@ -105,7 +107,8 @@ export default function ConnectionDialog() {
       }
     } else if (isOpen && !isEditMode) {
       // Reset all fields for new connection
-      setConnectionType('geoserver')
+      const requestedType = dialogData?.data?.type as ConnectionType | undefined
+      setConnectionType(requestedType ?? 'geoserver')
       setName('')
       setUrl('')
       setUsername('')
@@ -155,11 +158,16 @@ export default function ConnectionDialog() {
           setTestResult(result)
         }
       } else {
-        // PostgreSQL test - need to create first then test
-        if (!pgName) {
+        // PostgreSQL test - test the raw credentials directly, without
+        // persisting anything (mirrors the geoserver branch above). This
+        // used to create the service first because the only backend test
+        // endpoint operated on an already-saved service by name — which
+        // meant clicking "Test Connection" silently added the connection
+        // even if the user never clicked "Save" (or the test failed).
+        if (!pgHost || !pgDatabase) {
           toast({
-            title: 'Service name required',
-            description: 'Please enter a service name first',
+            title: 'Required fields',
+            description: 'Host and database are required to test',
             status: 'warning',
             duration: 3000,
           })
@@ -167,20 +175,14 @@ export default function ConnectionDialog() {
           return
         }
 
-        // Create the service first
-        const pgService: PGServiceCreate = {
-          name: pgName,
+        const result = await testPGServiceDirect({
           host: pgHost,
           port: pgPort,
           dbname: pgDatabase,
           user: pgUser,
           password: pgPassword,
           sslmode: pgSSLMode,
-        }
-        await createPGService(pgService)
-
-        // Now test
-        const result = await testPGService(pgName)
+        })
         setTestResult(result)
       }
     } catch (err) {
@@ -246,6 +248,11 @@ export default function ConnectionDialog() {
 
         await createPGService(pgService)
         await refreshPGServices?.()
+        // PostgreSQLRootNode reads its list via its own react-query cache
+        // (queryKey: ['pgservices']), not the connectionStore state that
+        // refreshPGServices() above updates — without this, a newly
+        // created service wouldn't show up in the sidebar until reload.
+        await queryClient.invalidateQueries({ queryKey: ['pgservices'] })
 
         toast({
           title: 'PostgreSQL service added',

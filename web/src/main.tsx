@@ -4,6 +4,11 @@ import { ChakraProvider } from '@chakra-ui/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import theme from './theme'
+import { applySsoTokenFromUrl } from './api/ssoBootstrap'
+
+// Must run before any component mounts / API call fires — see
+// api/ssoBootstrap.ts for why.
+applySsoTokenFromUrl()
 
 const queryClient = new QueryClient({
   defaultOptions: {

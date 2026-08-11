@@ -29,3 +29,32 @@ class COOPCOEPMiddleware:
             response["Cross-Origin-Embedder-Policy"] = "require-corp"
 
         return response
+
+
+class FrameAncestorsMiddleware:
+    """Allow specific origins to embed CloudBench in an iframe.
+
+    Replaces django.middleware.clickjacking.XFrameOptionsMiddleware, which
+    only supports DENY/SAMEORIGIN and can't express "allow this other
+    origin" — GeoHosting embeds CloudBench cross-origin via iframe (see
+    kartoza-cloudbench's own README on the SSO handoff). CSP
+    frame-ancestors is the modern replacement and takes precedence over
+    X-Frame-Options in browsers that support it.
+    """
+
+    def __init__(self, get_response):
+        """Store the next middleware/view in the chain."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        """Add a Content-Security-Policy: frame-ancestors header."""
+        response = self.get_response(request)
+
+        ancestors = ["'self'"] + list(
+            getattr(settings, "CLOUDBENCH_FRAME_ANCESTORS", [])
+        )
+        response["Content-Security-Policy"] = (
+            f"frame-ancestors {' '.join(ancestors)}"
+        )
+
+        return response

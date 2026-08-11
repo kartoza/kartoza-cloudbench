@@ -1,0 +1,35 @@
+{
+  "name": "CloudBench Dev Container",
+  "remoteUser": "vscode",
+  "initializeCommand": "cp -n deployment/.template.env deployment/.env || true",
+  "postCreateCommand": "git config --global --add safe.directory /app || true",
+  "dockerComposeFile": [
+    "../deployment/docker-compose.yml",
+    "../deployment/docker-compose.override.devcontainer.yml"
+  ],
+  "service": "django",
+  "workspaceFolder": "/app",
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash",
+    "python.pythonPath": "/usr/local/bin/python",
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true
+  },
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": {
+      "label": "Django",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "Vite Frontend",
+      "onAutoForward": "notify"
+    }
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-azuretools.vscode-docker",
+    "dbaeumer.vscode-eslint"
+  ],
+  "shutdownAction": "stopCompose"
+}
