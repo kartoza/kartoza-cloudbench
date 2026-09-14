@@ -9,11 +9,6 @@ import os
 import tempfile
 from pathlib import Path
 
-from .utilities import file_lock, get_cloudbench_data_path
-
-# Config directory names
-CONFIG_FILE = "config.json"
-
 from .models import (
     Config,
     Connection,
@@ -27,7 +22,10 @@ from .models import (
     SyncConfiguration,
     SyncOptions,
 )
-from .utilities import get_cloudbench_config_path  # noqa: E402
+from .utilities import file_lock, get_cloudbench_config_path, get_cloudbench_data_path
+
+# Config directory names
+CONFIG_FILE = "config.json"
 
 __all__ = ["QGISProject", "SyncOptions"]
 

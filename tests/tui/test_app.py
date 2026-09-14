@@ -63,7 +63,7 @@ class TestConnectionsScreen:
         from tui.app import CloudBenchApp
 
         app = CloudBenchApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             # Navigate to connections
             # This depends on the app structure
             pass
@@ -73,7 +73,7 @@ class TestConnectionsScreen:
         from tui.app import CloudBenchApp
 
         app = CloudBenchApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             # Open add connection dialog
             # Test input fields
             pass

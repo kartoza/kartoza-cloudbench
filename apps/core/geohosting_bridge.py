@@ -28,7 +28,7 @@ class ProductNames:
 class HasServiceToken(permissions.BasePermission):
     """Allow only requests carrying the shared GeoHosting service token."""
 
-    def has_permission(self, request, view):
+    def has_permission(self, request, _view):
         token = settings.CLOUDBENCH_SERVICE_TOKEN
         if not token:
             return False

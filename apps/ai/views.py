@@ -19,7 +19,7 @@ from .engine import AIQueryEngine, get_available_providers, get_schema_context
 class AIProvidersView(APIView):
     """List available LLM providers."""
 
-    def get(self, request):
+    def get(self, _request):
         """List all available providers."""
         providers = get_available_providers()
         return Response({

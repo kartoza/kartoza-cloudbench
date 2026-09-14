@@ -178,9 +178,8 @@ class ConnectionsScreen(Screen):
         try:
             # Test connection
             base_url = url.rstrip("/")
-            if not base_url.endswith("/geoserver"):
-                if "/geoserver" not in base_url:
-                    base_url += "/geoserver"
+            if not base_url.endswith("/geoserver") and "/geoserver" not in base_url:
+                base_url += "/geoserver"
 
             with httpx.Client(timeout=10.0) as client:
                 response = client.get(

@@ -210,7 +210,6 @@ class CloudBenchApp(App):
 
         if node_type == "connection":
             # Show GeoServer connection details
-            conn_id = node_data.get("id")
             self.push_screen("geoserver")
 
         elif node_type == "add_connection":

@@ -118,7 +118,7 @@ class DashboardView(APIView):
 class DashboardServerView(APIView):
     """Get server status information."""
 
-    def get(self, request):
+    def get(self, _request):
         """Get server status."""
         return Response({
             "server": {

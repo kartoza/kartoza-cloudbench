@@ -245,7 +245,7 @@ class SyncStartView(APIView):
 class SyncStatusView(APIView):
     """Get sync job status."""
 
-    def get(self, request, job_id=None):
+    def get(self, _request, job_id=None):
         """Get sync status."""
         job_manager = SyncJobManager()
 

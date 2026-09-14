@@ -145,6 +145,13 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["cloudbench", "apps", "tui"]
 
+[tool.ruff.lint.per-file-ignores]
+# Pytest injects fixtures by matching the parameter name exactly, so an
+# "unused" fixture argument is often still doing real work (mocking,
+# setup) via side effect — renaming it would silently stop the fixture
+# from being injected at all instead of just silencing a lint warning.
+"tests/**" = ["ARG001", "ARG002"]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true

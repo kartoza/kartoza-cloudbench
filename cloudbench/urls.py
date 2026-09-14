@@ -13,7 +13,7 @@ from django.urls import include, path, re_path
 from django.views.static import serve
 
 
-def health_check(request):
+def health_check(_request):
     """Health check endpoint for container orchestration."""
     return HttpResponse("OK", content_type="text/plain")
 

@@ -246,8 +246,7 @@ class TerriaProxyView(APIView):
 
             # Stream the response
             def generate():
-                for chunk in response.iter_bytes():
-                    yield chunk
+                yield from response.iter_bytes()
 
             proxy_response = StreamingHttpResponse(
                 generate(),

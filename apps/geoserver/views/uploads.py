@@ -23,7 +23,7 @@ _CELERY_STATE_MAP = {
 class GeoServerUploadCompleteView(APIView):
     """Assemble a chunked upload for GeoServer (file kept for the background task)."""
 
-    def post(self, request, conn_id, workspace):
+    def post(self, request, conn_id, workspace):  # noqa: ARG002 - conn_id/workspace must match the URL path converters
         session_id = request.data.get("sessionId")
         store_name = request.data.get("storeName")
 
@@ -108,7 +108,7 @@ class GeoServerUploadStartView(APIView):
 class GeoServerUploadStatusView(APIView):
     """Poll the status of a GeoServer upload background task."""
 
-    def get(self, request, job_id):
+    def get(self, _request, job_id):
         result = AsyncResult(job_id)
         job_status = _CELERY_STATE_MAP.get(result.state, result.state.lower())
 

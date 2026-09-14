@@ -3,6 +3,8 @@
 Optimized for fast test execution with isolated configuration.
 """
 
+import tempfile
+
 from .base import *  # noqa: F401, F403
 
 # Override debug for testing
@@ -33,8 +35,6 @@ class DisableMigrations:
 MIGRATION_MODULES = DisableMigrations()
 
 # Use test-specific config directory
-import tempfile
-
 _test_dir = tempfile.mkdtemp(prefix="cloudbench-test-")
 CLOUDBENCH_CONFIG_DIR = _test_dir
 CLOUDBENCH_DATA_DIR = _test_dir

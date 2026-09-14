@@ -174,7 +174,7 @@ class MerginProjectListView(APIView):
 class MerginProjectDetailView(APIView):
     """Get project details."""
 
-    def get(self, request, conn_id, namespace, name):
+    def get(self, _request, conn_id, namespace, name):
         """Get project information."""
         try:
             client = get_mergin_client(conn_id)
@@ -225,7 +225,7 @@ class MerginProjectFilesView(APIView):
 class MerginProjectVersionsView(APIView):
     """Get project version history."""
 
-    def get(self, request, conn_id, namespace, name):
+    def get(self, _request, conn_id, namespace, name):
         """Get version history."""
         try:
             client = get_mergin_client(conn_id)

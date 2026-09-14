@@ -472,7 +472,7 @@ class PGImportView(APIView):
 class PGImportStatusView(APIView):
     """Get import job status."""
 
-    def get(self, request, job_id):
+    def get(self, _request, job_id):
         result = AsyncResult(job_id)
         job_status = _CELERY_STATE_MAP.get(result.state, result.state.lower())
 
@@ -605,7 +605,7 @@ class PGDetectLayersView(APIView):
 class OGR2OGRStatusView(APIView):
     """Check ogr2ogr and raster2pgsql availability and capabilities."""
 
-    def get(self, request):
+    def get(self, _request):
         def run(cmd):
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)

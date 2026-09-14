@@ -723,10 +723,7 @@ class GeoServerClient:
             }
         }
 
-        if workspace:
-            path = f"/rest/workspaces/{workspace}/styles.json"
-        else:
-            path = "/rest/styles.json"
+        path = f"/rest/workspaces/{workspace}/styles.json" if workspace else "/rest/styles.json"
 
         response = self._request("POST", path, json=payload)
         if response.status_code >= 400:

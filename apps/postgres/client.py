@@ -61,7 +61,7 @@ class PGServiceClient:
             return False, str(e)
 
     def get_stats(self) -> dict[str, Any]:
-        with self._connect() as conn:
+        with self._connect() as conn:  # noqa: SIM117 - large nested block, safer not to auto-dedent
             with conn.cursor() as cur:
                 cur.execute("SELECT version()")
                 version = cur.fetchone()[0]
@@ -207,7 +207,7 @@ class PGServiceClient:
                 }
 
     def get_schema_stats(self, schema: str) -> dict[str, Any]:
-        with self._connect() as conn:
+        with self._connect() as conn:  # noqa: SIM117 - large nested block, safer not to auto-dedent
             with conn.cursor() as cur:
                 # Owner
                 cur.execute("""
@@ -399,7 +399,7 @@ class PGServiceClient:
 
             schemas: dict[str, dict] = {name: {"name": name, "tables": {}}
                                         for name in schema_names}
-            for schema, table, table_type, col_name, col_type, nullable in cur.fetchall():
+            for schema, table, _table_type, col_name, col_type, nullable in cur.fetchall():
                 tables = schemas[schema]["tables"]
                 if table not in tables:
                     tables[table] = {
@@ -453,7 +453,7 @@ class PGServiceClient:
 
     def get_table_columns(self, schema: str, table: str) -> list[
         dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connect() as conn:  # noqa: SIM117 - large nested block, safer not to auto-dedent
             with conn.cursor() as cur:
                 cur.execute("""
                             SELECT c.column_name,

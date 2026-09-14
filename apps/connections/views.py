@@ -21,9 +21,8 @@ def test_geoserver_connection(url: str, username: str, password: str) -> tuple[
     try:
         # Ensure URL ends properly
         base_url = url.rstrip("/")
-        if not base_url.endswith("/geoserver"):
-            if "/geoserver" not in base_url:
-                base_url += "/geoserver"
+        if not base_url.endswith("/geoserver") and "/geoserver" not in base_url:
+            base_url += "/geoserver"
 
         # Try to get server version
         with httpx.Client(timeout=10.0) as client:

@@ -278,7 +278,7 @@ class UploadCompleteView(APIView):
 class UploadProgressView(APIView):
     """Get upload progress for a session."""
 
-    def get(self, request, session_id):
+    def get(self, _request, session_id):
         """Get upload progress."""
         session = _get_session(session_id)
         if not session:
@@ -305,7 +305,7 @@ class UploadProgressView(APIView):
 class UploadCancelView(APIView):
     """Cancel an upload session."""
 
-    def delete(self, request, session_id):
+    def delete(self, _request, session_id):
         """Cancel and clean up an upload session."""
         session = _get_session(session_id)
         if not session:

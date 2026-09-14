@@ -1,12 +1,11 @@
+import contextlib
 import shutil
 from pathlib import Path
 
 
 def _cleanup(file_path: str) -> None:
-    try:
+    with contextlib.suppress(Exception):
         shutil.rmtree(Path(file_path).parent, ignore_errors=True)
-    except Exception:
-        pass
 
 
 def run_geoserver_upload(

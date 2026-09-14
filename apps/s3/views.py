@@ -9,6 +9,7 @@ Provides endpoints for:
 - Format conversion
 """
 
+import contextlib
 import json
 import mimetypes
 import subprocess
@@ -175,7 +176,7 @@ class S3ConnectionDetailView(APIView):
 class S3ConnectionTestExistingView(APIView):
     """Test an existing S3 connection."""
 
-    def post(self, request, conn_id):
+    def post(self, _request, conn_id):
         """Test the connection."""
         try:
             client = get_s3_client(conn_id)
@@ -202,7 +203,7 @@ class S3ConnectionTestExistingView(APIView):
 class S3BucketListView(APIView):
     """List buckets for a connection."""
 
-    def get(self, request, conn_id):
+    def get(self, _request, conn_id):
         """List all accessible buckets."""
         try:
             client = get_s3_client(conn_id)
@@ -257,7 +258,7 @@ class S3ObjectListView(APIView):
 class S3ObjectDetailView(APIView):
     """Get object details or delete object."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Get object metadata."""
         try:
             client = get_s3_client(conn_id)
@@ -274,7 +275,7 @@ class S3ObjectDetailView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-    def delete(self, request, conn_id, bucket, key):
+    def delete(self, _request, conn_id, bucket, key):
         """Delete an object."""
         try:
             client = get_s3_client(conn_id)
@@ -300,7 +301,7 @@ class S3ObjectDetailView(APIView):
 class S3PreviewView(APIView):
     """Preview file content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Preview file content based on type."""
         try:
             client = get_s3_client(conn_id)
@@ -327,10 +328,8 @@ class S3PreviewView(APIView):
                 data = client.get_object(bucket, key)
                 content = data.decode("utf-8", errors="replace")
                 if preview_type == "json":
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         content = json.loads(content)
-                    except json.JSONDecodeError:
-                        pass
 
             # For parquet, get schema
             schema = None
@@ -361,7 +360,7 @@ class S3PreviewView(APIView):
 class S3ProxyView(APIView):
     """Proxy S3 object content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Stream object content."""
         try:
             client = get_s3_client(conn_id)
@@ -372,8 +371,7 @@ class S3ProxyView(APIView):
             stream = client.get_object_stream(bucket, key)
 
             def generate():
-                for chunk in stream.iter_chunks():
-                    yield chunk
+                yield from stream.iter_chunks()
 
             response = StreamingHttpResponse(
                 generate(),
@@ -407,7 +405,7 @@ class S3GeoJSONView(APIView):
         limit = int(request.query_params.get("limit", "1000"))
 
         try:
-            client = get_s3_client(conn_id)
+            get_s3_client(conn_id)  # validates conn_id exists, raises ValueError (→ 404) if not
             s3_path = f"s3://{bucket}/{key}"
 
             # Parse bbox if provided
@@ -570,7 +568,7 @@ class ConversionJobManager:
 class S3ConversionToolsView(APIView):
     """Check available conversion tools."""
 
-    def get(self, request):
+    def get(self, _request):
         """Check which conversion tools are available."""
         tools = {}
 
@@ -668,7 +666,7 @@ class S3ConversionJobsView(APIView):
             status=status.HTTP_202_ACCEPTED,
         )
 
-    def get(self, request, job_id=None):
+    def get(self, _request, job_id=None):
         """Get job status."""
         if not job_id:
             return Response(
