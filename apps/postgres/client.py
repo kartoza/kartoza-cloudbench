@@ -36,8 +36,7 @@ class PGServiceClient:
 
     def list_schema_names(self, database: str | None = None) -> list[str]:
         with self._connect(dbname=database) as conn, conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                     SELECT schema_name
                     FROM information_schema.schemata
                     WHERE schema_name NOT IN (
@@ -46,8 +45,7 @@ class PGServiceClient:
                                               'pg_toast'
                         )
                     ORDER BY schema_name
-                    """
-            )
+                    """)
             return [row[0] for row in cur.fetchall()]
 
     def test_connection(self) -> tuple[bool, str]:
@@ -71,17 +69,14 @@ class PGServiceClient:
                 cur.execute("SHOW max_connections")
                 max_connections = int(cur.fetchone()[0])
 
-                cur.execute(
-                    """
+                cur.execute("""
                             SELECT count(*) FILTER (WHERE state IS NOT NULL), count(*) FILTER (WHERE state = 'active'), count(*) FILTER (WHERE state = 'idle'), count(*) FILTER (WHERE state = 'idle in transaction'), count(*) FILTER (WHERE wait_event_type = 'Lock')
                             FROM pg_stat_activity
                             WHERE datname = current_database()
-                            """
-                )
+                            """)
                 cur_conn, active, idle, idle_txn, waiting = cur.fetchone()
 
-                cur.execute(
-                    """
+                cur.execute("""
                             SELECT s.datname,
                                    d.oid,
                                    pg_size_pretty(pg_database_size(s.datname)),
@@ -104,8 +99,7 @@ class PGServiceClient:
                             FROM pg_stat_database s
                                      JOIN pg_database d ON d.datname = s.datname
                             WHERE s.datname = current_database()
-                            """
-                )
+                            """)
                 row = cur.fetchone()
                 (
                     db_name,
@@ -124,13 +118,11 @@ class PGServiceClient:
                     cache_hit,
                 ) = row
 
-                cur.execute(
-                    """
+                cur.execute("""
                             SELECT COALESCE(sum(n_live_tup), 0),
                                    COALESCE(sum(n_dead_tup), 0)
                             FROM pg_stat_user_tables
-                            """
-                )
+                            """)
                 live_tup, dead_tup = cur.fetchone()
 
                 cur.execute(
@@ -419,8 +411,7 @@ class PGServiceClient:
 
     def list_schemas(self) -> list[dict[str, Any]]:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                             SELECT schema_name
                             FROM information_schema.schemata
                             WHERE schema_name NOT IN (
@@ -429,8 +420,7 @@ class PGServiceClient:
                                                       'pg_toast'
                                 )
                             ORDER BY schema_name
-                            """
-            )
+                            """)
             schema_names = [row[0] for row in cur.fetchall()]
 
             cur.execute(
