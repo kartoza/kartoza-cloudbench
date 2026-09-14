@@ -15,17 +15,33 @@ export function getBaseUrl(): string {
   return import.meta.env.VITE_BASE_URL ?? ''
 }
 
+interface RuntimeConfig {
+  createGeoServerUrl?: string | null
+  createPostgisUrl?: string | null
+  createGeoNodeUrl?: string | null
+}
+
+let runtimeConfig: RuntimeConfig = {}
+
+/**
+ * Populated once at startup from GET /api/frontend-config/ (see
+ * api/frontendConfig.ts, called from main.tsx before the app renders).
+ */
+export function setRuntimeConfig(config: RuntimeConfig): void {
+  runtimeConfig = config
+}
+
 /** URL to open when creating a new GeoServer connection. When set, opens in a new window instead of the dialog. */
 export function getCreateGeoServerUrl(): string | null {
-  return import.meta.env.VITE_CREATE_GEOSERVER_URL ?? null
+  return runtimeConfig.createGeoServerUrl ?? null
 }
 
 /** URL to open when creating a new GeoNode connection. When set, opens in a new window instead of the dialog. */
 export function getCreateGeoNodeUrl(): string | null {
-  return import.meta.env.VITE_CREATE_GEONODE_URL ?? null
+  return runtimeConfig.createGeoNodeUrl ?? null
 }
 
 /** URL to open when creating a new PostgreSQL connection. When set, opens in a new window instead of the dialog. */
 export function getCreatePostGISUrl(): string | null {
-  return import.meta.env.VITE_CREATE_POSTGIS_URL ?? null
+  return runtimeConfig.createPostgisUrl ?? null
 }

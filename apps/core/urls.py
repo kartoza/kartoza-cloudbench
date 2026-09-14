@@ -12,6 +12,7 @@ urlpatterns = [
     # web/src/api/common.ts) and the SSO handoff already produces, so no
     # frontend request-plumbing is SSO-specific.
     path("auth/login/", obtain_auth_token, name="login"),
+    path("frontend-config/", views.FrontendConfigView.as_view(), name="frontend-config"),
     path("settings/", views.SettingsView.as_view(), name="settings"),
     path("providers/", views.ProvidersView.as_view(), name="providers"),
     path(

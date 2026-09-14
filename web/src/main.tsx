@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import theme from './theme'
 import { applySsoTokenFromUrl } from './api/ssoBootstrap'
+import { loadFrontendConfig } from './api/frontendConfig'
 
 // Must run before any component mounts / API call fires — see
 // api/ssoBootstrap.ts for why.
@@ -18,6 +19,10 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// Also must run before the app renders — components read the "Add <type>"
+// URL overrides it populates synchronously (see config/env.ts).
+await loadFrontendConfig()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
