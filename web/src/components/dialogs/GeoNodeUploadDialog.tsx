@@ -137,7 +137,7 @@ export default function GeoNodeUploadDialog() {
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
-  }, [])
+  }, [initialUploadType])
 
   useEffect(() => {
     if (isOpen) resetState()

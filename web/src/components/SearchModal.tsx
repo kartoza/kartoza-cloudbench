@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Modal,
   ModalOverlay,
@@ -124,7 +124,7 @@ export function SearchModal({ isOpen, onClose, onSelect }: SearchModalProps) {
     staleTime: 30 * 1000, // 30 seconds
   })
 
-  const results = searchData?.results || []
+  const results = useMemo(() => searchData?.results || [], [searchData])
   const suggestions = suggestionsData?.suggestions || []
 
   // Reset selection when results change

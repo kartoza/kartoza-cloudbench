@@ -7,7 +7,7 @@ import { springs, staggerContainer, staggerItem, slideUp, expandCollapse } from 
 
 interface QueryResult {
   columns: { name: string; type: string; nullable: boolean }[];
-  rows: Record<string, any>[];
+  rows: Record<string, unknown>[];
   row_count: number;
   duration_ms: number;
   sql: string;

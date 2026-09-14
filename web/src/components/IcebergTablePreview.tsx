@@ -62,6 +62,7 @@ export default function IcebergTablePreview({
   const cardBg = useColorModeValue('white', 'gray.800')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const metaBg = useColorModeValue('gray.50', 'gray.700')
+  const theadBg = useColorModeValue('gray.100', 'gray.600')
 
   // Fetch connection details to get Jupyter URL
   const { data: connectionData } = useQuery({
@@ -415,7 +416,7 @@ export default function IcebergTablePreview({
                   ) : schemaData ? (
                     <Box borderWidth="1px" borderRadius="md" overflow="hidden" maxH="150px" overflowY="auto">
                       <Table size="sm">
-                        <Thead bg={useColorModeValue('gray.100', 'gray.600')}>
+                        <Thead bg={theadBg}>
                           <Tr>
                             <Th fontSize="2xs">Name</Th>
                             <Th fontSize="2xs">Type</Th>

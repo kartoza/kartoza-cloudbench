@@ -52,7 +52,7 @@ export default function DataStorePostGIS({ form, setForm, mode }: Props) {
   useEffect(() => {
     if (mode === PGEditorMode.EDIT) return;
     setForm(DEFAULT_FORM)
-  }, [])
+  }, [mode, setForm])
 
   return (
     <>

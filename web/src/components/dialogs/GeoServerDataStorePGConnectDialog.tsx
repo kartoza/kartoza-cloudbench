@@ -63,7 +63,7 @@ export default function GeoServerDataStorePGConnectDialog() {
     if (databases.length > 0 && !database) {
       setDatabase(databases[0])
     }
-  }, [databases])
+  }, [databases, database])
 
   useEffect(() => {
     if (schemas.length === 0) return

@@ -90,6 +90,8 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
   const [newBucketName, setNewBucketName] = useState('')
   const [isCreatingBucket, setIsCreatingBucket] = useState(false)
   const cardBg = useColorModeValue('white', 'gray.800')
+  const bucketBg = useColorModeValue('gray.50', 'gray.700')
+  const bucketHoverBg = useColorModeValue('orange.50', 'gray.600')
   const openDialog = useUIStore((state) => state.openDialog)
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -346,8 +348,8 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
                   key={bucket.name}
                   p={4}
                   borderRadius="lg"
-                  bg={useColorModeValue('gray.50', 'gray.700')}
-                  _hover={{ bg: useColorModeValue('orange.50', 'gray.600') }}
+                  bg={bucketBg}
+                  _hover={{ bg: bucketHoverBg }}
                   transition="all 0.2s"
                 >
                   <HStack>

@@ -124,7 +124,7 @@ export default function ConnectionDialog() {
       setShowPgPassword(false)
     }
     setTestResult(null)
-  }, [isOpen, isEditMode, connectionId, connections])
+  }, [isOpen, isEditMode, connectionId, connections, dialogData?.data?.type])
 
   const handleTest = async () => {
     setIsTesting(true)

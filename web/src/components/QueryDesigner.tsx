@@ -27,8 +27,15 @@ interface Column {
 interface Condition {
   column: string;
   operator: string;
-  value: any;
+  value: string | number | boolean | null;
   logic: 'AND' | 'OR';
+}
+
+interface QueryResult {
+  columns: { name: string; type?: string }[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  duration_ms: number;
 }
 
 interface OrderBy {
@@ -105,7 +112,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
   const [distinct, setDistinct] = useState(false);
 
   const [generatedSQL, setGeneratedSQL] = useState('');
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState('');
   const [showSQL, setShowSQL] = useState(false);
   const [editableSQL, setEditableSQL] = useState(false);
@@ -453,7 +460,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
                     {!['IS NULL', 'IS NOT NULL'].includes(cond.operator) && (
                       <input
                         type="text"
-                        value={cond.value}
+                        value={String(cond.value ?? '')}
                         onChange={e => updateCondition(i, { value: e.target.value })}
                         placeholder="Value..."
                         className="flex-1 min-w-[80px] p-2 border rounded-lg text-sm dark:bg-gray-800 dark:border-gray-600"
@@ -647,15 +654,15 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-gray-100 dark:bg-gray-800">
                     <tr>
-                      {result.columns?.map((col: any, i: number) => (
+                      {result.columns?.map((col, i: number) => (
                         <th key={i} className="p-2 text-left border-b">{col.name}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {result.rows?.slice(0, 50).map((row: any, i: number) => (
+                    {result.rows?.slice(0, 50).map((row, i: number) => (
                       <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                        {result.columns?.map((col: any, j: number) => (
+                        {result.columns?.map((col, j: number) => (
                           <td key={j} className="p-2 border-b truncate max-w-[150px]">
                             {row[col.name] !== null ? String(row[col.name]) : <span className="text-gray-400">NULL</span>}
                           </td>

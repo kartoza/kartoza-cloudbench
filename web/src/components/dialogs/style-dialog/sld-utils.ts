@@ -124,7 +124,7 @@ export function generateSLD(styleName: string, rules: StyleRule[]): string {
         : ''
 
       // Build the main point symbolizer
-      let mainSymbolizer = `
+      const mainSymbolizer = `
           <PointSymbolizer>
             <Graphic>
               <Mark>

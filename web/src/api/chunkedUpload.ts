@@ -1,11 +1,17 @@
 import { API_BASE } from './common'
 import type { UploadResult } from '../types'
 
+declare global {
+  interface Window {
+    __csrfToken?: string
+  }
+}
+
 // Helper to get CSRF token for XHR requests
 function getCSRFToken(): string {
   const match = document.cookie.match(/csrftoken=([^;]+)/)
   if (match) return match[1]
-  return (window as any).__csrfToken || ''
+  return window.__csrfToken || ''
 }
 
 export const CHUNK_SIZE = 5 * 1024 * 1024

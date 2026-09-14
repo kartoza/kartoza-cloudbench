@@ -165,7 +165,7 @@ export function StyleDialog() {
         setHasChanges(true)
       }
     }
-  }, [rules, name])
+  }, [rules, name, activeTab, content, format])
 
   // Validate SLD content
   const validateContent = useCallback(() => {

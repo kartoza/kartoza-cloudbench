@@ -28,6 +28,11 @@ export function useSchemas(serviceName: string, initialSchema?: string) {
         console.error('Failed to load schemas:', err)
       })
       .finally(() => setLoadingSchemas(false))
+    // selectedSchema is read only as a one-time "has the caller already
+    // picked one" guard, not something this fetch should react to —
+    // adding it would re-fetch the whole schema list every time the
+    // caller picks a schema via the setSelectedSchema this hook returns.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceName])
 
   return { schemas, loadingSchemas, selectedSchema, setSelectedSchema }

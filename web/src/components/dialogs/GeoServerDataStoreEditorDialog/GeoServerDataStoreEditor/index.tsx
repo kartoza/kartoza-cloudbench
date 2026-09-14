@@ -106,7 +106,7 @@ export default function GeoServerDataStoreEditor(
 
   useEffect(() => {
     onPendingChange?.(mutation.isPending)
-  }, [mutation.isPending])
+  }, [mutation.isPending, onPendingChange])
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
