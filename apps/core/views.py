@@ -18,7 +18,7 @@ class FrontendConfigView(APIView):
     container restart — see web/src/config/env.ts.
     """
 
-    def get(self, request):
+    def get(self, _request):
         """Return the "Add <type>" external-URL overrides, if configured."""
         return Response(
             {
