@@ -20,16 +20,22 @@ const queryClient = new QueryClient({
   },
 })
 
-// Also must run before the app renders — components read the "Add <type>"
-// URL overrides it populates synchronously (see config/env.ts).
-await loadFrontendConfig()
+async function bootstrap() {
+  // Must run before the app renders — components read the "Add <type>"
+  // URL overrides it populates synchronously (see config/env.ts). Wrapped
+  // in an async function rather than a top-level await: esbuild's
+  // production build target doesn't support top-level await.
+  await loadFrontendConfig()
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ChakraProvider theme={theme}>
-        <App />
-      </ChakraProvider>
-    </QueryClientProvider>
-  </React.StrictMode>,
-)
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <ChakraProvider theme={theme}>
+          <App />
+        </ChakraProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  )
+}
+
+void bootstrap()

@@ -77,8 +77,7 @@ Edit it afterward if you need non-default admin credentials or a real
 `deployment/docker/Dockerfile`, bind-mounts the repo into the container, and
 attaches to the `django` service — Python, GDAL/PostGIS, and Node are all
 preinstalled, `pip install -e ".[dev]"` and `npm install` (for `web/`) run
-automatically on first create. `nginx` comes up alongside it from the same
-`docker-compose.yml`.
+automatically on first create.
 
 Two services come up alongside each other, mirroring the same split
 GeoHosting's own devcontainer uses: `django` (which VS Code attaches to —

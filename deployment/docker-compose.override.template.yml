@@ -14,11 +14,7 @@ services:
       - ./volumes/static:/app/staticfiles
       - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     ports:
-      - "8000:8000"
-
-  nginx:
-    ports:
-      - "${HTTP_PORT:-8080}:80"
+      - "${HTTP_PORT:-8000}:8000"
 
   vite:
     profiles: [ "dev" ]
