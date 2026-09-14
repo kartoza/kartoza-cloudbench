@@ -29,7 +29,7 @@ services:
   django:
     build:
       context: ../
-      dockerfile: deployment/docker/Dockerfile
+      dockerfile: deployment/docker/Dockerfile-vscode
       target: vscode
     # Distinct tag — MUST NOT reuse the base file's kartoza/cloudbench:$TAG.
     # Any other service that referenced that tag without its own `build:`
@@ -41,7 +41,6 @@ services:
     volumes:
       - ../:/app
       - vscode-static-data:/app/staticfiles
-      - vscode-media-data:/app/media
       - vscode-cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     environment:
       - DJANGO_SETTINGS_MODULE=cloudbench.settings.development

@@ -12,9 +12,14 @@ up:
 up-prod:
 	COMPOSE_FILE=docker-compose.yml docker compose up -d
 
-# Stop all services
+# Start the SSH debug container (PyCharm remote interpreter) and the
+# frontend dev server
+dev:
+	docker compose --profile dev up -d dev vite
+
+# Stop all services (including the dev/vite profile)
 down:
-	docker compose down
+	docker compose --profile dev down
 
 # Follow logs
 logs:

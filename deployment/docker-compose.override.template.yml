@@ -1,8 +1,5 @@
 version: '3.9'
 
-# Development overrides — mounts source code and builds image locally.
-# Usage: docker compose up  (automatically picks up this file)
-
 services:
   django:
     build:
@@ -14,13 +11,8 @@ services:
       - ../cloudbench:/app/cloudbench
       - ../tui:/app/tui
       - ../manage.py:/app/manage.py
-      - static-data:/app/staticfiles
-      - media-data:/app/media
-      - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
-    environment:
-      - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
-      - DJANGO_DEBUG=true
-      - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - ./volumes/static:/app/staticfiles
+      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     ports:
       - "8000:8000"
 
@@ -29,14 +21,50 @@ services:
       - "${HTTP_PORT:-8080}:80"
 
   vite:
+    profiles: [ "dev" ]
     image: node:20-alpine
     working_dir: /app/web
     volumes:
       - ../web:/app/web
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
-      - VITE_API_PROXY_TARGET=http://django:8000
+      - VITE_API_PROXY_TARGET=http://dev:8080
     ports:
       - "5173:5173"
     depends_on:
-      - django
+      - dev
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  dev:
+    profiles: [ "dev" ]
+    build:
+      context: ../
+      dockerfile: deployment/docker/Dockerfile-dev
+      args:
+        BASE_IMAGE: kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
+    image: kartoza/cloudbench:dev
+    environment:
+      - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
+      - DJANGO_DEBUG=true
+      - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    volumes:
+      - ../apps:/app/apps
+      - ../cloudbench:/app/cloudbench
+      - ../tui:/app/tui
+      - ../manage.py:/app/manage.py
+      - ./volumes/static:/app/staticfiles
+      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    ports:
+      - "8091:22"
+      - "8090:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/22' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

@@ -1,7 +1,7 @@
 {
   "name": "CloudBench Dev Container",
   "remoteUser": "vscode",
-  "initializeCommand": "cp -n deployment/.template.env deployment/.env || true",
+  "initializeCommand": "cp -n deployment/.template.env deployment/.env || true && docker build --target prod -t kartoza/cloudbench:latest -f deployment/docker/Dockerfile .",
   "postCreateCommand": "git config --global --add safe.directory /app || true",
   "dockerComposeFile": [
     "../deployment/docker-compose.yml",

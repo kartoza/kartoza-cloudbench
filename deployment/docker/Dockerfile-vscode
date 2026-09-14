@@ -1,0 +1,33 @@
+ARG BASE_IMAGE=kartoza/cloudbench:latest
+FROM ${BASE_IMAGE} AS vscode
+
+# git is needed for VS Code's postCreateCommand and Source Control panel
+# (the prod image never installs it); sudo for the non-root user below.
+# Node is already present in the base image.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends sudo git && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+# Pre-create and chown mount points for the named volumes in
+# docker-compose.override.devcontainer.yml. Docker seeds a brand-new named
+# volume from whatever's already at that path in the image on first mount —
+# if nothing here creates these dirs, Docker auto-creates them as root at
+# mount time, and every management command that writes there (collectstatic,
+# the providers/connections config store under CLOUDBENCH_DATA_FOLDER) then
+# fails with PermissionError under the non-root user below. A *new* volume
+# name alone doesn't fix this — it has to be owned correctly at the source.
+RUN mkdir -p /app/staticfiles /home/web/cloudbench_data && \
+    chown -R $USER_UID:$USER_GID /app/staticfiles /home/web/cloudbench_data
+
+USER $USERNAME
