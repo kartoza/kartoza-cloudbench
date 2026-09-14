@@ -20,6 +20,14 @@ down:
 logs:
 	docker compose logs -f
 
+# Follow frontend (vite) logs
+logs-vite:
+	docker compose logs -f vite
+
+# Open a shell inside the running vite container
+shell-vite:
+	docker compose exec vite sh
+
 # Open Django shell inside container
 shell:
 	docker compose exec django python manage.py shell

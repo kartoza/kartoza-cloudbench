@@ -1,8 +1,5 @@
 .PHONY: all build build-web build-tui build-frontend clean clean-all dev dev-web dev-tui \
-        install test lint format shell migrate kill-server redeploy help \
-        docs docs-build \
-        deploy-build deploy-up deploy-up-prod deploy-down deploy-logs \
-        deploy-shell deploy-migrate deploy-test
+        install test lint format shell migrate kill-server redeploy help
 
 # Version from git tag or commit
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -198,36 +195,6 @@ redeploy: kill-server clean build-web
 install:
 	@echo "Installing dependencies..."
 	$(PIP) install -e ".[dev]"
-
-# === Standalone Deployment (Docker) ===
-# Thin passthrough to deployment/Makefile so you don't need to `cd deployment`
-# first. Requires deployment/.env (copy from deployment/.template.env).
-
-deploy-build:
-	@$(MAKE) -C deployment build
-
-# Dev mode: source-mounted, picks up docker-compose.override.yml automatically.
-deploy-up:
-	@$(MAKE) -C deployment up
-
-# Production mode: base compose file only, no source mounts.
-deploy-up-prod:
-	@$(MAKE) -C deployment up-prod
-
-deploy-down:
-	@$(MAKE) -C deployment down
-
-deploy-logs:
-	@$(MAKE) -C deployment logs
-
-deploy-shell:
-	@$(MAKE) -C deployment shell
-
-deploy-migrate:
-	@$(MAKE) -C deployment migrate
-
-deploy-test:
-	@$(MAKE) -C deployment test
 
 # === Legacy Go Targets (for backward compatibility during migration) ===
 

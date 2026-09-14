@@ -160,47 +160,61 @@ kartoza-cloudbench/
 
 ## Deployment
 
-CloudBench is fully standalone — it does not require GeoHosting to run.
-See `deployment/` for a complete Docker Compose setup (Dockerfile, nginx,
-`.template.env`), the same layout GeoHosting itself uses.
+CloudBench is fully standalone — it does not require any other platform
+to run. 
 
-### Standalone
+## Embedding in Another Website
 
-```bash
-cp deployment/.template.env deployment/.env   # fill in ADMIN_USERNAME/PASSWORD, DJANGO_SECRET_KEY, etc.
-make deploy-up   # picks up docker-compose.override.yml automatically (dev mode, source-mounted)
-```
+CloudBench can optionally be embedded inside another web application via
+iframe, with single sign-on so the visiting user never sees CloudBench's
+own login screen. This is off by default — CloudBench runs fully
+standalone unless you configure it.
 
-Open the app (`http://localhost:${HTTP_PORT}`, default `8080` in the dev
-override) and sign in with `ADMIN_USERNAME`/`ADMIN_PASSWORD` from
-`deployment/.env` (created automatically on first boot by
-`deployment/docker/entrypoint.sh`) at the app's own login screen. From
-there, add your GeoServer/GeoNode/PostGIS connections manually via the UI —
-nothing GeoHosting-specific is required.
+### What CloudBench needs
 
-Other useful targets (run from the repo root — see `make help`):
+Set these in `deployment/.env` (see `deployment/.template.env`):
 
-```bash
-make deploy-build     # rebuild the image after a dependency change
-make deploy-up-prod   # base compose file only, no source mounts (closer to real prod)
-make deploy-logs      # follow logs from all services
-make deploy-shell     # Django shell inside the django container
-make deploy-migrate   # run migrations inside the django container
-make deploy-down      # stop everything
-```
+| Variable | Purpose |
+|----------|---------|
+| `CLOUDBENCH_SERVICE_TOKEN` | Shared secret between CloudBench and the other website's backend. Used two ways: the other website's backend sends it as `Authorization: Bearer <token>` when calling CloudBench's bridge endpoints, and it's also the HMAC key CloudBench uses to sign/verify SSO tokens. Blank by default — the bridge endpoints refuse all requests until this is set. |
+| `CLOUDBENCH_FRAME_ANCESTORS` | Comma-separated list of origins allowed to embed CloudBench in an iframe, e.g. `https://example.com`. Enforced via a `Content-Security-Policy: frame-ancestors` header (`apps/core/middleware.py`) — without this, browsers refuse to render the iframe at all. Blank means only CloudBench's own origin can embed itself. |
+| `CLOUDBENCH_SSO_TOKEN_MAX_AGE` | How long a minted SSO token stays valid, in seconds (default 12 hours). After it expires, a fresh token must be minted — there's no refresh mechanism. |
 
-These are thin passthroughs to `deployment/Makefile` — run `docker compose`
-directly from inside `deployment/` instead if you prefer.
+CloudBench exposes two endpoints for this, both gated behind
+`CLOUDBENCH_SERVICE_TOKEN` (`apps/core/geohosting_bridge.py`,
+`apps/core/sso_auth.py`):
 
-### Embedded in GeoHosting (optional)
+- `POST /api/geohosting/sso-token/` — given `{"owner_user_id": "<id>"}`,
+  returns `{"token": "<signed-token>"}`. `owner_user_id` is an opaque
+  string the other website picks — CloudBench has no user database of
+  its own, so this id is just the key under which that user's
+  connections/settings are stored.
+- `POST` / `DELETE /api/geohosting/instances/` (optional) — lets the
+  other website pre-populate or remove a GeoServer/GeoNode/PostGIS
+  connection for a given `owner_user_id`, so the embedded CloudBench
+  opens with that connection already configured instead of empty.
 
-If you *do* want this instance embedded in a GeoHosting deployment (SSO
-iframe handoff + automatic instance push-sync), set the
-`CLOUDBENCH_SERVICE_TOKEN` / `CLOUDBENCH_FRAME_ANCESTORS` /
-`CLOUDBENCH_SSO_TOKEN_MAX_AGE` variables in `.template.env` — matching
-GeoHosting's own `CLOUDBENCH_SERVICE_TOKEN`/`CLOUDBENCH_BASE_URL`/
-`CLOUDBENCH_FRONTEND_URL` (see `django_project/geohosting/cloudbench/README.md`
-in the GeoHosting repo). Leave them blank for standalone use.
+### What the other website needs
+
+1. **A backend-to-backend call to mint the token.** The other website's
+   *server* (never client-side JS) calls
+   `POST https://<cloudbench-host>/api/geohosting/sso-token/` with
+   `Authorization: Bearer <CLOUDBENCH_SERVICE_TOKEN>` and the logged-in
+   user's id as `owner_user_id`. `CLOUDBENCH_SERVICE_TOKEN` must stay
+   server-side secret — never ship it to the browser.
+2. **An iframe pointed at CloudBench with the token as a URL param**,
+   e.g. `<iframe src="https://<cloudbench-host>/?token=<signed-token>">`.
+   CloudBench's frontend (`web/src/api/ssoBootstrap.ts`) picks the
+   `token` param up on load, stores it the same way a normal login would,
+   and strips it from the URL — no other frontend integration needed.
+3. **Its own origin listed in `CLOUDBENCH_FRAME_ANCESTORS`** on the
+   CloudBench side, or the browser blocks the iframe outright.
+4. **A fresh token per session/page load**, since tokens expire after
+   `CLOUDBENCH_SSO_TOKEN_MAX_AGE` — mint a new one each time the iframe
+   is (re)loaded rather than trying to reuse one.
+5. *(Optional)* Call the instances endpoint above after provisioning a
+   GeoServer/GeoNode/PostGIS instance for a user, so it shows up
+   pre-configured the first time they open the embedded CloudBench.
 
 ## Configuration
 
