@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Modal,
   ModalOverlay,
@@ -84,7 +84,7 @@ function DataViewerContent({ dialogData, onClose }: DataViewerContentProps) {
   const tableName = dialogData?.data?.tableName ?? ''
   const isView = dialogData?.data?.isView ?? false
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!serviceName || !schemaName || !tableName) {
       setError('Missing table information')
       setLoading(false)
@@ -124,11 +124,11 @@ function DataViewerContent({ dialogData, onClose }: DataViewerContentProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [serviceName, schemaName, tableName, page, pageSize, totalRows])
 
   useEffect(() => {
     fetchData()
-  }, [serviceName, schemaName, tableName, page, pageSize])
+  }, [fetchData])
 
   const handleRefresh = () => {
     setTotalRows(null)
@@ -361,7 +361,7 @@ function DataViewerContent({ dialogData, onClose }: DataViewerContentProps) {
           )}
           {data?.result && (
             <Badge colorScheme="green" fontSize="xs">
-              {data.result.execution_time_ms}ms
+              {data.result.duration_ms}ms
             </Badge>
           )}
         </HStack>

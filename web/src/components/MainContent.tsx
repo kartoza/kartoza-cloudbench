@@ -28,6 +28,8 @@ import {
   GeoNodeResourcePanel,
   QFieldCloudPanel,
   MerginMapsProjectPanel,
+  GeoNodeRemoteServicesPanel,
+  GeoNodeRemoteServicesDetailPanel
 } from './panels'
 import {
   DataStoresDashboard,
@@ -379,6 +381,10 @@ export default function MainContent() {
       return <QFieldCloudPanel node={selectedNode} />
     case 'merginmapsproject':
       return <MerginMapsProjectPanel node={selectedNode} />
+    case 'geonoderemoteservices':
+      return <GeoNodeRemoteServicesPanel geonodeConnectionId={selectedNode.geonodeConnectionId || ''} />
+    case 'geonoderemoteservice':
+      return <GeoNodeRemoteServicesDetailPanel geonodeConnectionId={selectedNode.geonodeConnectionId || ''} serviceId={selectedNode.id} name={selectedNode.name} />
     default:
       return <Dashboard />
   }

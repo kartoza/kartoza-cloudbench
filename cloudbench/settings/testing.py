@@ -3,6 +3,8 @@
 Optimized for fast test execution with isolated configuration.
 """
 
+import tempfile
+
 from .base import *  # noqa: F401, F403
 
 # Override debug for testing
@@ -21,6 +23,7 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
 
+
 # Disable migrations for faster test startup
 class DisableMigrations:
     def __contains__(self, item: str) -> bool:
@@ -33,8 +36,6 @@ class DisableMigrations:
 MIGRATION_MODULES = DisableMigrations()
 
 # Use test-specific config directory
-import tempfile
-
 _test_dir = tempfile.mkdtemp(prefix="cloudbench-test-")
 CLOUDBENCH_CONFIG_DIR = _test_dir
 CLOUDBENCH_DATA_DIR = _test_dir
@@ -71,7 +72,6 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
-        "apps.accounts.authentication.APITokenAuthentication",
     ],
     "DEFAULT_PAGINATION_CLASS": None,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",

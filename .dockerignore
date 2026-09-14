@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+*.egg-info/
+dist/
+.venv/
+venv/
+.env
+
+# Node
+web/node_modules/
+node_modules/
+web/dist/
+
+# Django runtime
+db.sqlite3
+staticfiles/
+media/
+
+# Dev/IDE
+.git/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Nix
+.direnv/
+result
+
+# Docs
+docs/
+mkdocs.yml
+
+# Tests
+tests/
+playwright.config.py
+
+# Deployment volumes
+deployment/volumes/
+
+# Misc
+screenshots/
+*.md
+!README.md

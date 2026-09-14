@@ -8,4 +8,5 @@ class PostgresConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.postgres"
+    label = "cloudbench_postgres"
     verbose_name = "PostgreSQL/PostGIS Integration"

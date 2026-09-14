@@ -1,11 +1,10 @@
 """Connections management screen for Kartoza CloudBench TUI."""
 
+import httpx
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Input, Label, Static
-
-import httpx
 
 from apps.core.config import Connection, config_manager
 
@@ -49,9 +48,7 @@ class ConnectionForm(Container):
 
         with Horizontal(classes="form-row"):
             yield Label("URL:", classes="form-label")
-            yield Input(
-                placeholder="http://localhost:8080/geoserver", id="input-url"
-            )
+            yield Input(placeholder="http://localhost:8080/geoserver", id="input-url")
 
         with Horizontal(classes="form-row"):
             yield Label("Username:", classes="form-label")
@@ -179,9 +176,8 @@ class ConnectionsScreen(Screen):
         try:
             # Test connection
             base_url = url.rstrip("/")
-            if not base_url.endswith("/geoserver"):
-                if "/geoserver" not in base_url:
-                    base_url += "/geoserver"
+            if not base_url.endswith("/geoserver") and "/geoserver" not in base_url:
+                base_url += "/geoserver"
 
             with httpx.Client(timeout=10.0) as client:
                 response = client.get(
@@ -194,9 +190,7 @@ class ConnectionsScreen(Screen):
                 elif response.status_code == 401:
                     self.app.notify("Authentication failed", severity="error")
                 else:
-                    self.app.notify(
-                        f"Connection failed: {response.status_code}", severity="error"
-                    )
+                    self.app.notify(f"Connection failed: {response.status_code}", severity="error")
 
         except httpx.ConnectError:
             self.app.notify("Could not connect to server", severity="error")
@@ -259,13 +253,9 @@ class ConnectionsScreen(Screen):
                 )
 
                 if response.status_code == 200:
-                    self.app.notify(
-                        f"Connection '{conn.name}' is working!", severity="information"
-                    )
+                    self.app.notify(f"Connection '{conn.name}' is working!", severity="information")
                 else:
-                    self.app.notify(
-                        f"Connection failed: {response.status_code}", severity="error"
-                    )
+                    self.app.notify(f"Connection failed: {response.status_code}", severity="error")
 
         except Exception as e:
             self.app.notify(f"Error: {str(e)}", severity="error")

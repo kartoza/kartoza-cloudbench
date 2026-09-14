@@ -63,7 +63,7 @@ class BridgePostGISStoreView(APIView):
         }
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Create the datastore
             client.create_datastore(
@@ -102,7 +102,7 @@ class BridgePublishableTablesView(APIView):
         service_name = request.query_params.get("serviceName")
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Get available (unpublished) feature types from GeoServer
             available = client.list_available_featuretypes(workspace, store)
@@ -127,11 +127,13 @@ class BridgePublishableTablesView(APIView):
 
                 tables.append(table_info)
 
-            return Response({
-                "tables": tables,
-                "workspace": workspace,
-                "store": store,
-            })
+            return Response(
+                {
+                    "tables": tables,
+                    "workspace": workspace,
+                    "store": store,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -165,7 +167,7 @@ class BridgePublishLayerView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Create the feature type (publishes the layer)
             client.create_featuretype(
@@ -217,7 +219,7 @@ class BridgeBatchPublishView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             results = []
             for table_config in tables:
@@ -238,24 +240,30 @@ class BridgeBatchPublishView(APIView):
                         title=title,
                         srs=srs,
                     )
-                    results.append({
-                        "table": table_name,
-                        "layer": layer_name,
-                        "status": "published",
-                    })
+                    results.append(
+                        {
+                            "table": table_name,
+                            "layer": layer_name,
+                            "status": "published",
+                        }
+                    )
                 except Exception as e:
-                    results.append({
-                        "table": table_name,
-                        "layer": layer_name,
-                        "status": "error",
-                        "error": str(e),
-                    })
+                    results.append(
+                        {
+                            "table": table_name,
+                            "layer": layer_name,
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
 
-            return Response({
-                "workspace": workspace,
-                "store": store,
-                "results": results,
-            })
+            return Response(
+                {
+                    "workspace": workspace,
+                    "store": store,
+                    "results": results,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},

@@ -8,4 +8,5 @@ class GwcConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.gwc"
+    label = "cloudbench_gwc"
     verbose_name = "GeoWebCache Management"

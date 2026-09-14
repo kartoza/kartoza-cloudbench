@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { API_BASE } from '../api/common'
 
 export interface Provider {
   id: string
@@ -27,7 +28,7 @@ export const useProvidersStore = create<ProvidersState>((set, get) => ({
   fetchProviders: async () => {
     set({ isLoading: true, error: null })
     try {
-      const response = await fetch('/api/providers/')
+      const response = await fetch(`${API_BASE}/providers/`)
       if (!response.ok) {
         throw new Error('Failed to fetch providers')
       }
@@ -46,7 +47,7 @@ export const useProvidersStore = create<ProvidersState>((set, get) => ({
   updateProviders: async (updates: { id: string; enabled: boolean }[]) => {
     set({ isLoading: true, error: null })
     try {
-      const response = await fetch('/api/providers/', {
+      const response = await fetch(`${API_BASE}/providers/`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

@@ -61,6 +61,7 @@ export default function QGISMapLibrePreview({
   const cardBg = useColorModeValue('white', 'gray.800')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const layerBg = useColorModeValue('gray.50', 'gray.700')
+  const layerHoverBg = useColorModeValue('gray.100', 'gray.600')
 
   // Load project metadata
   useEffect(() => {
@@ -353,7 +354,7 @@ export default function QGISMapLibrePreview({
                   py={1}
                   px={2}
                   borderRadius="md"
-                  _hover={{ bg: useColorModeValue('gray.100', 'gray.600') }}
+                  _hover={{ bg: layerHoverBg }}
                 >
                   <HStack spacing={2} flex="1" minW={0}>
                     <ListIcon as={getLayerIcon(layer)} color="green.500" />

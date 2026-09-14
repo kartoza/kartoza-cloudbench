@@ -13,6 +13,7 @@ import {
   MenuList,
   MenuItem,
 } from '@chakra-ui/react'
+import { OnlineStatusIndicator } from '../OnlineStatusIndicator'
 import {
   FiChevronRight,
   FiChevronDown,
@@ -40,6 +41,7 @@ export function TreeNodeRow({
   isSelected,
   isLoading,
   onClick,
+  isOnline,
   onAdd,
   onEdit,
   onDelete,
@@ -57,6 +59,8 @@ export function TreeNodeRow({
   level,
   isLeaf,
   count,
+  ableToEdit = true,
+  ableToDelete = true,
 }: TreeNodeRowProps) {
   const bgColor = useColorModeValue(
     isSelected ? 'kartoza.50' : 'transparent',
@@ -69,14 +73,16 @@ export function TreeNodeRow({
   const chevronColor = useColorModeValue('gray.500', 'gray.400')
   const nodeColor = getNodeColor(node.type)
   const NodeIcon = getNodeIconComponent(node.type)
+  const isEnabled = isOnline == undefined ? true : isOnline ?? true;
 
   return (
     <Flex
       align="center"
       py={2}
       px={2}
-      ml={level * 4}
-      cursor="pointer"
+      ml={(level-1) * 2}
+      cursor={isEnabled ? 'pointer' : 'not-allowed'}
+      opacity={isEnabled ? 1 : 0.4}
       bg={bgColor}
       borderLeft={isSelected ? '3px solid' : '3px solid transparent'}
       borderLeftColor={isSelected ? borderColor : 'transparent'}
@@ -103,6 +109,9 @@ export function TreeNodeRow({
         </Box>
       )}
       {isLeaf && <Box w={4} mr={2} />}
+      {isOnline !== undefined && (
+        <OnlineStatusIndicator isOnline={isOnline} />
+      )}
       <Box
         p={1.5}
         borderRadius="md"
@@ -127,19 +136,6 @@ export function TreeNodeRow({
       >
         {node.name}
       </Text>
-      {count !== undefined && count >= 0 && (
-        <Badge
-          colorScheme={nodeColor.split('.')[0]}
-          variant="subtle"
-          fontSize="xs"
-          borderRadius="full"
-          px={2}
-          mr={2}
-          fontWeight="600"
-        >
-          {count}
-        </Badge>
-      )}
       {/* Add button - always visible for root nodes */}
       {onAdd && (
         <Tooltip label="Add" fontSize="xs">
@@ -155,26 +151,12 @@ export function TreeNodeRow({
           />
         </Tooltip>
       )}
-      {/* Admin link - always visible for connections */}
-      {onOpenAdmin && (
-        <Tooltip label="Open GeoServer Admin" fontSize="xs">
-          <IconButton
-            aria-label="Open Admin"
-            icon={<FiExternalLink size={14} />}
-            size="xs"
-            variant="ghost"
-            colorScheme="blue"
-            onClick={onOpenAdmin}
-            _hover={{ bg: 'blue.50' }}
-            mr={1}
-          />
-        </Tooltip>
-      )}
       <Flex
         gap={1}
         opacity={0}
         _groupHover={{ opacity: 1 }}
         transition="opacity 0.15s"
+        display={isEnabled ? 'flex' : 'none'}
       >
         {(onDownloadConfig || onDownloadData) && (
           <Menu isLazy placement="bottom-end">
@@ -295,7 +277,7 @@ export function TreeNodeRow({
             />
           </Tooltip>
         )}
-        {onEdit && (
+        {onEdit && ableToEdit && (
           <Tooltip label="Edit" fontSize="xs">
             <IconButton
               aria-label="Edit"
@@ -308,7 +290,7 @@ export function TreeNodeRow({
             />
           </Tooltip>
         )}
-        {onDelete && (
+        {onDelete && ableToDelete && (
           <Tooltip label="Delete" fontSize="xs">
             <IconButton
               aria-label="Delete"
@@ -322,6 +304,34 @@ export function TreeNodeRow({
           </Tooltip>
         )}
       </Flex>
+      {/* Admin link - always visible for connections */}
+      {isEnabled && onOpenAdmin && (
+        <Tooltip label="Open Website" fontSize="xs">
+          <IconButton
+            aria-label="Open Admin"
+            icon={<FiExternalLink size={14} />}
+            size="xs"
+            variant="ghost"
+            colorScheme="blue"
+            onClick={onOpenAdmin}
+            _hover={{ bg: 'blue.50' }}
+            mr={1}
+          />
+        </Tooltip>
+      )}
+      {count !== undefined && count >= 0 && (
+        <Badge
+          colorScheme={nodeColor.split('.')[0]}
+          variant="subtle"
+          fontSize="xs"
+          borderRadius="full"
+          px={2}
+          mr={2}
+          fontWeight="600"
+        >
+          {count}
+        </Badge>
+      )}
     </Flex>
   )
 }

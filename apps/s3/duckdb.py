@@ -240,11 +240,13 @@ class DuckDBQueryEngine:
 
         columns = []
         for row in result["rows"]:
-            columns.append({
-                "name": row.get("column_name"),
-                "type": row.get("column_type"),
-                "nullable": row.get("null") == "YES",
-            })
+            columns.append(
+                {
+                    "name": row.get("column_name"),
+                    "type": row.get("column_type"),
+                    "nullable": row.get("null") == "YES",
+                }
+            )
 
         return {"columns": columns}
 

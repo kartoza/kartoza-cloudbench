@@ -8,4 +8,5 @@ class SqlviewConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.sqlview"
+    label = "cloudbench_sqlview"
     verbose_name = "SQL View Publishing"

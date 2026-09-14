@@ -12,9 +12,6 @@ import {
   VStack,
   HStack,
   Progress,
-  List,
-  ListItem,
-  ListIcon,
   Icon,
   Badge,
   useToast,
@@ -27,6 +24,8 @@ import {
   FormLabel,
   Switch,
   Collapse,
+  Alert,
+  AlertIcon,
 } from '@chakra-ui/react'
 import {
   FiFile,
@@ -39,26 +38,81 @@ import {
   FiSettings,
   FiChevronDown,
   FiChevronUp,
+  FiAlertCircle,
+  FiCheckCircle,
+  FiPause,
+  FiPlay,
+  FiUpload,
 } from 'react-icons/fi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
-
-interface FileUpload {
-  file: File
-  progress: number
-  status: 'pending' | 'uploading' | 'uploaded' | 'importing' | 'success' | 'error'
-  error?: string
-  filePath?: string
-  layers?: api.LayerInfo[]
-  isRaster?: boolean
-  jobId?: string
-}
+import {
+  initUploadSession,
+  uploadChunk,
+  cancelUpload,
+  completePGUpload,
+  CHUNK_SIZE,
+} from '../../api/chunkedUpload'
 
 interface SelectedLayer {
   name: string
   selected: boolean
   tableName: string
+}
+
+interface ImportResult {
+  label: string
+  status: 'completed' | 'failed'
+  error?: string
+}
+
+type UploadPhase =
+  | 'idle'
+  | 'chunking'
+  | 'finalizing'
+  | 'detecting'
+  | 'ready'
+  | 'importing'
+  | 'done'
+  | 'error'
+  | 'cancelled'
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+function formatSpeed(bps: number): string {
+  if (bps <= 0) return ''
+  if (bps < 1024) return `${bps.toFixed(0)} B/s`
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`
+  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatEta(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0) return ''
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.ceil(seconds % 60)
+  return `${m}m ${s}s`
+}
+
+const RASTER_EXTENSIONS = ['tif', 'tiff'] as const
+const VECTOR_EXTENSIONS = ['gpkg', 'zip', 'geojson', 'json', 'kml', 'fgb', 'csv'] as const
+const ACCEPTED_EXTENSIONS = [...RASTER_EXTENSIONS, ...VECTOR_EXTENSIONS]
+
+function isRasterFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  return (RASTER_EXTENSIONS as readonly string[]).includes(ext)
+}
+
+function isAcceptedFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  return (ACCEPTED_EXTENSIONS as readonly string[]).includes(ext)
 }
 
 export default function PGUploadDialog() {
@@ -67,399 +121,272 @@ export default function PGUploadDialog() {
   const closeDialog = useUIStore((state) => state.closeDialog)
   const queryClient = useQueryClient()
   const toast = useToast()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [files, setFiles] = useState<FileUpload[]>([])
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadComplete, setUploadComplete] = useState(false)
+  const serviceName = dialogData?.data?.serviceName as string | undefined
+  const initialSchema = dialogData?.data?.schemaName as string | undefined
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [phase, setPhase] = useState<UploadPhase>('idle')
+  const [isPaused, setIsPaused] = useState(false)
+  const [chunksUploaded, setChunksUploaded] = useState(0)
+  const [chunksTotal, setChunksTotal] = useState(0)
+  const [chunkProgress, setChunkProgress] = useState(0)
+  const [speedBps, setSpeedBps] = useState(0)
+  const [etaSeconds, setEtaSeconds] = useState(0)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [assembledPath, setAssembledPath] = useState<string | null>(null)
   const [selectedLayers, setSelectedLayers] = useState<SelectedLayer[]>([])
-  const [loadingLayers, setLoadingLayers] = useState(false)
-  const [importing, setImporting] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [targetSchema, setTargetSchema] = useState('public')
   const [overwrite, setOverwrite] = useState(false)
   const [targetSRID, setTargetSRID] = useState<number | undefined>(undefined)
+  const [rasterTableName, setRasterTableName] = useState('')
   const [ogrStatus, setOgrStatus] = useState<api.OGR2OGRStatus | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [ogrLoading, setOgrLoading] = useState(false)
+  const [importResults, setImportResults] = useState<ImportResult[]>([])
+
+  const sessionIdRef = useRef<string | null>(null)
+  const isPausedRef = useRef(false)
+  const isCancelledRef = useRef(false)
 
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
-  const dropzoneBorder = useColorModeValue('gray.300', 'gray.600')
+  const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
 
   const isOpen = activeDialog === 'pgupload'
-  const serviceName = dialogData?.data?.serviceName as string | undefined
-  const initialSchema = dialogData?.data?.schemaName as string | undefined
+  const isRaster = selectedFile ? isRasterFile(selectedFile.name) : false
+  const isUploading = phase === 'chunking' || phase === 'finalizing'
+  const overallPct = chunksTotal > 0 ? Math.round((chunksUploaded / chunksTotal) * 100) : 0
+  const selectedLayerCount = selectedLayers.filter((l) => l.selected).length
 
-  // Fetch ogr2ogr status when dialog opens
+  const resetState = useCallback(() => {
+    setSelectedFile(null)
+    setPhase('idle')
+    setIsPaused(false)
+    setChunksUploaded(0)
+    setChunksTotal(0)
+    setChunkProgress(0)
+    setSpeedBps(0)
+    setEtaSeconds(0)
+    setErrorMsg('')
+    setAssembledPath(null)
+    setSelectedLayers([])
+    setShowAdvanced(false)
+    setTargetSchema(initialSchema || 'public')
+    setOverwrite(false)
+    setTargetSRID(undefined)
+    setRasterTableName('')
+    setImportResults([])
+    sessionIdRef.current = null
+    isPausedRef.current = false
+    isCancelledRef.current = false
+  }, [initialSchema])
+
   useEffect(() => {
     if (isOpen) {
-      api.getOGR2OGRStatus().then(setOgrStatus).catch(console.error)
-      setFiles([])
-      setUploadComplete(false)
-      setSelectedLayers([])
-      setShowAdvanced(false)
-      setTargetSchema(initialSchema || 'public')
-      setOverwrite(false)
-      setTargetSRID(undefined)
+      resetState()
+      setOgrLoading(true)
+      api.getOGR2OGRStatus()
+        .then(setOgrStatus)
+        .catch(console.error)
+        .finally(() => setOgrLoading(false))
     }
-  }, [isOpen, initialSchema])
+  }, [isOpen, resetState])
 
-  const isRasterFile = (filename: string): boolean => {
-    const ext = filename.toLowerCase().split('.').pop() || ''
-    return ['.tif', '.tiff', '.img', '.jp2', '.ecw', '.sid', '.asc', '.dem', '.hgt', '.nc', '.vrt']
-      .some(rasterExt => rasterExt.slice(1) === ext)
-  }
+  const handleFileSelect = useCallback((file: File) => {
+    if (!isAcceptedFile(file.name)) {
+      setErrorMsg(`Unsupported file type. Accepted: ${ACCEPTED_EXTENSIONS.join(', ')}`)
+      setPhase('error')
+      return
+    }
+    setSelectedFile(file)
+    setPhase('idle')
+    setErrorMsg('')
+    setAssembledPath(null)
+    setSelectedLayers([])
+    const baseName = file.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    setRasterTableName(baseName)
+  }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    const droppedFiles = Array.from(e.dataTransfer.files)
-    addFiles(droppedFiles)
-  }, [])
+    const file = e.dataTransfer.files[0]
+    if (file) handleFileSelect(file)
+  }, [handleFileSelect])
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selectedFiles = Array.from(e.target.files)
-      addFiles(selectedFiles)
-    }
-  }
-
-  const addFiles = (newFiles: File[]) => {
-    if (!ogrStatus) {
-      toast({
-        title: 'Import tools not available',
-        description: 'Please ensure ogr2ogr and raster2pgsql are installed',
-        status: 'warning',
-        duration: 3000,
-      })
-      return
-    }
-
-    const supportedExts = Object.keys(ogrStatus.supported_extensions)
-    const validFiles = newFiles.filter((file) => {
-      const ext = '.' + file.name.toLowerCase().split('.').pop()
-      return supportedExts.includes(ext)
+  const waitIfPaused = (): Promise<void> =>
+    new Promise((resolve) => {
+      const check = () => {
+        if (!isPausedRef.current || isCancelledRef.current) resolve()
+        else setTimeout(check, 200)
+      }
+      check()
     })
 
-    if (validFiles.length < newFiles.length) {
-      toast({
-        title: 'Some files skipped',
-        description: 'Only supported geospatial formats are accepted',
-        status: 'warning',
-        duration: 3000,
-      })
-    }
-
-    setFiles((prev) => [
-      ...prev,
-      ...validFiles.map((file) => ({
-        file,
-        progress: 0,
-        status: 'pending' as const,
-        isRaster: isRasterFile(file.name),
-      })),
-    ])
-    setUploadComplete(false)
-    setSelectedLayers([])
-  }
-
-  const removeFile = (index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index))
-  }
-
   const handleUpload = async () => {
-    if (!serviceName) {
-      toast({
-        title: 'No service selected',
-        description: 'Please select a PostgreSQL service first',
-        status: 'warning',
-        duration: 3000,
-      })
-      return
-    }
+    if (!selectedFile || !serviceName) return
 
-    if (files.length === 0) {
-      toast({
-        title: 'No files selected',
-        description: 'Please select files to upload',
-        status: 'warning',
-        duration: 3000,
-      })
-      return
-    }
+    isCancelledRef.current = false
+    isPausedRef.current = false
+    setPhase('chunking')
+    setChunksUploaded(0)
+    setChunkProgress(0)
+    setSpeedBps(0)
+    setEtaSeconds(0)
 
-    setIsUploading(true)
+    const totalBytes = selectedFile.size
+    const startTime = Date.now()
+    let bytesUploaded = 0
 
-    for (let i = 0; i < files.length; i++) {
-      if (files[i].status !== 'pending') continue
+    try {
+      const { sessionId, totalChunks } = await initUploadSession('', '', selectedFile.name, totalBytes, CHUNK_SIZE)
+      sessionIdRef.current = sessionId
+      setChunksTotal(totalChunks)
 
-      setFiles((prev) =>
-        prev.map((f, idx) =>
-          idx === i ? { ...f, status: 'uploading' as const } : f
-        )
-      )
+      for (let i = 0; i < totalChunks; i++) {
+        if (isCancelledRef.current) break
+        await waitIfPaused()
+        if (isCancelledRef.current) break
 
-      try {
-        const result = await api.uploadFileForImport(files[i].file, (progress) => {
-          setFiles((prev) =>
-            prev.map((f, idx) =>
-              idx === i ? { ...f, progress } : f
-            )
-          )
-        })
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, totalBytes)
+        const chunk = selectedFile.slice(start, end)
+        const chunkBytes = end - start
 
-        // Detect layers in the uploaded file
-        setFiles((prev) =>
-          prev.map((f, idx) =>
-            idx === i ? { ...f, status: 'uploaded' as const, progress: 100, filePath: result.file_path } : f
-          )
-        )
+        await uploadChunk(sessionId, i, chunk, (pct) => setChunkProgress(pct))
 
-        // For vector files, detect available layers
-        if (!files[i].isRaster) {
-          setLoadingLayers(true)
-          try {
-            const layers = await api.detectLayers(result.file_path)
-            setFiles((prev) =>
-              prev.map((f, idx) =>
-                idx === i ? { ...f, layers } : f
-              )
-            )
+        bytesUploaded += chunkBytes
+        const elapsedSec = (Date.now() - startTime) / 1000
+        const speed = elapsedSec > 0 ? bytesUploaded / elapsedSec : 0
+        const eta = speed > 0 ? (totalBytes - bytesUploaded) / speed : 0
 
-            // Add to selected layers
-            if (layers.length > 0) {
-              const newSelectedLayers = layers.map((l) => ({
+        setChunksUploaded(i + 1)
+        setChunkProgress(100)
+        setSpeedBps(speed)
+        setEtaSeconds(eta)
+      }
+
+      if (isCancelledRef.current) {
+        setPhase('cancelled')
+        return
+      }
+
+      setPhase('finalizing')
+      const result = await completePGUpload(sessionId)
+      const filePath = result.path
+
+      if (!filePath) throw new Error('Server did not return file path')
+
+      setAssembledPath(filePath)
+
+      // Detect layers for vector files
+      if (!isRaster) {
+        setPhase('detecting')
+        try {
+          const layers = await api.detectLayers(filePath)
+          const detected = layers.length > 0
+            ? layers.map((l) => ({
                 name: l.name,
                 selected: true,
                 tableName: l.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
               }))
-              setSelectedLayers((prev) => [...prev, ...newSelectedLayers])
-            } else {
-              // Fallback: use filename as layer name when no layers detected
-              const baseName = files[i].file.name.replace(/\.[^/.]+$/, '')
-              const tableName = baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_')
-              setSelectedLayers((prev) => [...prev, {
-                name: baseName,
+            : [{
+                name: selectedFile.name.replace(/\.[^/.]+$/, ''),
                 selected: true,
-                tableName,
-              }])
-            }
-          } catch (err) {
-            console.error('Failed to detect layers:', err)
-            // Fallback: use filename as layer name on error
-            const baseName = files[i].file.name.replace(/\.[^/.]+$/, '')
-            const tableName = baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_')
-            setSelectedLayers((prev) => [...prev, {
-              name: baseName,
-              selected: true,
-              tableName,
-            }])
-          } finally {
-            setLoadingLayers(false)
-          }
+                tableName: selectedFile.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+              }]
+          setSelectedLayers(detected)
+        } catch {
+          const baseName = selectedFile.name.replace(/\.[^/.]+$/, '')
+          setSelectedLayers([{ name: baseName, selected: true, tableName: baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_') }])
         }
-      } catch (err) {
-        setFiles((prev) =>
-          prev.map((f, idx) =>
-            idx === i
-              ? { ...f, status: 'error' as const, error: (err as Error).message }
-              : f
-          )
-        )
+      }
+
+      setPhase('ready')
+    } catch (err) {
+      if (!isCancelledRef.current) {
+        const msg = (err as Error).message
+        setErrorMsg(msg)
+        setPhase('error')
+        toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
     }
+  }
 
-    setIsUploading(false)
-    setUploadComplete(true)
+  const handlePause = () => { isPausedRef.current = true; setIsPaused(true) }
+  const handleResume = () => { isPausedRef.current = false; setIsPaused(false) }
 
-    const successCount = files.filter((f) => f.status === 'uploaded').length
-    if (successCount > 0) {
-      toast({
-        title: 'Files uploaded',
-        description: `${successCount} file(s) ready for import`,
-        status: 'success',
-        duration: 3000,
-      })
+  const handleCancel = async () => {
+    isCancelledRef.current = true
+    isPausedRef.current = false
+    setIsPaused(false)
+    const sessId = sessionIdRef.current
+    if (sessId) {
+      try { await cancelUpload(sessId) } catch { /* best effort */ }
     }
+    setPhase('cancelled')
   }
 
   const handleImport = async () => {
-    if (!serviceName) return
+    if (!serviceName || !assembledPath) return
+    setPhase('importing')
 
-    setImporting(true)
-    const jobIds: string[] = []
+    const results: ImportResult[] = []
 
-    // Import each file
-    for (const fileUpload of files) {
-      if (fileUpload.status !== 'uploaded' || !fileUpload.filePath) continue
-
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.filePath === fileUpload.filePath ? { ...f, status: 'importing' as const } : f
-        )
-      )
-
+    if (isRaster) {
       try {
-        if (fileUpload.isRaster) {
-          // Raster import
-          const result = await api.startRasterImport({
-            source_file: fileUpload.filePath,
-            target_service: serviceName,
-            target_schema: targetSchema,
-            overwrite,
-            create_index: true,
-          })
-          jobIds.push(result.job_id)
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.filePath === fileUpload.filePath ? { ...f, jobId: result.job_id } : f
-            )
-          )
-        } else {
-          // Vector import - import each selected layer
-          const layersToImport = selectedLayers.filter((l) =>
-            l.selected && fileUpload.layers?.some((fl) => fl.name === l.name)
-          )
-
-          for (const layer of layersToImport) {
-            const result = await api.startVectorImport({
-              source_file: fileUpload.filePath,
-              target_service: serviceName,
-              target_schema: targetSchema,
-              table_name: layer.tableName,
-              source_layer: layer.name,
-              overwrite,
-              target_srid: targetSRID,
-            })
-            jobIds.push(result.job_id)
-          }
-        }
-
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.filePath === fileUpload.filePath ? { ...f, status: 'success' as const } : f
-          )
-        )
+        await api.startRasterImport({
+          filePath: assembledPath,
+          serviceName,
+          schema: targetSchema,
+          tableName: rasterTableName,
+          overwrite,
+        })
+        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'completed' })
       } catch (err) {
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.filePath === fileUpload.filePath
-              ? { ...f, status: 'error' as const, error: (err as Error).message }
-              : f
-          )
-        )
+        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'failed', error: (err as Error).message })
       }
-    }
-
-    setImporting(false)
-
-    // Poll for job completion
-    if (jobIds.length > 0) {
-      pollJobStatus(jobIds)
-    }
-
-    // Invalidate queries to refresh the tree
-    queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
-
-    const successCount = files.filter((f) => f.status === 'success').length
-    if (successCount > 0) {
-      toast({
-        title: 'Import started',
-        description: `${successCount} file(s) queued for import`,
-        status: 'success',
-        duration: 3000,
-      })
-    }
-  }
-
-  const pollJobStatus = async (jobIds: string[]) => {
-    const pendingJobs = new Set(jobIds)
-
-    while (pendingJobs.size > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-
-      for (const jobId of Array.from(pendingJobs)) {
+    } else {
+      const layersToImport = selectedLayers.filter((l) => l.selected)
+      for (let i = 0; i < layersToImport.length; i++) {
+        const layer = layersToImport[i]
         try {
-          const status = await api.getImportJobStatus(jobId)
-          if (status.status === 'completed' || status.status === 'failed') {
-            pendingJobs.delete(jobId)
-
-            if (status.status === 'completed') {
-              toast({
-                title: 'Import completed',
-                description: `Table ${status.target_table} created successfully`,
-                status: 'success',
-                duration: 3000,
-              })
-            } else {
-              toast({
-                title: 'Import failed',
-                description: status.error || 'Unknown error',
-                status: 'error',
-                duration: 5000,
-              })
-            }
-          }
+          await api.startVectorImport({
+            filePath: assembledPath,
+            serviceName,
+            schema: targetSchema,
+            tableName: layer.tableName,
+            sourceLayer: layer.name,
+            overwrite,
+            srid: targetSRID,
+            cleanupSource: i === layersToImport.length - 1,
+          })
+          results.push({ label: layer.name, status: 'completed' })
         } catch (err) {
-          pendingJobs.delete(jobId)
+          results.push({ label: layer.name, status: 'failed', error: (err as Error).message })
         }
       }
     }
 
-    // Refresh after all jobs complete
+    setImportResults(results)
+    setPhase('done')
     queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
   }
 
   const toggleLayerSelection = (layerName: string) => {
-    setSelectedLayers((prev) =>
-      prev.map((layer) =>
-        layer.name === layerName ? { ...layer, selected: !layer.selected } : layer
-      )
-    )
+    setSelectedLayers((prev) => prev.map((l) => l.name === layerName ? { ...l, selected: !l.selected } : l))
   }
 
   const updateLayerTableName = (layerName: string, tableName: string) => {
-    setSelectedLayers((prev) =>
-      prev.map((layer) =>
-        layer.name === layerName ? { ...layer, tableName } : layer
-      )
-    )
+    setSelectedLayers((prev) => prev.map((l) => l.name === layerName ? { ...l, tableName } : l))
   }
 
   const handleClose = () => {
-    setFiles([])
-    setUploadComplete(false)
-    setSelectedLayers([])
+    resetState()
     closeDialog()
   }
 
-  const getFileIcon = (upload: FileUpload) => {
-    if (upload.isRaster) return FiImage
-    switch (upload.status) {
-      case 'success':
-        return FiCheck
-      case 'error':
-        return FiX
-      default:
-        return FiFile
-    }
-  }
-
-  const getFileColor = (status: FileUpload['status']) => {
-    switch (status) {
-      case 'success':
-        return 'green.500'
-      case 'error':
-        return 'red.500'
-      case 'importing':
-        return 'blue.500'
-      default:
-        return 'gray.500'
-    }
-  }
-
-  const hasPendingUploads = files.some((f) => f.status === 'pending')
-  const hasUploadedFiles = files.some((f) => f.status === 'uploaded')
-  const selectedLayerCount = selectedLayers.filter((l) => l.selected).length
-
-  if (!ogrStatus?.available) {
+  if (ogrLoading || !ogrStatus?.available) {
     return (
       <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
         <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
@@ -469,24 +396,28 @@ export default function PGUploadDialog() {
               <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
                 <Icon as={FiDatabase} boxSize={5} color="white" />
               </Box>
-              <Text color="white" fontWeight="600" fontSize="lg">
-                Import Data to PostgreSQL
-              </Text>
+              <Text color="white" fontWeight="600" fontSize="lg">Import Data to PostgreSQL</Text>
             </HStack>
           </Box>
           <ModalCloseButton color="white" />
           <ModalBody py={6}>
-            <VStack spacing={4} align="center">
-              <Icon as={FiX} boxSize={12} color="red.500" />
-              <Text fontWeight="600" fontSize="lg">Import Tools Not Available</Text>
-              <Text color="gray.500" textAlign="center">
-                ogr2ogr and raster2pgsql are required for data import.
-                Please install GDAL and PostGIS on the server.
-              </Text>
-            </VStack>
+            {ogrLoading ? (
+              <VStack spacing={4} align="center">
+                <Spinner size="xl" color="blue.500" />
+                <Text color="gray.500">Checking import tools…</Text>
+              </VStack>
+            ) : (
+              <VStack spacing={4} align="center">
+                <Icon as={FiX} boxSize={12} color="red.500" />
+                <Text fontWeight="600" fontSize="lg">Import Tools Not Available</Text>
+                <Text color="gray.500" textAlign="center">
+                  ogr2ogr and raster2pgsql are required. Please install GDAL and PostGIS on the server.
+                </Text>
+              </VStack>
+            )}
           </ModalBody>
           <ModalFooter>
-            <Button onClick={handleClose}>Close</Button>
+            <Button onClick={handleClose} isDisabled={ogrLoading}>Close</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -497,32 +428,19 @@ export default function PGUploadDialog() {
     <Modal isOpen={isOpen} onClose={handleClose} size="xl" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden" maxH="85vh">
-        {/* Gradient Header */}
-        <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
-          px={6}
-          py={4}
-        >
+        <Box bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)" px={6} py={4}>
           <HStack spacing={3}>
             <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
               <Icon as={FiDatabase} boxSize={5} color="white" />
             </Box>
             <Box flex="1">
-              <Text color="white" fontWeight="600" fontSize="lg">
-                Import Data to PostgreSQL
-              </Text>
+              <Text color="white" fontWeight="600" fontSize="lg">Import Data to PostgreSQL</Text>
               <HStack spacing={2}>
-                <Text color="whiteAlpha.800" fontSize="sm">
-                  Target:
-                </Text>
+                <Text color="whiteAlpha.800" fontSize="sm">Target:</Text>
                 {serviceName ? (
-                  <Badge bg="whiteAlpha.200" color="white" fontSize="xs">
-                    {serviceName}
-                  </Badge>
+                  <Badge bg="whiteAlpha.200" color="white" fontSize="xs">{serviceName}</Badge>
                 ) : (
-                  <Text color="whiteAlpha.600" fontSize="sm" fontStyle="italic">
-                    No service selected
-                  </Text>
+                  <Text color="whiteAlpha.600" fontSize="sm" fontStyle="italic">No service selected</Text>
                 )}
               </HStack>
             </Box>
@@ -532,118 +450,141 @@ export default function PGUploadDialog() {
 
         <ModalBody py={6} overflowY="auto">
           <VStack spacing={4}>
-            {/* Dropzone */}
-            {!uploadComplete && (
+            {/* Dropzone — only when idle or cancelled */}
+            {(phase === 'idle' || phase === 'cancelled') && (
               <Box
                 w="100%"
                 p={8}
-                bg={dropzoneBg}
+                bg={selectedFile ? 'purple.50' : dropzoneBg}
                 border="2px dashed"
-                borderColor={dropzoneBorder}
+                borderColor={selectedFile ? 'purple.400' : dropzoneBorderColor}
                 borderRadius="xl"
                 textAlign="center"
                 cursor="pointer"
                 onClick={() => fileInputRef.current?.click()}
                 onDrop={handleDrop}
                 onDragOver={(e) => e.preventDefault()}
-                _hover={{
-                  borderColor: 'purple.500',
-                  bg: 'purple.50',
-                }}
+                _hover={{ borderColor: 'purple.500', bg: 'purple.50' }}
                 transition="all 0.2s"
               >
-                <VStack spacing={3}>
-                  <Box bg="purple.50" p={4} borderRadius="full">
-                    <Icon as={FiUploadCloud} boxSize={10} color="purple.500" />
-                  </Box>
-                  <VStack spacing={1}>
-                    <Text fontWeight="600" color="gray.700">
-                      Drop files here or click to browse
-                    </Text>
-                    <Text fontSize="sm" color="gray.500">
-                      GeoPackage, Shapefile, GeoJSON, GeoTIFF, and more
-                    </Text>
+                {selectedFile ? (
+                  <VStack spacing={2}>
+                    <Icon as={isRaster ? FiImage : FiFile} boxSize={8} color="purple.500" />
+                    <Text fontWeight="500">{selectedFile.name}</Text>
+                    <Text fontSize="sm" color="gray.500">{formatFileSize(selectedFile.size)}</Text>
+                    {isRaster && <Badge colorScheme="purple">Raster</Badge>}
                   </VStack>
-                </VStack>
+                ) : (
+                  <VStack spacing={3}>
+                    <Box bg="purple.50" p={4} borderRadius="full">
+                      <Icon as={FiUploadCloud} boxSize={10} color="purple.500" />
+                    </Box>
+                    <VStack spacing={1}>
+                      <Text fontWeight="600" color="gray.700">Drop a file here or click to browse</Text>
+                      <Text fontSize="sm" color="gray.500">GeoPackage, Zipped Shapefile, GeoJSON, GeoTIFF, KML, FlatGeobuf, CSV</Text>
+                    </VStack>
+                  </VStack>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  multiple
-                  accept=".gpkg,.shp,.zip,.geojson,.json,.kml,.tif,.tiff,.gml"
+                  accept={ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',')}
                   style={{ display: 'none' }}
-                  onChange={handleFileSelect}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
                 />
               </Box>
             )}
 
-            {/* File list */}
-            {files.length > 0 && (
-              <List spacing={2} w="100%">
-                {files.map((upload, index) => (
-                  <ListItem
-                    key={index}
-                    p={3}
-                    bg={dropzoneBg}
-                    borderRadius="lg"
-                    border="1px solid"
-                    borderColor={upload.status === 'success' ? 'green.200' : upload.status === 'error' ? 'red.200' : 'gray.200'}
-                  >
-                    <VStack align="stretch" spacing={2}>
-                      <Box display="flex" alignItems="center" gap={2}>
-                        <ListIcon
-                          as={getFileIcon(upload)}
-                          color={getFileColor(upload.status)}
-                          boxSize={5}
-                        />
-                        <Text flex="1" fontSize="sm" noOfLines={1} fontWeight="500">
-                          {upload.file.name}
-                        </Text>
-                        {upload.isRaster && (
-                          <Badge colorScheme="purple" size="sm">Raster</Badge>
-                        )}
-                        {upload.status === 'pending' && (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorScheme="red"
-                            onClick={() => removeFile(index)}
-                            borderRadius="md"
-                          >
-                            Remove
-                          </Button>
-                        )}
-                        {upload.status === 'success' && (
-                          <Badge colorScheme="green" borderRadius="md">Imported</Badge>
-                        )}
-                        {upload.status === 'importing' && (
-                          <HStack>
-                            <Spinner size="xs" />
-                            <Badge colorScheme="blue" borderRadius="md">Importing</Badge>
+            {/* Upload progress */}
+            {(isUploading || phase === 'done' || phase === 'cancelled' || phase === 'detecting' || phase === 'ready' || phase === 'importing' || phase === 'error') && selectedFile && (
+              <Box
+                w="100%"
+                p={4}
+                bg={dropzoneBg}
+                borderRadius="lg"
+                border="1px solid"
+                borderColor={
+                  phase === 'done' ? 'green.200' :
+                  phase === 'cancelled' ? 'orange.200' :
+                  phase === 'error' ? 'red.200' : 'gray.200'
+                }
+              >
+                <VStack align="stretch" spacing={3}>
+                  <HStack>
+                    <Icon as={isRaster ? FiImage : FiFile} color="purple.500" />
+                    <Text fontWeight="500" flex="1" noOfLines={1}>{selectedFile.name}</Text>
+                    <Text fontSize="sm" color="gray.500">{formatFileSize(selectedFile.size)}</Text>
+                    {isRaster && <Badge colorScheme="purple" size="sm">Raster</Badge>}
+                  </HStack>
+
+                  {phase === 'chunking' && chunksTotal > 0 && (
+                    <>
+                      <Box>
+                        <HStack justify="space-between" mb={1}>
+                          <Text fontSize="xs" color="gray.500">
+                            {chunksTotal > 1 ? `Chunks: ${chunksUploaded}/${chunksTotal}` : 'Uploading…'}
+                          </Text>
+                          <HStack spacing={3}>
+                            {speedBps > 0 && <Text fontSize="xs" color="gray.500">{formatSpeed(speedBps)}</Text>}
+                            {etaSeconds > 0 && <Text fontSize="xs" color="gray.500">ETA: {formatEta(etaSeconds)}</Text>}
                           </HStack>
-                        )}
-                      </Box>
-                      {(upload.status === 'uploading' || upload.status === 'importing') && (
+                        </HStack>
                         <Progress
-                          value={upload.status === 'importing' ? undefined : upload.progress}
-                          isIndeterminate={upload.status === 'importing'}
+                          value={overallPct}
                           size="sm"
-                          colorScheme="purple"
+                          colorScheme={isPaused ? 'yellow' : 'purple'}
                           borderRadius="full"
+                          hasStripe={!isPaused}
+                          isAnimated={!isPaused}
                         />
+                      </Box>
+                      {chunksTotal > 1 && (
+                        <Box>
+                          <Text fontSize="xs" color="gray.400" mb={1}>Current chunk: {chunkProgress}%</Text>
+                          <Progress value={chunkProgress} size="xs" colorScheme="blue" borderRadius="full" opacity={0.7} />
+                        </Box>
                       )}
-                      {upload.status === 'error' && (
-                        <Text fontSize="xs" color="red.500">
-                          {upload.error}
-                        </Text>
-                      )}
-                    </VStack>
-                  </ListItem>
-                ))}
-              </List>
+                      <HStack spacing={2} justify="flex-end">
+                        {!isPaused ? (
+                          <Button size="xs" variant="outline" colorScheme="yellow" onClick={handlePause} leftIcon={<FiPause />}>Pause</Button>
+                        ) : (
+                          <Button size="xs" variant="outline" colorScheme="green" onClick={handleResume} leftIcon={<FiPlay />}>Resume</Button>
+                        )}
+                        <Button size="xs" variant="ghost" colorScheme="red" onClick={handleCancel}>Cancel</Button>
+                      </HStack>
+                    </>
+                  )}
+
+                  {phase === 'finalizing' && (
+                    <Box>
+                      <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>Assembling file…</Text>
+                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="full" />
+                    </Box>
+                  )}
+
+                  {phase === 'detecting' && (
+                    <HStack spacing={2} color="gray.500">
+                      <Spinner size="sm" />
+                      <Text fontSize="sm">Detecting layers…</Text>
+                    </HStack>
+                  )}
+
+                  {(phase === 'ready' || phase === 'importing' || phase === 'done') && (
+                    <Text fontSize="sm" color="green.600" fontWeight="500">
+                      <Icon as={FiCheck} mr={1} />
+                      File ready
+                    </Text>
+                  )}
+
+                  {phase === 'cancelled' && (
+                    <Text fontSize="sm" color="orange.500">Upload cancelled</Text>
+                  )}
+                </VStack>
+              </Box>
             )}
 
-            {/* Layer selection for vector files */}
-            {uploadComplete && selectedLayers.length > 0 && (
+            {/* Layer selection */}
+            {(phase === 'ready' || phase === 'importing' || phase === 'done') && !isRaster && selectedLayers.length > 0 && (
               <>
                 <Divider />
                 <Box w="100%">
@@ -653,62 +594,30 @@ export default function PGUploadDialog() {
                       <Text fontWeight="600">Layers to Import</Text>
                     </HStack>
                     <HStack spacing={2}>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        colorScheme="purple"
-                        onClick={() => {
-                          setSelectedLayers((prev) =>
-                            prev.map((layer) => ({ ...layer, selected: true }))
-                          )
-                        }}
-                        isDisabled={selectedLayers.every((l) => l.selected)}
-                      >
+                      <Button size="xs" variant="outline" colorScheme="purple"
+                        onClick={() => setSelectedLayers((p) => p.map((l) => ({ ...l, selected: true })))}
+                        isDisabled={selectedLayers.every((l) => l.selected)}>
                         Select All
                       </Button>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => {
-                          setSelectedLayers((prev) =>
-                            prev.map((layer) => ({ ...layer, selected: false }))
-                          )
-                        }}
-                        isDisabled={selectedLayers.every((l) => !l.selected)}
-                      >
+                      <Button size="xs" variant="outline"
+                        onClick={() => setSelectedLayers((p) => p.map((l) => ({ ...l, selected: false })))}
+                        isDisabled={selectedLayers.every((l) => !l.selected)}>
                         Deselect All
                       </Button>
                       <Badge colorScheme="purple">{selectedLayerCount} selected</Badge>
                     </HStack>
                   </HStack>
-                  <Text fontSize="sm" color="gray.500" mb={3}>
-                    All {selectedLayers.length} layer(s) detected in the file. Adjust table names if needed:
-                  </Text>
                   <VStack align="stretch" spacing={2} maxH="200px" overflowY="auto">
                     {selectedLayers.map((layer) => (
-                      <Box
-                        key={layer.name}
-                        p={2}
-                        bg={dropzoneBg}
-                        borderRadius="md"
-                        border="1px solid"
-                        borderColor={layer.selected ? 'purple.200' : 'gray.200'}
-                      >
+                      <Box key={layer.name} p={2} bg={dropzoneBg} borderRadius="md" border="1px solid"
+                        borderColor={layer.selected ? 'purple.200' : 'gray.200'}>
                         <HStack spacing={3}>
-                          <Checkbox
-                            isChecked={layer.selected}
-                            onChange={() => toggleLayerSelection(layer.name)}
-                            colorScheme="purple"
-                          />
+                          <Checkbox isChecked={layer.selected} onChange={() => toggleLayerSelection(layer.name)} colorScheme="purple" />
                           <VStack align="stretch" flex="1" spacing={1}>
                             <Text fontSize="sm" fontWeight="500">{layer.name}</Text>
-                            <Input
-                              size="xs"
-                              value={layer.tableName}
+                            <Input size="xs" value={layer.tableName}
                               onChange={(e) => updateLayerTableName(layer.name, e.target.value)}
-                              placeholder="Table name"
-                              isDisabled={!layer.selected}
-                            />
+                              placeholder="Table name" isDisabled={!layer.selected} />
                           </VStack>
                         </HStack>
                       </Box>
@@ -719,51 +628,38 @@ export default function PGUploadDialog() {
             )}
 
             {/* Advanced options */}
-            {uploadComplete && hasUploadedFiles && (
+            {(phase === 'ready' || phase === 'importing' || phase === 'done') && (
               <>
                 <Divider />
                 <Box w="100%">
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <Button variant="ghost" size="sm"
                     leftIcon={showAdvanced ? <FiChevronUp /> : <FiChevronDown />}
                     rightIcon={<FiSettings />}
                     onClick={() => setShowAdvanced(!showAdvanced)}
-                    w="100%"
-                    justifyContent="space-between"
-                  >
+                    w="100%" justifyContent="space-between">
                     Advanced Options
                   </Button>
                   <Collapse in={showAdvanced}>
                     <VStack spacing={4} mt={3} align="stretch" p={3} bg={dropzoneBg} borderRadius="md">
+                      {isRaster && (
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">Table Name</FormLabel>
+                          <Input size="sm" value={rasterTableName} onChange={(e) => setRasterTableName(e.target.value)} placeholder="e.g. my_raster" />
+                        </FormControl>
+                      )}
                       <FormControl>
                         <FormLabel fontSize="sm">Target Schema</FormLabel>
-                        <Input
-                          size="sm"
-                          value={targetSchema}
-                          onChange={(e) => setTargetSchema(e.target.value)}
-                          placeholder="public"
-                        />
+                        <Input size="sm" value={targetSchema} onChange={(e) => setTargetSchema(e.target.value)} placeholder="public" />
                       </FormControl>
                       <FormControl>
                         <FormLabel fontSize="sm">Target SRID (leave empty to keep source)</FormLabel>
-                        <Input
-                          size="sm"
-                          type="number"
-                          value={targetSRID || ''}
+                        <Input size="sm" type="number" value={targetSRID || ''}
                           onChange={(e) => setTargetSRID(e.target.value ? parseInt(e.target.value) : undefined)}
-                          placeholder="e.g. 4326"
-                        />
+                          placeholder="e.g. 4326" />
                       </FormControl>
                       <FormControl display="flex" alignItems="center">
-                        <FormLabel fontSize="sm" mb="0">
-                          Overwrite existing tables
-                        </FormLabel>
-                        <Switch
-                          colorScheme="purple"
-                          isChecked={overwrite}
-                          onChange={(e) => setOverwrite(e.target.checked)}
-                        />
+                        <FormLabel fontSize="sm" mb="0">Overwrite existing tables</FormLabel>
+                        <Switch colorScheme="purple" isChecked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                       </FormControl>
                     </VStack>
                   </Collapse>
@@ -771,34 +667,61 @@ export default function PGUploadDialog() {
               </>
             )}
 
-            {/* Loading layers indicator */}
-            {loadingLayers && (
-              <HStack spacing={2} color="gray.500">
-                <Spinner size="sm" />
-                <Text fontSize="sm">Detecting layers...</Text>
-              </HStack>
+            {/* Error */}
+            {phase === 'error' && (
+              <Alert status="error" borderRadius="lg" variant="subtle">
+                <AlertIcon as={FiAlertCircle} />
+                <Text fontSize="sm">{errorMsg}</Text>
+              </Alert>
+            )}
+
+            {/* Import results */}
+            {phase === 'done' && importResults.length > 0 && (
+              <>
+                <Divider />
+                <Box w="100%">
+                  <HStack mb={3}>
+                    <Icon as={FiDatabase} color="blue.500" />
+                    <Text fontWeight="600">Import Results</Text>
+                  </HStack>
+                  <VStack align="stretch" spacing={2}>
+                    {importResults.map((entry, i) => {
+                      const statusColor = entry.status === 'completed' ? 'green' : 'red'
+                      return (
+                        <Box key={i} p={3} bg={dropzoneBg} borderRadius="md" border="1px solid"
+                          borderColor={`${statusColor}.200`}>
+                          <HStack justify="space-between">
+                            <HStack spacing={2} flex="1" minW={0}>
+                              {entry.status === 'completed'
+                                ? <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
+                                : <Icon as={FiX} color="red.500" flexShrink={0} />}
+                              <Text fontSize="sm" fontWeight="500" noOfLines={1}>{entry.label}</Text>
+                            </HStack>
+                            <Badge colorScheme={statusColor} flexShrink={0}>{entry.status}</Badge>
+                          </HStack>
+                          {entry.status === 'failed' && entry.error && (
+                            <Text fontSize="xs" color="red.500" mt={1}>{entry.error}</Text>
+                          )}
+                        </Box>
+                      )
+                    })}
+                  </VStack>
+                </Box>
+              </>
             )}
           </VStack>
         </ModalBody>
 
-        <ModalFooter
-          gap={3}
-          borderTop="1px solid"
-          borderTopColor="gray.100"
-          bg="gray.50"
-        >
+        <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
-            {uploadComplete ? 'Close' : 'Cancel'}
+            {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
 
-          {/* Show import button if there are uploaded files */}
-          {uploadComplete && hasUploadedFiles && (
+          {phase === 'ready' && (
             <Button
               colorScheme="green"
               onClick={handleImport}
-              isLoading={importing}
-              loadingText="Importing..."
-              isDisabled={selectedLayerCount === 0 && !files.some((f) => f.isRaster && f.status === 'uploaded')}
+              isDisabled={isRaster ? !rasterTableName : selectedLayerCount === 0}
               leftIcon={<FiDatabase />}
               borderRadius="lg"
               px={6}
@@ -807,20 +730,30 @@ export default function PGUploadDialog() {
             </Button>
           )}
 
-          {/* Show upload button if there are pending uploads */}
-          {(!uploadComplete || hasPendingUploads) && (
+          {phase === 'importing' && (
+            <Button colorScheme="green" isLoading loadingText="Importing…" borderRadius="lg" px={6}>
+              Import to PostgreSQL
+            </Button>
+          )}
+
+          {(phase === 'idle' || phase === 'cancelled' || phase === 'error') && (
             <Button
               colorScheme="purple"
               onClick={handleUpload}
-              isLoading={isUploading}
-              loadingText="Uploading..."
-              isDisabled={files.length === 0 || !serviceName || !hasPendingUploads}
-              leftIcon={<FiUploadCloud />}
+              isDisabled={!selectedFile || !serviceName}
+              leftIcon={<FiUpload />}
               borderRadius="lg"
               px={6}
             >
-              Upload {files.filter((f) => f.status === 'pending').length > 0 &&
-                `(${files.filter((f) => f.status === 'pending').length})`}
+              Upload
+            </Button>
+          )}
+
+          {isUploading && (
+            <Button colorScheme="purple" isLoading
+              loadingText={phase === 'finalizing' ? 'Assembling…' : 'Uploading…'}
+              borderRadius="lg" px={6}>
+              Upload
             </Button>
           )}
         </ModalFooter>

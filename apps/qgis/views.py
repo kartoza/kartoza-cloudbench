@@ -8,14 +8,13 @@ Provides endpoints for:
 import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.config import QGISProject, get_config, get_qgis_projects_dir
-from apps.geoserver.client import GeoServerClientManager
+from apps.geoserver.client import get_geoserver_client
 
 
 class QGISProjectListView(APIView):
@@ -23,20 +22,22 @@ class QGISProjectListView(APIView):
 
     def get(self, request):
         """List all QGIS projects."""
-        config = get_config()
+        config = get_config(request.user.id)
         projects = config.config.qgis_projects
 
-        return Response([
-            {
-                "id": p.id,
-                "name": p.name,
-                "path": p.path,
-                "title": p.title,
-                "lastModified": p.lastModified,
-                "size": p.size,
-            }
-            for p in projects
-        ])
+        return Response(
+            [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "path": p.path,
+                    "title": p.title,
+                    "lastModified": p.lastModified,
+                    "size": p.size,
+                }
+                for p in projects
+            ]
+        )
 
     def post(self, request):
         """Upload a new QGIS project file."""
@@ -57,7 +58,7 @@ class QGISProjectListView(APIView):
             )
 
         # Save file to projects directory
-        projects_dir = get_qgis_projects_dir()
+        projects_dir = get_qgis_projects_dir(request.user.id)
         project_id = str(uuid.uuid4())
         file_path = projects_dir / f"{project_id}_{name}"
 
@@ -75,7 +76,7 @@ class QGISProjectListView(APIView):
             size=uploaded_file.size,
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.config.qgis_projects.append(project)
         config.save()
 
@@ -94,20 +95,22 @@ class QGISProjectDetailView(APIView):
 
     def get(self, request, project_id):
         """Get project details."""
-        config = get_config()
+        config = get_config(request.user.id)
 
         for project in config.config.qgis_projects:
             if project.id == project_id:
-                return Response({
-                    "project": {
-                        "id": project.id,
-                        "name": project.name,
-                        "path": project.path,
-                        "title": project.title,
-                        "lastModified": project.lastModified,
-                        "size": project.size,
+                return Response(
+                    {
+                        "project": {
+                            "id": project.id,
+                            "name": project.name,
+                            "path": project.path,
+                            "title": project.title,
+                            "lastModified": project.lastModified,
+                            "size": project.size,
+                        }
                     }
-                })
+                )
 
         return Response(
             {"error": "Project not found"},
@@ -116,7 +119,7 @@ class QGISProjectDetailView(APIView):
 
     def delete(self, request, project_id):
         """Delete a project."""
-        config = get_config()
+        config = get_config(request.user.id)
 
         for i, project in enumerate(config.config.qgis_projects):
             if project.id == project_id:
@@ -174,8 +177,7 @@ class SQLViewPublishView(APIView):
             )
 
         try:
-            manager = GeoServerClientManager()
-            client = manager.get_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
 
             # Create SQL view feature type
             feature_type = {
@@ -270,14 +272,18 @@ class SQLViewValidateView(APIView):
                 if col_lower in ("geom", "geometry", "the_geom", "wkb_geometry"):
                     geometry_columns.append(col)
 
-            return Response({
-                "valid": True,
-                "columns": result.get("columns", []),
-                "geometryColumns": geometry_columns,
-                "rowCount": result.get("rowCount", 0),
-            })
+            return Response(
+                {
+                    "valid": True,
+                    "columns": result.get("columns", []),
+                    "geometryColumns": geometry_columns,
+                    "rowCount": result.get("rowCount", 0),
+                }
+            )
         except Exception as e:
-            return Response({
-                "valid": False,
-                "error": str(e),
-            })
+            return Response(
+                {
+                    "valid": False,
+                    "error": str(e),
+                }
+            )

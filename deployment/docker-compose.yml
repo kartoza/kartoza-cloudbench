@@ -1,0 +1,20 @@
+version: '3.9'
+
+volumes:
+  cloudbench-folder:
+
+services:
+  django:
+    image: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
+    env_file: .env
+    volumes:
+      - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+    ports:
+      - "${HTTP_PORT:-8000}:8000"
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

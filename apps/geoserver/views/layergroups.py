@@ -15,7 +15,7 @@ class LayerGroupListView(APIView):
     def get(self, request, conn_id, workspace):
         """List all layer groups."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             groups = client.list_layergroups(workspace)
             return Response(groups)
         except GeoServerError:
@@ -28,7 +28,7 @@ class LayerGroupDetailView(APIView):
     def get(self, request, conn_id, workspace, layergroup):
         """Get layer group details."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             group = client.get_layergroup(layergroup, workspace)
             return Response({"layerGroup": group})
         except GeoServerError as e:

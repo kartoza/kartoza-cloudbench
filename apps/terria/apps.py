@@ -8,4 +8,5 @@ class TerriaConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.terria"
+    label = "cloudbench_terria"
     verbose_name = "Terria 3D Viewer Integration"

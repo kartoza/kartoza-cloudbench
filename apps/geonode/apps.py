@@ -8,4 +8,5 @@ class GeonodeConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.geonode"
+    label = "cloudbench_geonode"
     verbose_name = "GeoNode Integration"

@@ -1,0 +1,7 @@
+.panel-header {
+  background: linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%);
+  color: white;
+  flex-shrink: 0;
+  justify-content: space-between;
+  align-items: center;
+}

@@ -1,11 +1,32 @@
 """Views for core app - settings and providers endpoints."""
 
-from rest_framework import status
+import os
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .config import config_manager
+from .config import get_config
 from .providers import get_providers_manager
+
+
+class FrontendConfigView(APIView):
+    """Deployment-time config the frontend can't get from its own build.
+
+    Vite's VITE_* env vars are baked into the bundle at `npm run build` and
+    can't change without a rebuild. Reading these from the environment at
+    request time instead lets a deployment set/change them via .env + a
+    container restart — see web/src/config/env.ts.
+    """
+
+    def get(self, _request):
+        """Return the "Add <type>" external-URL overrides, if configured."""
+        return Response(
+            {
+                "createGeoServerUrl": os.environ.get("VITE_CREATE_GEOSERVER_URL") or None,
+                "createPostgisUrl": os.environ.get("VITE_CREATE_POSTGIS_URL") or None,
+                "createGeoNodeUrl": os.environ.get("VITE_CREATE_GEONODE_URL") or None,
+            }
+        )
 
 
 class ProvidersView(APIView):
@@ -16,7 +37,7 @@ class ProvidersView(APIView):
 
         Returns list of providers with their enabled/experimental status.
         """
-        providers = get_providers_manager().list_providers()
+        providers = get_providers_manager(request.user.id).list_providers()
         return Response(
             {
                 "providers": [
@@ -45,15 +66,16 @@ class ProvidersView(APIView):
         """
         data = request.data
         providers_updates = data.get("providers", [])
+        manager = get_providers_manager(request.user.id)
 
         for update in providers_updates:
             provider_id = update.get("id")
             enabled = update.get("enabled")
             if provider_id is not None and enabled is not None:
-                get_providers_manager().set_provider_enabled(provider_id, enabled)
+                manager.set_provider_enabled(provider_id, enabled)
 
         # Return updated list
-        providers = get_providers_manager().list_providers()
+        providers = manager.list_providers()
         return Response(
             {
                 "providers": [
@@ -78,7 +100,7 @@ class SettingsView(APIView):
 
         Returns theme, ping interval, and other app-wide settings.
         """
-        config = config_manager.config
+        config = get_config(request.user.id).config
         return Response(
             {
                 "theme": config.theme,
@@ -98,6 +120,7 @@ class SettingsView(APIView):
         }
         """
         data = request.data
+        config_manager = get_config(request.user.id)
 
         if "theme" in data:
             config_manager.config.theme = data["theme"]

@@ -22,17 +22,19 @@ class MerginConnectionListView(APIView):
 
     def get(self, request):
         """List all Mergin connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_mergin_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "username": c.username,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "username": c.username,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new Mergin connection."""
@@ -46,7 +48,7 @@ class MerginConnectionListView(APIView):
             token=data.get("token", ""),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_mergin_connection(conn)
 
         return Response(
@@ -71,6 +73,7 @@ class MerginConnectionTestView(APIView):
             username=data.get("username", ""),
             password=data.get("password"),
             token=data.get("token"),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -88,7 +91,7 @@ class MerginConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_mergin_connection(conn_id)
         if not conn:
             return Response(
@@ -96,18 +99,20 @@ class MerginConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "username": conn.username,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "username": conn.username,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_mergin_connection(conn_id)
         if not conn:
             return Response(
@@ -132,7 +137,7 @@ class MerginConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_mergin_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -155,9 +160,7 @@ class MerginProjectListView(APIView):
         try:
             client = get_mergin_client(conn_id)
             projects = client.list_projects(namespace=namespace, flag=flag)
-            return Response({
-                "projects": [p.to_dict() for p in projects]
-            })
+            return Response({"projects": [p.to_dict() for p in projects]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -173,7 +176,7 @@ class MerginProjectListView(APIView):
 class MerginProjectDetailView(APIView):
     """Get project details."""
 
-    def get(self, request, conn_id, namespace, name):
+    def get(self, _request, conn_id, namespace, name):
         """Get project information."""
         try:
             client = get_mergin_client(conn_id)
@@ -224,7 +227,7 @@ class MerginProjectFilesView(APIView):
 class MerginProjectVersionsView(APIView):
     """Get project version history."""
 
-    def get(self, request, conn_id, namespace, name):
+    def get(self, _request, conn_id, namespace, name):
         """Get version history."""
         try:
             client = get_mergin_client(conn_id)

@@ -9,6 +9,7 @@ Provides endpoints for:
 - Format conversion
 """
 
+import contextlib
 import json
 import mimetypes
 import subprocess
@@ -16,9 +17,8 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,7 +27,6 @@ from apps.core.config import S3Connection, get_config
 
 from .client import S3Client, S3ClientManager, get_s3_client
 from .duckdb import get_duckdb_engine
-
 
 # ============================================================================
 # S3 Connection Views
@@ -39,19 +38,21 @@ class S3ConnectionListView(APIView):
 
     def get(self, request):
         """List all S3 connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_s3_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "endpoint": c.endpoint,
-                "region": c.region,
-                "useSsl": c.use_ssl,
-                "pathStyle": c.path_style,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "endpoint": c.endpoint,
+                    "region": c.region,
+                    "useSsl": c.use_ssl,
+                    "pathStyle": c.path_style,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new S3 connection."""
@@ -67,7 +68,7 @@ class S3ConnectionListView(APIView):
             path_style=data.get("pathStyle", True),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_s3_connection(conn)
 
         return Response(
@@ -94,6 +95,7 @@ class S3ConnectionTestView(APIView):
             region=data.get("region", "us-east-1"),
             use_ssl=data.get("useSsl", True),
             path_style=data.get("pathStyle", True),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -111,7 +113,7 @@ class S3ConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_s3_connection(conn_id)
         if not conn:
             return Response(
@@ -119,20 +121,22 @@ class S3ConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "endpoint": conn.endpoint,
-                "region": conn.region,
-                "useSsl": conn.use_ssl,
-                "pathStyle": conn.path_style,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "endpoint": conn.endpoint,
+                    "region": conn.region,
+                    "useSsl": conn.use_ssl,
+                    "pathStyle": conn.path_style,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_s3_connection(conn_id)
         if not conn:
             return Response(
@@ -160,7 +164,7 @@ class S3ConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_s3_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -176,7 +180,7 @@ class S3ConnectionDetailView(APIView):
 class S3ConnectionTestExistingView(APIView):
     """Test an existing S3 connection."""
 
-    def post(self, request, conn_id):
+    def post(self, _request, conn_id):
         """Test the connection."""
         try:
             client = get_s3_client(conn_id)
@@ -203,14 +207,12 @@ class S3ConnectionTestExistingView(APIView):
 class S3BucketListView(APIView):
     """List buckets for a connection."""
 
-    def get(self, request, conn_id):
+    def get(self, _request, conn_id):
         """List all accessible buckets."""
         try:
             client = get_s3_client(conn_id)
             buckets = client.list_buckets()
-            return Response({
-                "buckets": [b.to_dict() for b in buckets]
-            })
+            return Response({"buckets": [b.to_dict() for b in buckets]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -258,7 +260,7 @@ class S3ObjectListView(APIView):
 class S3ObjectDetailView(APIView):
     """Get object details or delete object."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Get object metadata."""
         try:
             client = get_s3_client(conn_id)
@@ -275,7 +277,7 @@ class S3ObjectDetailView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-    def delete(self, request, conn_id, bucket, key):
+    def delete(self, _request, conn_id, bucket, key):
         """Delete an object."""
         try:
             client = get_s3_client(conn_id)
@@ -301,7 +303,7 @@ class S3ObjectDetailView(APIView):
 class S3PreviewView(APIView):
     """Preview file content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Preview file content based on type."""
         try:
             client = get_s3_client(conn_id)
@@ -328,10 +330,8 @@ class S3PreviewView(APIView):
                 data = client.get_object(bucket, key)
                 content = data.decode("utf-8", errors="replace")
                 if preview_type == "json":
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         content = json.loads(content)
-                    except json.JSONDecodeError:
-                        pass
 
             # For parquet, get schema
             schema = None
@@ -340,13 +340,15 @@ class S3PreviewView(APIView):
                 s3_path = f"s3://{bucket}/{key}"
                 schema = engine.get_parquet_schema(s3_path, conn_id)
 
-            return Response({
-                "type": preview_type,
-                "contentType": content_type,
-                "size": size,
-                "content": content,
-                "schema": schema,
-            })
+            return Response(
+                {
+                    "type": preview_type,
+                    "contentType": content_type,
+                    "size": size,
+                    "content": content,
+                    "schema": schema,
+                }
+            )
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -362,7 +364,7 @@ class S3PreviewView(APIView):
 class S3ProxyView(APIView):
     """Proxy S3 object content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, _request, conn_id, bucket, key):
         """Stream object content."""
         try:
             client = get_s3_client(conn_id)
@@ -373,8 +375,7 @@ class S3ProxyView(APIView):
             stream = client.get_object_stream(bucket, key)
 
             def generate():
-                for chunk in stream.iter_chunks():
-                    yield chunk
+                yield from stream.iter_chunks()
 
             response = StreamingHttpResponse(
                 generate(),
@@ -408,7 +409,7 @@ class S3GeoJSONView(APIView):
         limit = int(request.query_params.get("limit", "1000"))
 
         try:
-            client = get_s3_client(conn_id)
+            get_s3_client(conn_id)  # validates conn_id exists, raises ValueError (→ 404) if not
             s3_path = f"s3://{bucket}/{key}"
 
             # Parse bbox if provided
@@ -571,7 +572,7 @@ class ConversionJobManager:
 class S3ConversionToolsView(APIView):
     """Check available conversion tools."""
 
-    def get(self, request):
+    def get(self, _request):
         """Check which conversion tools are available."""
         tools = {}
 
@@ -669,7 +670,7 @@ class S3ConversionJobsView(APIView):
             status=status.HTTP_202_ACCEPTED,
         )
 
-    def get(self, request, job_id=None):
+    def get(self, _request, job_id=None):
         """Get job status."""
         if not job_id:
             return Response(
@@ -686,14 +687,16 @@ class S3ConversionJobsView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "id": job.id,
-            "status": job.status,
-            "progress": job.progress,
-            "error": job.error,
-            "createdAt": job.created_at,
-            "completedAt": job.completed_at,
-        })
+        return Response(
+            {
+                "id": job.id,
+                "status": job.status,
+                "progress": job.progress,
+                "error": job.error,
+                "createdAt": job.created_at,
+                "completedAt": job.completed_at,
+            }
+        )
 
 
 class S3UploadView(APIView):
@@ -728,11 +731,14 @@ class S3UploadView(APIView):
                 body=uploaded_file.read(),
                 content_type=content_type,
             )
-            return Response({
-                "key": key,
-                "etag": result.get("etag"),
-                "bucket": bucket,
-            }, status=status.HTTP_201_CREATED)
+            return Response(
+                {
+                    "key": key,
+                    "etag": result.get("etag"),
+                    "bucket": bucket,
+                },
+                status=status.HTTP_201_CREATED,
+            )
         except ValueError as e:
             return Response(
                 {"error": str(e)},

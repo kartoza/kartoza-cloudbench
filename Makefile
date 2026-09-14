@@ -1,6 +1,5 @@
 .PHONY: all build build-web build-tui build-frontend clean clean-all dev dev-web dev-tui \
-        install test lint format shell migrate kill-server redeploy help \
-        docs docs-build
+        install test lint format shell migrate kill-server redeploy help
 
 # Version from git tag or commit
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -246,6 +245,16 @@ help:
 	@echo "  install          Install package with dev dependencies"
 	@echo "  kill-server      Kill running server instances"
 	@echo "  redeploy         Kill, clean, rebuild, restart"
+	@echo ""
+	@echo "Standalone Deployment (Docker, see deployment/.template.env):"
+	@echo "  deploy-build     Build the production Docker image"
+	@echo "  deploy-up        Start full stack in dev mode (source-mounted)"
+	@echo "  deploy-up-prod   Start full stack in production mode"
+	@echo "  deploy-down      Stop the deployment stack"
+	@echo "  deploy-logs      Follow logs from all deployment services"
+	@echo "  deploy-shell     Open Django shell inside the django container"
+	@echo "  deploy-migrate   Run migrations inside the django container"
+	@echo "  deploy-test      Run tests inside the django container"
 	@echo ""
 	@echo "Legacy Go Targets:"
 	@echo "  build-go-tui     Build Go TUI binary"

@@ -190,6 +190,11 @@ export default function DuckDBQueryPanel({
 
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
+    // loadMore is declared later in this component (depends on executeQuery
+    // below it); adding it here would reference it before initialization.
+    // It closes over the same result/loadingMore already listed, so this
+    // effect still re-attaches whenever either of those actually changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, loadingMore])
 
   // Fetch table info on mount

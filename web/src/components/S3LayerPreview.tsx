@@ -880,6 +880,12 @@ export default function S3LayerPreview({
         cesiumViewer.current = null
       }
     }
+    // verticalExaggeration is intentionally read only as this effect's
+    // initial value — the effect below (which does list it as a dep)
+    // applies live updates. Including it here would re-run this expensive
+    // viewer setup/teardown on every slider tick instead of just updating
+    // the existing viewer's scene.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, metadata])
 
   // Update vertical exaggeration when slider changes

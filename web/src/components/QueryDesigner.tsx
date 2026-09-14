@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../config/env';
 import {
   FiPlay,
   FiSave,
@@ -26,8 +27,15 @@ interface Column {
 interface Condition {
   column: string;
   operator: string;
-  value: any;
+  value: string | number | boolean | null;
   logic: 'AND' | 'OR';
+}
+
+interface QueryResult {
+  columns: { name: string; type?: string }[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  duration_ms: number;
 }
 
 interface OrderBy {
@@ -104,7 +112,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
   const [distinct, setDistinct] = useState(false);
 
   const [generatedSQL, setGeneratedSQL] = useState('');
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState('');
   const [showSQL, setShowSQL] = useState(false);
   const [editableSQL, setEditableSQL] = useState(false);
@@ -113,7 +121,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
 
   // Load schema info
   useEffect(() => {
-    fetch(`/api/pg/services/${serviceName}/schema`)
+    fetch(`${getApiBase()}/pg/services/${serviceName}/schema`)
       .then(res => res.json())
       .then(data => {
         if (data.schemas) {
@@ -143,7 +151,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     setError('');
 
     try {
-      const res = await fetch('/api/query/build', {
+      const res = await fetch(`${getApiBase()}/query/build`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildDefinition()),
@@ -169,19 +177,32 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     setResult(null);
 
     try {
-      const res = await fetch('/api/query/execute', {
+      let sql = editableSQL && customSQL ? customSQL : generatedSQL;
+
+      if (!sql) {
+        const buildRes = await fetch(`${getApiBase()}/query/build`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildDefinition()),
+        });
+        const buildData = await buildRes.json();
+        if (!buildData.sql) {
+          setError(buildData.error || 'Failed to build query');
+          return;
+        }
+        sql = buildData.sql;
+        setGeneratedSQL(sql);
+        setShowSQL(true);
+      }
+
+      const res = await fetch(`${getApiBase()}/pg/services/${encodeURIComponent(serviceName)}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          definition: buildDefinition(),
-          service_name: serviceName,
-          max_rows: limit,
-        }),
+        body: JSON.stringify({ query: sql, limit }),
       });
 
       const data = await res.json();
       if (data.success) {
-        setGeneratedSQL(data.sql);
         setResult(data.result);
         setShowSQL(true);
       } else {
@@ -201,7 +222,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
     }
 
     try {
-      const res = await fetch('/api/query/save', {
+      const res = await fetch(`${getApiBase()}/query/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -439,7 +460,7 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
                     {!['IS NULL', 'IS NOT NULL'].includes(cond.operator) && (
                       <input
                         type="text"
-                        value={cond.value}
+                        value={String(cond.value ?? '')}
                         onChange={e => updateCondition(i, { value: e.target.value })}
                         placeholder="Value..."
                         className="flex-1 min-w-[80px] p-2 border rounded-lg text-sm dark:bg-gray-800 dark:border-gray-600"
@@ -633,15 +654,15 @@ export const QueryDesigner: React.FC<QueryDesignerProps> = ({ serviceName, onClo
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-gray-100 dark:bg-gray-800">
                     <tr>
-                      {result.columns?.map((col: any, i: number) => (
+                      {result.columns?.map((col, i: number) => (
                         <th key={i} className="p-2 text-left border-b">{col.name}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {result.rows?.slice(0, 50).map((row: any, i: number) => (
+                    {result.rows?.slice(0, 50).map((row, i: number) => (
                       <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                        {result.columns?.map((col: any, j: number) => (
+                        {result.columns?.map((col, j: number) => (
                           <td key={j} className="p-2 border-b truncate max-w-[150px]">
                             {row[col.name] !== null ? String(row[col.name]) : <span className="text-gray-400">NULL</span>}
                           </td>

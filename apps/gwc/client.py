@@ -9,7 +9,7 @@ import httpx
 
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
-from apps.core.managers import client_manager
+from apps.core.managers import make_client
 
 
 class GWCClient:
@@ -22,8 +22,7 @@ class GWCClient:
             connection: GeoServer connection configuration
         """
         self.connection = connection
-        self._client = client_manager.get_client(
-            f"gwc_{connection.id}",
+        self._client = make_client(
             connection.url,
             connection.username,
             connection.password,

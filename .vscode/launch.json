@@ -2,26 +2,29 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Django: Run server",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/manage.py",
+      "args": ["runserver", "8080"],
+      "django": true,
+      "justMyCode": true,
+      "env": {
+        "DJANGO_SETTINGS_MODULE": "cloudbench.settings.development"
+      }
+    },
+    {
       "name": "Vite Dev Server",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev",
+      "command": "npm run dev -- --host 0.0.0.0",
       "cwd": "${workspaceFolder}/web"
-    },
-    {
-      "name": "Run Web Server",
-      "type": "go",
-      "request": "launch",
-      "mode": "auto",
-      "program": "${workspaceFolder}/cmd/web",
-      "env": {},
-      "args": []
     }
   ],
   "compounds": [
     {
-      "name": "Web: Vite dev + Go server",
-      "configurations": ["Vite Dev Server", "Run Web Server"],
+      "name": "Django + Vite",
+      "configurations": ["Django: Run server", "Vite Dev Server"],
       "stopAll": true
     }
   ]

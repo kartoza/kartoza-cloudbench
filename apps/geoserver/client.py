@@ -3,7 +3,7 @@
 Provides a comprehensive Python client for the GeoServer REST API.
 """
 
-import threading
+import re
 from typing import Any
 from xml.etree import ElementTree as ET
 
@@ -11,7 +11,7 @@ import httpx
 
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
-from apps.core.managers import client_manager
+from apps.core.managers import make_client
 
 
 class GeoServerClient:
@@ -24,8 +24,7 @@ class GeoServerClient:
             connection: GeoServer connection configuration
         """
         self.connection = connection
-        self._client = client_manager.get_client(
-            connection.id,
+        self._client = make_client(
             connection.url,
             connection.username,
             connection.password,
@@ -110,6 +109,11 @@ class GeoServerClient:
             isolated: Whether workspace is isolated
             default: Whether to set as default workspace
         """
+        if not re.match(r"^[A-Za-z0-9_\-]+$", name):
+            raise GeoServerError(
+                "Workspace name must contain only letters, numbers, underscores, and hyphens",
+                status_code=400,
+            )
         payload = {"workspace": {"name": name, "isolated": isolated}}
         response = self._request(
             "POST",
@@ -237,9 +241,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_datastore(
-        self, workspace: str, name: str, recurse: bool = False
-    ) -> None:
+    def delete_datastore(self, workspace: str, name: str, recurse: bool = False) -> None:
         """Delete a data store.
 
         Args:
@@ -285,9 +287,7 @@ class GeoServerClient:
         Returns:
             Coverage store details dictionary
         """
-        data = self._get_json(
-            f"/rest/workspaces/{workspace}/coveragestores/{name}.json"
-        )
+        data = self._get_json(f"/rest/workspaces/{workspace}/coveragestores/{name}.json")
         return data.get("coverageStore", {})
 
     def create_coveragestore(
@@ -332,9 +332,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_coveragestore(
-        self, workspace: str, name: str, recurse: bool = False
-    ) -> None:
+    def delete_coveragestore(self, workspace: str, name: str, recurse: bool = False) -> None:
         """Delete a coverage store.
 
         Args:
@@ -373,9 +371,7 @@ class GeoServerClient:
             return []
         return featuretypes.get("featureType", [])
 
-    def get_featuretype(
-        self, workspace: str, datastore: str, name: str
-    ) -> dict[str, Any]:
+    def get_featuretype(self, workspace: str, datastore: str, name: str) -> dict[str, Any]:
         """Get feature type details.
 
         Args:
@@ -472,9 +468,7 @@ class GeoServerClient:
             return []
         return coverages.get("coverage", [])
 
-    def get_coverage(
-        self, workspace: str, coveragestore: str, name: str
-    ) -> dict[str, Any]:
+    def get_coverage(self, workspace: str, coveragestore: str, name: str) -> dict[str, Any]:
         """Get coverage details.
 
         Args:
@@ -597,7 +591,7 @@ class GeoServerClient:
         # Use WFS GetFeature with resultType=hits
         response = self._request(
             "GET",
-            f"/wfs",
+            "/wfs",
             params={
                 "service": "WFS",
                 "version": "2.0.0",
@@ -657,9 +651,7 @@ class GeoServerClient:
             data = self._get_json(f"/rest/styles/{name}.json")
         return data.get("style", {})
 
-    def get_style_content(
-        self, name: str, workspace: str | None = None
-    ) -> tuple[str, str]:
+    def get_style_content(self, name: str, workspace: str | None = None) -> tuple[str, str]:
         """Get style content (SLD/CSS).
 
         Args:
@@ -719,10 +711,7 @@ class GeoServerClient:
             }
         }
 
-        if workspace:
-            path = f"/rest/workspaces/{workspace}/styles.json"
-        else:
-            path = "/rest/styles.json"
+        path = f"/rest/workspaces/{workspace}/styles.json" if workspace else "/rest/styles.json"
 
         response = self._request("POST", path, json=payload)
         if response.status_code >= 400:
@@ -778,9 +767,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_style(
-        self, name: str, workspace: str | None = None, purge: bool = False
-    ) -> None:
+    def delete_style(self, name: str, workspace: str | None = None, purge: bool = False) -> None:
         """Delete a style.
 
         Args:
@@ -857,15 +844,15 @@ class GeoServerClient:
 
         # Extract default style name (GeoServer returns {name, href} object)
         default_style_obj = layer_data.get("defaultStyle", {})
-        default_style = default_style_obj.get("name", "") if isinstance(default_style_obj, dict) else ""
+        default_style = (
+            default_style_obj.get("name", "") if isinstance(default_style_obj, dict) else ""
+        )
 
         # Extract additional style names
         styles_obj = layer_data.get("styles", {})
         style_list = styles_obj.get("style", []) if isinstance(styles_obj, dict) else []
         additional_styles = [
-            s.get("name", "") if isinstance(s, dict) else s
-            for s in style_list
-            if s
+            s.get("name", "") if isinstance(s, dict) else s for s in style_list if s
         ]
 
         return {
@@ -895,9 +882,7 @@ class GeoServerClient:
         }
 
         if additional_styles:
-            payload["layer"]["styles"] = {
-                "style": [{"name": s} for s in additional_styles]
-            }
+            payload["layer"]["styles"] = {"style": [{"name": s} for s in additional_styles]}
 
         response = self._request(
             "PUT",
@@ -1043,9 +1028,7 @@ class GeoServerClient:
 
     # === Available (Unpublished) Feature Types ===
 
-    def list_available_featuretypes(
-        self, workspace: str, datastore: str
-    ) -> list[str]:
+    def list_available_featuretypes(self, workspace: str, datastore: str) -> list[str]:
         """List available (unpublished) feature types in a data store.
 
         Args:
@@ -1073,22 +1056,13 @@ class GeoServerClient:
 
 
 class GeoServerClientManager:
-    """Thread-safe manager for GeoServer clients."""
+    """Manager for GeoServer clients, scoped per user."""
 
-    _instance: "GeoServerClientManager | None" = None
-    _lock = threading.RLock()
-
-    def __new__(cls) -> "GeoServerClientManager":
-        """Ensure singleton instance."""
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._clients: dict[str, GeoServerClient] = {}
-        return cls._instance
+    def __init__(self, user_id: str = "default") -> None:
+        self._user_id = user_id
 
     def get_client(self, connection_id: str) -> GeoServerClient:
-        """Get or create a GeoServer client.
+        """Get a GeoServer client for the given connection.
 
         Args:
             connection_id: Connection ID
@@ -1099,36 +1073,21 @@ class GeoServerClientManager:
         Raises:
             ValueError: If connection not found
         """
-        with self._lock:
-            if connection_id in self._clients:
-                return self._clients[connection_id]
+        from apps.core.config import get_config
 
-            from apps.core.config import config_manager
+        conn = get_config(self._user_id).get_connection(connection_id)
+        if not conn:
+            raise ValueError(f"GeoServer connection not found: {connection_id}")
 
-            conn = config_manager.get_connection(connection_id)
-            if not conn:
-                raise ValueError(f"GeoServer connection not found: {connection_id}")
-
-            client = GeoServerClient(conn)
-            self._clients[connection_id] = client
-            return client
-
-    def remove_client(self, connection_id: str) -> None:
-        """Remove a cached client."""
-        with self._lock:
-            self._clients.pop(connection_id, None)
-
-    def clear_all(self) -> None:
-        """Clear all cached clients."""
-        with self._lock:
-            self._clients.clear()
+        return GeoServerClient(conn)
 
 
-def get_geoserver_client(conn_id: str) -> GeoServerClient:
+def get_geoserver_client(conn_id: str, user_id: str = "default") -> GeoServerClient:
     """Get a GeoServer client for a connection.
 
     Args:
         conn_id: Connection ID
+        user_id: User ID for config scoping
 
     Returns:
         GeoServerClient instance
@@ -1136,5 +1095,5 @@ def get_geoserver_client(conn_id: str) -> GeoServerClient:
     Raises:
         GeoServerError: If connection not found
     """
-    manager = GeoServerClientManager()
+    manager = GeoServerClientManager(user_id)
     return manager.get_client(conn_id)

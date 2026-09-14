@@ -1,30 +1,32 @@
 import {
-  VStack,
+  Badge,
+  Box,
+  Button,
   Card,
   CardBody,
-  Flex,
-  HStack,
-  Box,
-  Icon,
   Heading,
-  Text,
-  Spacer,
-  Button,
-  Badge,
+  HStack,
+  Icon,
   SimpleGrid,
+  Spacer,
   Stat,
+  StatHelpText,
   StatLabel,
   StatNumber,
-  StatHelpText,
+  Text,
   useColorModeValue,
   useDisclosure,
+  VStack,
 } from '@chakra-ui/react'
-import { FiServer, FiSettings, FiPlus, FiUpload } from 'react-icons/fi'
+import { FiPlus, FiServer, FiSettings } from 'react-icons/fi'
 import { useQuery } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useConnectionStore } from '../../stores/connectionStore'
 import { useUIStore } from '../../stores/uiStore'
 import { SettingsDialog } from '../dialogs/SettingsDialog'
+import { Panel } from "../Panel";
+import { PanelHeader } from "../Panel/PanelHeader";
+import { PanelBody } from "../Panel/PanelBody";
 
 interface ConnectionPanelProps {
   connectionId: string
@@ -50,42 +52,35 @@ export default function ConnectionPanel({ connectionId }: ConnectionPanelProps) 
   if (!connection) return null
 
   return (
-    <VStack spacing={6} align="stretch">
+    <Panel>
       {/* Connection Header */}
-      <Card
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
-        color="white"
-      >
-        <CardBody py={8} px={6}>
-          <Flex align="center" wrap="wrap" gap={4}>
-            <HStack spacing={4}>
-              <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
-                <Icon as={FiServer} boxSize={8} />
-              </Box>
-              <VStack align="start" spacing={0}>
-                <Heading size="lg" color="white">{connection.name}</Heading>
-                <Text color="white" opacity={0.9}>{connection.url}</Text>
-              </VStack>
-            </HStack>
-            <Spacer />
-            <HStack>
-              <Button
-                variant="outline"
-                color="white"
-                borderColor="whiteAlpha.400"
-                _hover={{ bg: 'whiteAlpha.200' }}
-                leftIcon={<FiSettings />}
-                onClick={settingsDisclosure.onOpen}
-              >
-                Service Metadata
-              </Button>
-              <Badge colorScheme="green" fontSize="md" px={4} py={2}>
-                Connected
-              </Badge>
-            </HStack>
-          </Flex>
-        </CardBody>
-      </Card>
+      <PanelHeader>
+        <HStack spacing={4}>
+          <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
+            <Icon as={FiServer} boxSize={8}/>
+          </Box>
+          <VStack align="start" spacing={0}>
+            <Heading size="lg" color="white">{connection.name}</Heading>
+            <Text color="white" opacity={0.9}>{connection.url}</Text>
+          </VStack>
+        </HStack>
+        <Spacer/>
+        <HStack>
+          <Button
+            variant="outline"
+            color="white"
+            borderColor="whiteAlpha.400"
+            _hover={{ bg: 'whiteAlpha.200' }}
+            leftIcon={<FiSettings/>}
+            onClick={settingsDisclosure.onOpen}
+          >
+            Service Metadata
+          </Button>
+          <Badge colorScheme="green" fontSize="md" px={4} py={2}>
+            Connected
+          </Badge>
+        </HStack>
+      </PanelHeader>
 
       {/* Settings Dialog */}
       <SettingsDialog
@@ -95,62 +90,61 @@ export default function ConnectionPanel({ connectionId }: ConnectionPanelProps) 
         connectionName={connection.name}
       />
 
-      {/* Stats */}
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-        <Card bg={cardBg}>
-          <CardBody>
-            <Stat>
-              <StatLabel>Workspaces</StatLabel>
-              <StatNumber color="kartoza.700">{workspaces?.length ?? 0}</StatNumber>
-              <StatHelpText>Total workspaces</StatHelpText>
-            </Stat>
-          </CardBody>
-        </Card>
-        {serverInfo && (
-          <>
-            <Card bg={cardBg}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>GeoServer</StatLabel>
-                  <StatNumber color="kartoza.700" fontSize="xl">{serverInfo.GeoServerVersion}</StatNumber>
-                  <StatHelpText>Version</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-            <Card bg={cardBg}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>GeoTools</StatLabel>
-                  <StatNumber color="kartoza.700" fontSize="xl">{serverInfo.GeoToolsVersion}</StatNumber>
-                  <StatHelpText>Version</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-          </>
-        )}
-      </SimpleGrid>
+      <PanelBody>
+        {/* Stats */}
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+          <Card bg={cardBg}>
+            <CardBody>
+              <Stat>
+                <StatLabel>Workspaces</StatLabel>
+                <StatNumber
+                  color="kartoza.700">{workspaces?.length ?? 0}</StatNumber>
+                <StatHelpText>Total workspaces</StatHelpText>
+              </Stat>
+            </CardBody>
+          </Card>
+          {serverInfo && (
+            <>
+              <Card bg={cardBg}>
+                <CardBody>
+                  <Stat>
+                    <StatLabel>GeoServer</StatLabel>
+                    <StatNumber color="kartoza.700"
+                                fontSize="xl">{serverInfo.GeoServerVersion}</StatNumber>
+                    <StatHelpText>Version</StatHelpText>
+                  </Stat>
+                </CardBody>
+              </Card>
+              <Card bg={cardBg}>
+                <CardBody>
+                  <Stat>
+                    <StatLabel>GeoTools</StatLabel>
+                    <StatNumber color="kartoza.700"
+                                fontSize="xl">{serverInfo.GeoToolsVersion}</StatNumber>
+                    <StatHelpText>Version</StatHelpText>
+                  </Stat>
+                </CardBody>
+              </Card>
+            </>
+          )}
+        </SimpleGrid>
 
-      {/* Actions */}
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-        <Button
-          size="lg"
-          variant="accent"
-          leftIcon={<FiPlus />}
-          onClick={() => openDialog('workspace', { mode: 'create', data: { connectionId } })}
-          py={8}
-        >
-          Create New Workspace
-        </Button>
-        <Button
-          size="lg"
-          variant="outline"
-          leftIcon={<FiUpload />}
-          onClick={() => openDialog('upload', { mode: 'create' })}
-          py={8}
-        >
-          Upload Data
-        </Button>
-      </SimpleGrid>
-    </VStack>
+        {/* Actions */}
+        <SimpleGrid columns={{ base: 1 }} spacing={4}>
+          <Button
+            size="lg"
+            variant="accent"
+            leftIcon={<FiPlus/>}
+            onClick={() => openDialog('workspace', {
+              mode: 'create',
+              data: { connectionId }
+            })}
+            py={8}
+          >
+            Create New Workspace
+          </Button>
+        </SimpleGrid>
+      </PanelBody>
+    </Panel>
   )
 }

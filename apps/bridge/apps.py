@@ -8,4 +8,5 @@ class BridgeConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.bridge"
+    label = "cloudbench_bridge"
     verbose_name = "PostgreSQL to GeoServer Bridge"

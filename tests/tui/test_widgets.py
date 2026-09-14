@@ -5,7 +5,6 @@ Tests custom Textual widgets used in the CloudBench TUI.
 
 import pytest
 
-
 pytestmark = [
     pytest.mark.tui,
     pytest.mark.asyncio,

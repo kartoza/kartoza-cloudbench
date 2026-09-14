@@ -16,7 +16,7 @@ class FeatureTypeListView(APIView):
     def get(self, request, conn_id, workspace, store):
         """List all feature types."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             featuretypes = client.list_featuretypes(workspace, store)
             return Response(featuretypes)
         except GeoServerError:
@@ -25,7 +25,7 @@ class FeatureTypeListView(APIView):
     def post(self, request, conn_id, workspace, store):
         """Publish a feature type."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             name = request.data.get("name")
             native_name = request.data.get("nativeName", name)
             title = request.data.get("title", name)
@@ -52,7 +52,7 @@ class FeatureTypeDetailView(APIView):
     def get(self, request, conn_id, workspace, store, featuretype):
         """Get feature type details."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             ft = client.get_featuretype(workspace, store, featuretype)
             return Response({"featureType": ft})
         except GeoServerError as e:
@@ -61,7 +61,7 @@ class FeatureTypeDetailView(APIView):
     def delete(self, request, conn_id, workspace, store, featuretype):
         """Delete a feature type."""
         try:
-            client = get_geoserver_client(conn_id)
+            client = get_geoserver_client(conn_id, str(request.user.id))
             recurse = get_recurse_param(request)
             client.delete_featuretype(workspace, store, featuretype, recurse=recurse)
             return Response(status=status.HTTP_204_NO_CONTENT)

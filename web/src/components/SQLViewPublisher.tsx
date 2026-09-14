@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../config/env';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FiDatabase,
@@ -105,7 +106,7 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
   // Load workspaces when connection changes
   useEffect(() => {
     if (selectedConnection) {
-      fetch(`/api/workspaces/${selectedConnection}`)
+      fetch(`${getApiBase()}/workspaces/${selectedConnection}`)
         .then(res => res.json())
         .then(data => {
           const ws = data.workspaces?.workspace || [];
@@ -121,7 +122,7 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
   // Load PostGIS datastores when workspace changes
   useEffect(() => {
     if (selectedConnection && selectedWorkspace) {
-      fetch(`/api/sqlview/datastores?connection=${selectedConnection}&workspace=${selectedWorkspace}`)
+      fetch(`${getApiBase()}/sqlview/datastores?connection=${selectedConnection}&workspace=${selectedWorkspace}`)
         .then(res => res.json())
         .then(data => {
           const stores = data.datastores || [];
@@ -142,7 +143,7 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
 
     setDetecting(true);
     try {
-      const response = await fetch('/api/sqlview/detect', {
+      const response = await fetch(`${getApiBase()}/sqlview/detect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -175,7 +176,7 @@ export const SQLViewPublisher: React.FC<SQLViewPublisherProps> = ({
     setError('');
 
     try {
-      const response = await fetch('/api/sqlview', {
+      const response = await fetch(`${getApiBase()}/sqlview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

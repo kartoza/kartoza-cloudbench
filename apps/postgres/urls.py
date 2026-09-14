@@ -11,6 +11,13 @@ urlpatterns = [
         views.PGServiceListView.as_view(),
         name="pg-service-list",
     ),
+    # Must come before pg/services/<str:name> or "test" would be swallowed
+    # as a service name.
+    path(
+        "pg/services/test",
+        views.PGServiceTestDirectView.as_view(),
+        name="pg-service-test-direct",
+    ),
     path(
         "pg/services/<str:name>",
         views.PGServiceDetailView.as_view(),
@@ -21,11 +28,31 @@ urlpatterns = [
         views.PGServiceTestView.as_view(),
         name="pg-service-test",
     ),
+    path(
+        "pg/services/<str:name>/stats",
+        views.PGServiceStatsView.as_view(),
+        name="pg-service-stats",
+    ),
     # Schema and Tables - use service_name to match view parameter
+    path(
+        "pg/services/<str:service_name>/database-names",
+        views.PGDatabaseNameListView.as_view(),
+        name="pg-database-names",
+    ),
+    path(
+        "pg/services/<str:service_name>/schema-names/<str:database_name>",
+        views.PGSchemaNameListView.as_view(),
+        name="pg-schema-names",
+    ),
     path(
         "pg/services/<str:service_name>/schemas",
         views.PGSchemaListView.as_view(),
         name="pg-schema-list",
+    ),
+    path(
+        "pg/services/<str:service_name>/schemas/<str:schema_name>/stats",
+        views.PGSchemaStatsView.as_view(),
+        name="pg-schema-stats",
     ),
     path(
         "pg/services/<str:service_name>/schemas/<str:schema_name>/tables",
@@ -48,6 +75,12 @@ urlpatterns = [
         views.PGQueryView.as_view(),
         name="pg-query",
     ),
+    # Upload complete (assemble only, file kept for detect-layers)
+    path(
+        "pg/upload/complete",
+        views.PGUploadCompleteView.as_view(),
+        name="pg-upload-complete",
+    ),
     # Import
     path(
         "pg/import",
@@ -69,5 +102,11 @@ urlpatterns = [
         "pg/detect-layers",
         views.PGDetectLayersView.as_view(),
         name="pg-detect-layers",
+    ),
+    # OGR2OGR
+    path(
+        "pg/ogr2ogr/status",
+        views.OGR2OGRStatusView.as_view(),
+        name="pg-ogr2ogr-status",
     ),
 ]

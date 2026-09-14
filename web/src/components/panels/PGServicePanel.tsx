@@ -1,52 +1,53 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  VStack,
+  Badge,
+  Box,
+  Button,
   Card,
   CardBody,
-  HStack,
-  Box,
-  Icon,
+  Center,
   Heading,
-  Text,
-  Spacer,
-  Button,
-  Badge,
+  HStack,
+  Icon,
+  Progress,
   SimpleGrid,
+  Spinner,
   Stat,
+  StatHelpText,
   StatLabel,
   StatNumber,
-  StatHelpText,
-  Progress,
+  Tag,
+  Text,
+  Tooltip,
+  useColorModeValue,
+  VStack,
   Wrap,
   WrapItem,
-  Tag,
-  Tooltip,
-  Center,
-  Spinner,
-  Flex,
-  useColorModeValue,
 } from '@chakra-ui/react'
 import {
-  FiUsers,
   FiActivity,
-  FiClock,
-  FiZap,
-  FiHardDrive,
-  FiDatabase,
-  FiTable,
-  FiLayers,
-  FiEye,
-  FiCode,
-  FiGlobe,
-  FiServer,
-  FiCheckCircle,
   FiAlertCircle,
+  FiCheckCircle,
+  FiClock,
+  FiCode,
+  FiDatabase,
+  FiEye,
+  FiGlobe,
+  FiHardDrive,
+  FiLayers,
+  FiServer,
+  FiTable,
   FiUpload,
+  FiUsers,
+  FiZap,
 } from 'react-icons/fi'
 import { SiPostgresql } from 'react-icons/si'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
 import ServerLocationMap from '../common/ServerLocationMap'
+import { Panel } from "../Panel";
+import { PanelHeader } from "../Panel/PanelHeader";
+import { PanelBody } from "../Panel/PanelBody";
 
 interface PGStatCardProps {
   label: string
@@ -56,7 +57,14 @@ interface PGStatCardProps {
   colorScheme?: string
 }
 
-function PGStatCard({ label, value, helpText, icon, colorScheme = 'blue' }: PGStatCardProps) {
+function PGStatCard(
+  {
+    label,
+    value,
+    helpText,
+    icon,
+    colorScheme = 'blue'
+  }: PGStatCardProps) {
   const bg = useColorModeValue('white', 'gray.700')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
 
@@ -78,7 +86,7 @@ function PGStatCard({ label, value, helpText, icon, colorScheme = 'blue' }: PGSt
           bg={`${colorScheme}.50`}
           color={`${colorScheme}.500`}
         >
-          <Icon as={icon} boxSize={5} />
+          <Icon as={icon} boxSize={5}/>
         </Box>
         <Text fontSize="sm" fontWeight="medium" color="gray.500">
           {label}
@@ -128,7 +136,7 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
     return (
       <Center h="400px">
         <VStack spacing={4}>
-          <Spinner size="xl" color="blue.500" thickness="4px" />
+          <Spinner size="xl" color="blue.500" thickness="4px"/>
           <Text color="gray.500">Loading server statistics...</Text>
         </VStack>
       </Center>
@@ -139,7 +147,7 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
     return (
       <Center h="400px">
         <VStack spacing={4}>
-          <Icon as={FiAlertCircle} boxSize={12} color="red.500" />
+          <Icon as={FiAlertCircle} boxSize={12} color="red.500"/>
           <Text color="red.500" fontWeight="medium">{error}</Text>
         </VStack>
       </Center>
@@ -149,308 +157,308 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
   if (!stats) return null
 
   return (
-    <VStack spacing={6} align="stretch">
+    <Panel>
       {/* Header Card */}
-      <Card
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
-        color="white"
-      >
-        <CardBody py={8} px={6}>
-          <Flex align="center" wrap="wrap" gap={4}>
-            <HStack spacing={4}>
-              <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
-                <Icon as={SiPostgresql} boxSize={8} />
-              </Box>
-              <VStack align="start" spacing={1}>
-                <HStack spacing={3}>
-                  <Heading size="lg" color="white">{serviceName}</Heading>
-                  <Badge
-                    colorScheme="green"
-                    variant="solid"
-                    fontSize="xs"
-                    px={2}
-                    py={1}
-                    borderRadius="full"
-                  >
-                    <HStack spacing={1}>
-                      <Icon as={FiCheckCircle} boxSize={3} />
-                      <Text>Connected</Text>
-                    </HStack>
-                  </Badge>
-                </HStack>
-                <HStack spacing={3} opacity={0.9}>
-                  <Text fontSize="sm">{stats.database_name}</Text>
-                  <Text fontSize="sm">|</Text>
-                  <Text fontSize="sm">{pgVersionShort}</Text>
-                  {stats.has_postgis && (
-                    <>
-                      <Text fontSize="sm">|</Text>
-                      <HStack spacing={1}>
-                        <Icon as={FiGlobe} boxSize={4} />
-                        <Text fontSize="sm">PostGIS</Text>
-                      </HStack>
-                    </>
-                  )}
-                </HStack>
-              </VStack>
-            </HStack>
-            <Spacer />
-            <HStack wrap="wrap" gap={2}>
-              <Button
-                variant="solid"
-                bg="whiteAlpha.200"
-                color="white"
-                _hover={{ bg: 'whiteAlpha.300' }}
-                leftIcon={<FiCode />}
-                onClick={() => setPGQuery({
-                  serviceName,
-                })}
-              >
-                SQL Query
-              </Button>
-              <Button
-                variant="outline"
-                color="white"
-                borderColor="whiteAlpha.400"
-                _hover={{ bg: 'whiteAlpha.200' }}
-                leftIcon={<FiUpload />}
-                onClick={() => openDialog('pgupload', {
-                  mode: 'create',
-                  data: { serviceName },
-                })}
-              >
-                Import Data
-              </Button>
-            </HStack>
-          </Flex>
-        </CardBody>
-      </Card>
-
-      {/* Server Location Map */}
-      <ServerLocationMap host={stats.host} />
-
-      {/* Connection Stats */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiUsers} color="purple.500" />
-            <Text fontWeight="semibold" fontSize="lg">Connections</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-            <PGStatCard
-              label="Current"
-              value={stats.current_connections}
-              helpText={`of ${stats.max_connections} max`}
-              icon={FiUsers}
-              colorScheme="purple"
-            />
-            <PGStatCard
-              label="Active"
-              value={stats.active_connections}
-              helpText="executing queries"
-              icon={FiActivity}
-              colorScheme="green"
-            />
-            <PGStatCard
-              label="Idle"
-              value={stats.idle_connections}
-              helpText="waiting for work"
-              icon={FiClock}
-              colorScheme="blue"
-            />
-            <PGStatCard
-              label="Waiting"
-              value={stats.waiting_connections}
-              helpText="blocked on locks"
-              icon={FiZap}
-              colorScheme="orange"
-            />
-          </SimpleGrid>
-          <Box mt={4}>
-            <HStack justify="space-between" mb={2}>
-              <Text fontSize="sm" color="gray.500">Connection Pool Usage</Text>
-              <Text fontSize="sm" fontWeight="bold">{stats.connection_percent}%</Text>
-            </HStack>
-            <Progress
-              value={stats.connection_percent}
-              colorScheme={stats.connection_percent > 80 ? 'red' : stats.connection_percent > 60 ? 'orange' : 'green'}
-              borderRadius="full"
-              size="lg"
-            />
+      <PanelHeader>
+        <HStack spacing={4}>
+          <Box bg="whiteAlpha.200" p={3} borderRadius="lg">
+            <Icon as={SiPostgresql} boxSize={8}/>
           </Box>
-        </CardBody>
-      </Card>
+          <VStack align="start" spacing={1}>
+            <HStack spacing={3}>
+              <Heading size="lg" color="white">{serviceName}</Heading>
+              <Badge
+                colorScheme="green"
+                variant="solid"
+                fontSize="xs"
+                px={2}
+                py={1}
+                borderRadius="full"
+              >
+                <HStack spacing={1}>
+                  <Icon as={FiCheckCircle} boxSize={3}/>
+                  <Text>Connected</Text>
+                </HStack>
+              </Badge>
+            </HStack>
+            <HStack spacing={3} opacity={0.9}>
+              <Text fontSize="sm">{stats.database_name}</Text>
+              <Text fontSize="sm">|</Text>
+              <Text fontSize="sm">{pgVersionShort}</Text>
+              {stats.has_postgis && (
+                <>
+                  <Text fontSize="sm">|</Text>
+                  <HStack spacing={1}>
+                    <Icon as={FiGlobe} boxSize={4}/>
+                    <Text fontSize="sm">PostGIS</Text>
+                  </HStack>
+                </>
+              )}
+            </HStack>
+          </VStack>
+        </HStack>
+        <HStack wrap="wrap" gap={2}>
+          <Button
+            variant="solid"
+            bg="whiteAlpha.200"
+            color="white"
+            _hover={{ bg: 'whiteAlpha.300' }}
+            leftIcon={<FiCode/>}
+            onClick={() => setPGQuery({
+              serviceName,
+            })}
+          >
+            SQL Query
+          </Button>
+          <Button
+            variant="outline"
+            color="white"
+            borderColor="whiteAlpha.400"
+            _hover={{ bg: 'whiteAlpha.200' }}
+            leftIcon={<FiUpload/>}
+            onClick={() => openDialog('pgupload', {
+              mode: 'create',
+              data: { serviceName },
+            })}
+          >
+            Import Data
+          </Button>
+        </HStack>
+      </PanelHeader>
 
-      {/* Database Stats */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiDatabase} color="blue.500" />
-            <Text fontWeight="semibold" fontSize="lg">Database</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-            <PGStatCard
-              label="Size"
-              value={stats.database_size}
-              icon={FiHardDrive}
-              colorScheme="blue"
-            />
-            <PGStatCard
-              label="Cache Hit Ratio"
-              value={stats.cache_hit_ratio}
-              helpText="higher is better"
-              icon={FiZap}
-              colorScheme="green"
-            />
-            <PGStatCard
-              label="Live Tuples"
-              value={stats.live_tuples.toLocaleString()}
-              icon={FiTable}
-              colorScheme="purple"
-            />
-            <PGStatCard
-              label="Dead Tuples"
-              value={stats.dead_tuples.toLocaleString()}
-              helpText="needs vacuum"
-              icon={FiAlertCircle}
-              colorScheme={stats.dead_tuples > 10000 ? 'red' : 'gray'}
-            />
-          </SimpleGrid>
-        </CardBody>
-      </Card>
+      <PanelBody>
+        {/* Server Location Map */}
+        <ServerLocationMap host={stats.host}/>
 
-      {/* Object Counts */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiLayers} color="teal.500" />
-            <Text fontWeight="semibold" fontSize="lg">Objects</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 3, md: 5 }} spacing={4}>
-            <PGStatCard
-              label="Schemas"
-              value={stats.schema_count}
-              icon={FiLayers}
-              colorScheme="teal"
-            />
-            <PGStatCard
-              label="Tables"
-              value={stats.table_count}
-              icon={FiTable}
-              colorScheme="blue"
-            />
-            <PGStatCard
-              label="Views"
-              value={stats.view_count}
-              icon={FiEye}
-              colorScheme="purple"
-            />
-            <PGStatCard
-              label="Indexes"
-              value={stats.index_count}
-              icon={FiZap}
-              colorScheme="orange"
-            />
-            <PGStatCard
-              label="Functions"
-              value={stats.function_count}
-              icon={FiCode}
-              colorScheme="pink"
-            />
-          </SimpleGrid>
-        </CardBody>
-      </Card>
-
-      {/* PostGIS Section */}
-      {stats.has_postgis && (
+        {/* Connection Stats */}
         <Card bg={cardBg}>
           <CardBody>
             <HStack mb={4}>
-              <Icon as={FiGlobe} color="green.500" />
-              <Text fontWeight="semibold" fontSize="lg">PostGIS</Text>
+              <Icon as={FiUsers} color="purple.500"/>
+              <Text fontWeight="semibold" fontSize="lg">Connections</Text>
             </HStack>
-            <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+            <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
               <PGStatCard
-                label="Geometry Columns"
-                value={stats.geometry_columns || 0}
-                icon={FiGlobe}
+                label="Current"
+                value={stats.current_connections}
+                helpText={`of ${stats.max_connections} max`}
+                icon={FiUsers}
+                colorScheme="purple"
+              />
+              <PGStatCard
+                label="Active"
+                value={stats.active_connections}
+                helpText="executing queries"
+                icon={FiActivity}
                 colorScheme="green"
               />
               <PGStatCard
-                label="Raster Columns"
-                value={stats.raster_columns || 0}
-                icon={FiLayers}
+                label="Idle"
+                value={stats.idle_connections}
+                helpText="waiting for work"
+                icon={FiClock}
                 colorScheme="blue"
               />
+              <PGStatCard
+                label="Waiting"
+                value={stats.waiting_connections}
+                helpText="blocked on locks"
+                icon={FiZap}
+                colorScheme="orange"
+              />
             </SimpleGrid>
-            {stats.postgis_version && (
-              <Box mt={4} p={3} bg="green.50" borderRadius="lg" _dark={{ bg: 'green.900' }}>
-                <Text fontSize="xs" color="green.700" fontFamily="mono" noOfLines={2} _dark={{ color: 'green.200' }}>
-                  {stats.postgis_version}
-                </Text>
-              </Box>
-            )}
+            <Box mt={4}>
+              <HStack justify="space-between" mb={2}>
+                <Text fontSize="sm" color="gray.500">Connection Pool
+                  Usage</Text>
+                <Text fontSize="sm"
+                      fontWeight="bold">{stats.connection_percent}%</Text>
+              </HStack>
+              <Progress
+                value={stats.connection_percent}
+                colorScheme={stats.connection_percent > 80 ? 'red' : stats.connection_percent > 60 ? 'orange' : 'green'}
+                borderRadius="full"
+                size="lg"
+              />
+            </Box>
           </CardBody>
         </Card>
-      )}
 
-      {/* Server Info */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiServer} color="gray.500" />
-            <Text fontWeight="semibold" fontSize="lg">Server Info</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <Stat>
-              <StatLabel>Uptime</StatLabel>
-              <StatNumber fontSize="lg">{stats.uptime || 'N/A'}</StatNumber>
-              <StatHelpText>Since {stats.server_start_time?.split(' ')[0]}</StatHelpText>
-            </Stat>
-            <Stat>
-              <StatLabel>Transactions</StatLabel>
-              <StatNumber fontSize="lg">
-                {stats.xact_commit.toLocaleString()}
-              </StatNumber>
-              <StatHelpText>
-                {stats.xact_rollback.toLocaleString()} rollbacks
-              </StatHelpText>
-            </Stat>
-          </SimpleGrid>
-          <Box mt={4} p={3} bg="gray.100" borderRadius="lg" _dark={{ bg: 'gray.700' }}>
-            <Text fontSize="xs" color="gray.600" fontFamily="mono" noOfLines={2} _dark={{ color: 'gray.300' }}>
-              {stats.version}
-            </Text>
-          </Box>
-        </CardBody>
-      </Card>
-
-      {/* Extensions */}
-      {stats.installed_extensions && stats.installed_extensions.length > 0 && (
+        {/* Database Stats */}
         <Card bg={cardBg}>
           <CardBody>
             <HStack mb={4}>
-              <Icon as={FiCode} color="indigo.500" />
-              <Text fontWeight="semibold" fontSize="lg">Extensions</Text>
+              <Icon as={FiDatabase} color="blue.500"/>
+              <Text fontWeight="semibold" fontSize="lg">Database</Text>
             </HStack>
-            <Wrap spacing={2}>
-              {stats.installed_extensions.map(ext => (
-                <WrapItem key={ext}>
-                  <Tooltip label={ext} fontSize="xs">
-                    <Tag
-                      size="md"
-                      colorScheme={ext === 'postgis' ? 'green' : ext === 'plpgsql' ? 'blue' : 'gray'}
-                      borderRadius="full"
-                    >
-                      {ext}
-                    </Tag>
-                  </Tooltip>
-                </WrapItem>
-              ))}
-            </Wrap>
+            <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+              <PGStatCard
+                label="Size"
+                value={stats.database_size}
+                icon={FiHardDrive}
+                colorScheme="blue"
+              />
+              <PGStatCard
+                label="Cache Hit Ratio"
+                value={stats.cache_hit_ratio}
+                helpText="higher is better"
+                icon={FiZap}
+                colorScheme="green"
+              />
+              <PGStatCard
+                label="Live Tuples"
+                value={stats.live_tuples.toLocaleString()}
+                icon={FiTable}
+                colorScheme="purple"
+              />
+              <PGStatCard
+                label="Dead Tuples"
+                value={stats.dead_tuples.toLocaleString()}
+                helpText="needs vacuum"
+                icon={FiAlertCircle}
+                colorScheme={stats.dead_tuples > 10000 ? 'red' : 'gray'}
+              />
+            </SimpleGrid>
           </CardBody>
         </Card>
-      )}
-    </VStack>
+
+        {/* Object Counts */}
+        <Card bg={cardBg}>
+          <CardBody>
+            <HStack mb={4}>
+              <Icon as={FiLayers} color="teal.500"/>
+              <Text fontWeight="semibold" fontSize="lg">Objects</Text>
+            </HStack>
+            <SimpleGrid columns={{ base: 3, md: 5 }} spacing={4}>
+              <PGStatCard
+                label="Schemas"
+                value={stats.schema_count}
+                icon={FiLayers}
+                colorScheme="teal"
+              />
+              <PGStatCard
+                label="Tables"
+                value={stats.table_count}
+                icon={FiTable}
+                colorScheme="blue"
+              />
+              <PGStatCard
+                label="Views"
+                value={stats.view_count}
+                icon={FiEye}
+                colorScheme="purple"
+              />
+              <PGStatCard
+                label="Indexes"
+                value={stats.index_count}
+                icon={FiZap}
+                colorScheme="orange"
+              />
+              <PGStatCard
+                label="Functions"
+                value={stats.function_count}
+                icon={FiCode}
+                colorScheme="pink"
+              />
+            </SimpleGrid>
+          </CardBody>
+        </Card>
+
+        {/* PostGIS Section */}
+        {stats.has_postgis && (
+          <Card bg={cardBg}>
+            <CardBody>
+              <HStack mb={4}>
+                <Icon as={FiGlobe} color="green.500"/>
+                <Text fontWeight="semibold" fontSize="lg">PostGIS</Text>
+              </HStack>
+              <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+                <PGStatCard
+                  label="Geometry Columns"
+                  value={stats.geometry_columns || 0}
+                  icon={FiGlobe}
+                  colorScheme="green"
+                />
+                <PGStatCard
+                  label="Raster Columns"
+                  value={stats.raster_columns || 0}
+                  icon={FiLayers}
+                  colorScheme="blue"
+                />
+              </SimpleGrid>
+              {stats.postgis_version && (
+                <Box mt={4} p={3} bg="green.50" borderRadius="lg"
+                     _dark={{ bg: 'green.900' }}>
+                  <Text fontSize="xs" color="green.700" fontFamily="mono"
+                        noOfLines={2} _dark={{ color: 'green.200' }}>
+                    {stats.postgis_version}
+                  </Text>
+                </Box>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Server Info */}
+        <Card bg={cardBg}>
+          <CardBody>
+            <HStack mb={4}>
+              <Icon as={FiServer} color="gray.500"/>
+              <Text fontWeight="semibold" fontSize="lg">Server Info</Text>
+            </HStack>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+              <Stat>
+                <StatLabel>Uptime</StatLabel>
+                <StatNumber fontSize="lg">{stats.uptime || 'N/A'}</StatNumber>
+                <StatHelpText>Since {stats.server_start_time?.split(' ')[0]}</StatHelpText>
+              </Stat>
+              <Stat>
+                <StatLabel>Transactions</StatLabel>
+                <StatNumber fontSize="lg">
+                  {stats.xact_commit.toLocaleString()}
+                </StatNumber>
+                <StatHelpText>
+                  {stats.xact_rollback.toLocaleString()} rollbacks
+                </StatHelpText>
+              </Stat>
+            </SimpleGrid>
+            <Box mt={4} p={3} bg="gray.100" borderRadius="lg"
+                 _dark={{ bg: 'gray.700' }}>
+              <Text fontSize="xs" color="gray.600" fontFamily="mono"
+                    noOfLines={2} _dark={{ color: 'gray.300' }}>
+                {stats.version}
+              </Text>
+            </Box>
+          </CardBody>
+        </Card>
+
+        {/* Extensions */}
+        {stats.installed_extensions && stats.installed_extensions.length > 0 && (
+          <Card bg={cardBg}>
+            <CardBody>
+              <HStack mb={4}>
+                <Icon as={FiCode} color="indigo.500"/>
+                <Text fontWeight="semibold" fontSize="lg">Extensions</Text>
+              </HStack>
+              <Wrap spacing={2}>
+                {stats.installed_extensions.map(ext => (
+                  <WrapItem key={ext}>
+                    <Tooltip label={ext} fontSize="xs">
+                      <Tag
+                        size="md"
+                        colorScheme={ext === 'postgis' ? 'green' : ext === 'plpgsql' ? 'blue' : 'gray'}
+                        borderRadius="full"
+                      >
+                        {ext}
+                      </Tag>
+                    </Tooltip>
+                  </WrapItem>
+                ))}
+              </Wrap>
+            </CardBody>
+          </Card>
+        )}
+      </PanelBody>
+    </Panel>
   )
 }

@@ -1,11 +1,17 @@
 import { API_BASE } from './common'
 import type { UploadResult } from '../types'
 
+declare global {
+  interface Window {
+    __csrfToken?: string
+  }
+}
+
 // Helper to get CSRF token for XHR requests
 function getCSRFToken(): string {
   const match = document.cookie.match(/csrftoken=([^;]+)/)
   if (match) return match[1]
-  return (window as any).__csrfToken || ''
+  return window.__csrfToken || ''
 }
 
 export const CHUNK_SIZE = 5 * 1024 * 1024
@@ -89,6 +95,70 @@ export async function completeUpload(sessionId: string): Promise<UploadResult> {
     },
     credentials: 'include',
     body: JSON.stringify({ sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function completeGeoNodeUpload(
+  sessionId: string,
+  connectionId: string,
+  title?: string,
+  abstract?: string,
+  uploadType: 'dataset' | 'document' = 'dataset',
+): Promise<{ published: boolean; filename: string; fileSize: number; [key: string]: unknown }> {
+  const res = await fetch(`${API_BASE}/geonode/upload/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken(),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ sessionId, connectionId, title, abstract, uploadType }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function completePGUpload(
+  sessionId: string,
+): Promise<{ path: string; filename: string; fileSize: number; sessionId: string }> {
+  const res = await fetch(`${API_BASE}/pg/upload/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken(),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function completeGeoServerUpload(
+  sessionId: string,
+  connId: string,
+  workspace: string,
+  storeName?: string,
+): Promise<{ path: string; filename: string; fileSize: number; sessionId: string; storeName: string }> {
+  const res = await fetch(`${API_BASE}/upload/complete/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken(),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ sessionId, storeName }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }))

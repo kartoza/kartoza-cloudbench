@@ -1,7 +1,7 @@
 """Home screen for Kartoza CloudBench TUI."""
 
 from textual.app import ComposeResult
-from textual.containers import Container, Grid, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Label, Static
 

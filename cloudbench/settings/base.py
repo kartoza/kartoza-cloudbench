@@ -30,9 +30,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party apps
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
-    # Local apps - accounts must be first for custom User model
-    "apps.accounts",
     "apps.core",
     "apps.connections",
     "apps.geoserver",
@@ -64,8 +63,8 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.COOPCOEPMiddleware",
+    "apps.core.middleware.FrameAncestorsMiddleware",
 ]
 
 ROOT_URLCONF = "cloudbench.urls"
@@ -95,7 +94,7 @@ ASGI_APPLICATION = "cloudbench.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(os.environ.get("CLOUDBENCH_DATA_FOLDER", BASE_DIR)) / "db.sqlite3",
     }
 }
 
@@ -138,9 +137,6 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Custom User model
-AUTH_USER_MODEL = "accounts.User"
-
 # Django REST Framework settings
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -153,7 +149,15 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
-        "apps.accounts.authentication.APITokenAuthentication",
+        # Must come before TokenAuthentication: it returns None (falls
+        # through) on a token that isn't a valid signed SSO token, whereas
+        # TokenAuthentication *raises* AuthenticationFailed on a token that
+        # isn't a stored DRF token — and DRF aborts the whole authenticator
+        # chain on the first exception, never trying the rest. With the
+        # reverse order, every SSO-token request (the GeoHosting-embedded
+        # flow) would 401 with "Invalid token." before this class ever ran.
+        "apps.core.sso_auth.SignedSSOTokenAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         # TODO: Change to IsAuthenticated once all endpoints are migrated
@@ -251,3 +255,34 @@ LOGGING = {
         },
     },
 }
+
+CLOUDBENCH_MUST_AUTHENTICATED = False
+
+# The one shared secret between GeoHosting and CloudBench. Used two ways:
+# - GeoHosting sends it as "Authorization: Bearer <token>" when calling
+#   /api/geohosting/instances/ and /api/geohosting/sso-token/ (see
+#   apps/core/geohosting_bridge.py). Empty by default; those endpoints
+#   refuse all requests until this is set.
+# - It's also the HMAC key used to sign/verify the short-lived SSO tokens
+#   handed to GeoHosting's frontend for the iframe handoff (see
+#   apps/core/sso_auth.py).
+CLOUDBENCH_SERVICE_TOKEN = os.environ.get("CLOUDBENCH_SERVICE_TOKEN", "")
+
+# How long a signed SSO token (see apps/core/sso_auth.py) stays valid
+# after being minted, in seconds. Default: 12 hours.
+CLOUDBENCH_SSO_TOKEN_MAX_AGE = int(os.environ.get("CLOUDBENCH_SSO_TOKEN_MAX_AGE", 60 * 60 * 12))
+
+# Origins allowed to embed CloudBench in an iframe (CSP frame-ancestors —
+# see apps/core/middleware.py). Comma-separated, e.g.
+# "https://geohosting.example.com". Empty means only 'self'.
+CLOUDBENCH_FRAME_ANCESTORS = [
+    origin for origin in os.environ.get("CLOUDBENCH_FRAME_ANCESTORS", "").split(",") if origin
+]
+
+# Celery
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE

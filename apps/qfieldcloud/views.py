@@ -22,17 +22,19 @@ class QFieldCloudConnectionListView(APIView):
 
     def get(self, request):
         """List all QFieldCloud connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_qfieldcloud_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "username": c.username,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "username": c.username,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new QFieldCloud connection."""
@@ -46,7 +48,7 @@ class QFieldCloudConnectionListView(APIView):
             token=data.get("token", ""),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_qfieldcloud_connection(conn)
 
         return Response(
@@ -71,6 +73,7 @@ class QFieldCloudConnectionTestView(APIView):
             username=data.get("username", ""),
             password=data.get("password"),
             token=data.get("token"),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -88,7 +91,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -96,18 +99,20 @@ class QFieldCloudConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "username": conn.username,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "username": conn.username,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -132,7 +137,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_qfieldcloud_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -147,14 +152,12 @@ class QFieldCloudConnectionDetailView(APIView):
 class QFieldCloudProjectListView(APIView):
     """List projects for a connection."""
 
-    def get(self, request, conn_id):
+    def get(self, _request, conn_id):
         """List all projects."""
         try:
             client = get_qfieldcloud_client(conn_id)
             projects = client.list_projects()
-            return Response({
-                "projects": [p.to_dict() for p in projects]
-            })
+            return Response({"projects": [p.to_dict() for p in projects]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -170,7 +173,7 @@ class QFieldCloudProjectListView(APIView):
 class QFieldCloudProjectDetailView(APIView):
     """Get project details."""
 
-    def get(self, request, conn_id, project_id):
+    def get(self, _request, conn_id, project_id):
         """Get project information."""
         try:
             client = get_qfieldcloud_client(conn_id)
@@ -198,7 +201,7 @@ class QFieldCloudProjectDetailView(APIView):
 class QFieldCloudProjectFilesView(APIView):
     """List project files."""
 
-    def get(self, request, conn_id, project_id):
+    def get(self, _request, conn_id, project_id):
         """List files in a project."""
         try:
             client = get_qfieldcloud_client(conn_id)
@@ -219,7 +222,7 @@ class QFieldCloudProjectFilesView(APIView):
 class QFieldCloudProjectStatusView(APIView):
     """Get project sync status."""
 
-    def get(self, request, conn_id, project_id):
+    def get(self, _request, conn_id, project_id):
         """Get project status."""
         try:
             client = get_qfieldcloud_client(conn_id)

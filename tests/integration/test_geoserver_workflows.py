@@ -217,22 +217,16 @@ class TestGeoServerWorkspaceWorkflow:
         conn_id = setup_test_connection
         response = api_client.delete(f"/api/workspaces/{conn_id}/test")
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        mock_geoserver_for_workspace.delete_workspace.assert_called_once_with(
-            "test", recurse=False
-        )
+        mock_geoserver_for_workspace.delete_workspace.assert_called_once_with("test", recurse=False)
 
     def test_workspace_delete_recursive(
         self, api_client: APIClient, setup_test_connection, mock_geoserver_for_workspace
     ) -> None:
         """Test deleting a workspace recursively."""
         conn_id = setup_test_connection
-        response = api_client.delete(
-            f"/api/workspaces/{conn_id}/test?recurse=true"
-        )
+        response = api_client.delete(f"/api/workspaces/{conn_id}/test?recurse=true")
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        mock_geoserver_for_workspace.delete_workspace.assert_called_once_with(
-            "test", recurse=True
-        )
+        mock_geoserver_for_workspace.delete_workspace.assert_called_once_with("test", recurse=True)
 
 
 @pytest.mark.integration
@@ -337,7 +331,11 @@ class TestGeoServerStyleWorkflow:
         assert response.json()[0]["name"] == "point"
 
     def test_style_create(
-        self, api_client: APIClient, setup_test_connection, mock_geoserver_for_styles, sample_sld_style: str
+        self,
+        api_client: APIClient,
+        setup_test_connection,
+        mock_geoserver_for_styles,
+        sample_sld_style: str,
     ) -> None:
         """Test creating a style."""
         conn_id = setup_test_connection

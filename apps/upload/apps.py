@@ -8,4 +8,5 @@ class UploadConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.upload"
+    label = "cloudbench_upload"
     verbose_name = "Chunked File Uploads"

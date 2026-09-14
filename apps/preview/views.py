@@ -6,13 +6,12 @@ Provides endpoints for:
 - Getting layer metadata from GeoServer
 """
 
-import uuid
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
-from django.conf import settings
+from django.urls import reverse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,12 +27,12 @@ class PreviewSession:
     conn_id: str
     workspace: str
     layer_name: str
-    store_name: Optional[str] = None
-    store_type: Optional[str] = None
+    store_name: str | None = None
+    store_type: str | None = None
     layer_type: str = "vector"
     use_cache: bool = False
-    grid_set: Optional[str] = None
-    tile_format: Optional[str] = None
+    grid_set: str | None = None
+    tile_format: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -57,12 +56,12 @@ class PreviewSessionManager:
         conn_id: str,
         workspace: str,
         layer_name: str,
-        store_name: Optional[str] = None,
-        store_type: Optional[str] = None,
+        store_name: str | None = None,
+        store_type: str | None = None,
         layer_type: str = "vector",
         use_cache: bool = False,
-        grid_set: Optional[str] = None,
-        tile_format: Optional[str] = None,
+        grid_set: str | None = None,
+        tile_format: str | None = None,
     ) -> PreviewSession:
         """Create a new preview session."""
         with self._lock:
@@ -84,7 +83,7 @@ class PreviewSessionManager:
             self._sessions[session_id] = session
             return session
 
-    def get_session(self, session_id: str) -> Optional[PreviewSession]:
+    def get_session(self, session_id: str) -> PreviewSession | None:
         """Get a preview session by ID."""
         with self._lock:
             return self._sessions.get(session_id)
@@ -148,7 +147,9 @@ class StartPreviewView(APIView):
 
         # Return the preview URL pointing to our API
         # The frontend expects to fetch /api/layer and /api/metadata from this URL
-        preview_url = f"/api/preview/{session.id}"
+        preview_url = reverse("preview_layer", kwargs={"session_id": session.id}).removesuffix(
+            "/api/layer"
+        )
 
         return Response(
             {"url": preview_url},
@@ -173,20 +174,22 @@ class PreviewLayerView(APIView):
 
         try:
             # Get the GeoServer URL from the connection
-            client = get_geoserver_client(session.conn_id)
+            client = get_geoserver_client(session.conn_id, str(request.user.id))
             geoserver_url = client.connection.url.rstrip("/")
 
-            return Response({
-                "name": session.layer_name,
-                "workspace": session.workspace,
-                "store_name": session.store_name or "",
-                "store_type": session.store_type or "datastore",
-                "geoserver_url": geoserver_url,
-                "type": session.layer_type,
-                "use_cache": session.use_cache,
-                "grid_set": session.grid_set,
-                "tile_format": session.tile_format,
-            })
+            return Response(
+                {
+                    "name": session.layer_name,
+                    "workspace": session.workspace,
+                    "store_name": session.store_name or "",
+                    "store_type": session.store_type or "datastore",
+                    "geoserver_url": geoserver_url,
+                    "type": session.layer_type,
+                    "use_cache": session.use_cache,
+                    "grid_set": session.grid_set,
+                    "tile_format": session.tile_format,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": f"Failed to get layer info: {str(e)}"},
@@ -210,16 +213,24 @@ class PreviewMetadataView(APIView):
             )
 
         try:
-            client = get_geoserver_client(session.conn_id)
+            client = get_geoserver_client(session.conn_id, str(request.user.id))
 
             # Use the client's get_layer_metadata method
             layer_meta = client.get_layer_metadata(session.workspace, session.layer_name)
 
             # Format for frontend - ensure boolean defaults (not None)
             metadata = {
-                "layer_enabled": layer_meta.get("enabled") if layer_meta.get("enabled") is not None else True,
-                "layer_queryable": layer_meta.get("queryable") if layer_meta.get("queryable") is not None else True,
-                "layer_advertised": layer_meta.get("advertised") if layer_meta.get("advertised") is not None else True,
+                "layer_enabled": (
+                    layer_meta.get("enabled") if layer_meta.get("enabled") is not None else True
+                ),
+                "layer_queryable": (
+                    layer_meta.get("queryable") if layer_meta.get("queryable") is not None else True
+                ),
+                "layer_advertised": (
+                    layer_meta.get("advertised")
+                    if layer_meta.get("advertised") is not None
+                    else True
+                ),
             }
 
             # Get default style name

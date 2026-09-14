@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from apps.core.config import get_config
-from apps.geoserver.client import GeoServerClientManager
+from apps.geoserver.client import get_geoserver_client
 
 
 @dataclass
@@ -41,9 +41,9 @@ class SearchResult:
 class SearchService:
     """Service for universal search across all resources."""
 
-    def __init__(self):
+    def __init__(self, user_id: str = "default"):
         """Initialize search service."""
-        self.client_manager = GeoServerClientManager()
+        self._user_id = user_id
 
     def search(
         self,
@@ -81,52 +81,58 @@ class SearchService:
             results.extend(self._search_buckets(query_lower))
 
         # Sort by relevance (simple name match priority)
-        results.sort(key=lambda r: (
-            0 if query_lower in r.name.lower() else 1,
-            r.name.lower(),
-        ))
+        results.sort(
+            key=lambda r: (
+                0 if query_lower in r.name.lower() else 1,
+                r.name.lower(),
+            )
+        )
 
         return results[:limit]
 
     def _search_connections(self, query: str) -> list[SearchResult]:
         """Search GeoServer connections."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_connections():
             if query in conn.name.lower() or query in conn.url.lower():
-                results.append(SearchResult(
-                    type="connection",
-                    name=conn.name,
-                    title=conn.name,
-                    description=f"GeoServer at {conn.url}",
-                    source="geoserver",
-                    source_id=conn.id,
-                    path=f"/connections/{conn.id}",
-                ))
+                results.append(
+                    SearchResult(
+                        type="connection",
+                        name=conn.name,
+                        title=conn.name,
+                        description=f"GeoServer at {conn.url}",
+                        source="geoserver",
+                        source_id=conn.id,
+                        path=f"/connections/{conn.id}",
+                    )
+                )
 
         for conn in config.list_s3_connections():
             if query in conn.name.lower() or query in conn.endpoint.lower():
-                results.append(SearchResult(
-                    type="connection",
-                    name=conn.name,
-                    title=conn.name,
-                    description=f"S3 at {conn.endpoint}",
-                    source="s3",
-                    source_id=conn.id,
-                    path=f"/s3/{conn.id}",
-                ))
+                results.append(
+                    SearchResult(
+                        type="connection",
+                        name=conn.name,
+                        title=conn.name,
+                        description=f"S3 at {conn.endpoint}",
+                        source="s3",
+                        source_id=conn.id,
+                        path=f"/s3/{conn.id}",
+                    )
+                )
 
         return results
 
     def _search_layers(self, query: str) -> list[SearchResult]:
         """Search GeoServer layers."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_connections():
             try:
-                client = self.client_manager.get_client(conn.id)
+                client = get_geoserver_client(conn.id, self._user_id)
                 workspaces = client.list_workspaces()
 
                 for ws in workspaces:
@@ -139,19 +145,21 @@ class SearchService:
                         for layer in layers:
                             layer_name = layer.get("name", "")
                             if query in layer_name.lower():
-                                results.append(SearchResult(
-                                    type="layer",
-                                    name=layer_name,
-                                    title=layer.get("title", layer_name),
-                                    description=f"Layer in {ws_name}",
-                                    source="geoserver",
-                                    source_id=conn.id,
-                                    path=f"/layers/{conn.id}/{ws_name}/{layer_name}",
-                                    metadata={
-                                        "workspace": ws_name,
-                                        "connection": conn.name,
-                                    },
-                                ))
+                                results.append(
+                                    SearchResult(
+                                        type="layer",
+                                        name=layer_name,
+                                        title=layer.get("title", layer_name),
+                                        description=f"Layer in {ws_name}",
+                                        source="geoserver",
+                                        source_id=conn.id,
+                                        path=f"/layers/{conn.id}/{ws_name}/{layer_name}",
+                                        metadata={
+                                            "workspace": ws_name,
+                                            "connection": conn.name,
+                                        },
+                                    )
+                                )
                     except Exception:
                         pass
             except Exception:
@@ -164,41 +172,45 @@ class SearchService:
         results = []
 
         try:
-            from apps.postgres.service import list_services
             from apps.postgres.schema import list_tables
+            from apps.postgres.service import list_services
 
             services = list_services()
             for service_name in services:
                 if query in service_name.lower():
-                    results.append(SearchResult(
-                        type="service",
-                        name=service_name,
-                        title=service_name,
-                        description="PostgreSQL service",
-                        source="postgresql",
-                        source_id=service_name,
-                        path=f"/pg/{service_name}",
-                    ))
+                    results.append(
+                        SearchResult(
+                            type="service",
+                            name=service_name,
+                            title=service_name,
+                            description="PostgreSQL service",
+                            source="postgresql",
+                            source_id=service_name,
+                            path=f"/pg/{service_name}",
+                        )
+                    )
 
                 try:
                     tables = list_tables(service_name)
                     for table in tables:
                         table_name = table.get("name", "")
                         if query in table_name.lower():
-                            results.append(SearchResult(
-                                type="table",
-                                name=table_name,
-                                title=table_name,
-                                description=f"Table in {service_name}",
-                                source="postgresql",
-                                source_id=service_name,
-                                path=f"/pg/{service_name}/public/{table_name}",
-                                metadata={
-                                    "schema": "public",
-                                    "service": service_name,
-                                    "hasGeometry": table.get("geometryColumn") is not None,
-                                },
-                            ))
+                            results.append(
+                                SearchResult(
+                                    type="table",
+                                    name=table_name,
+                                    title=table_name,
+                                    description=f"Table in {service_name}",
+                                    source="postgresql",
+                                    source_id=service_name,
+                                    path=f"/pg/{service_name}/public/{table_name}",
+                                    metadata={
+                                        "schema": "public",
+                                        "service": service_name,
+                                        "hasGeometry": table.get("geometryColumn") is not None,
+                                    },
+                                )
+                            )
                 except Exception:
                     pass
         except Exception:
@@ -209,7 +221,7 @@ class SearchService:
     def _search_buckets(self, query: str) -> list[SearchResult]:
         """Search S3 buckets."""
         results = []
-        config = get_config()
+        config = get_config(self._user_id)
 
         for conn in config.list_s3_connections():
             try:
@@ -220,19 +232,21 @@ class SearchService:
 
                 for bucket in buckets:
                     if query in bucket.name.lower():
-                        results.append(SearchResult(
-                            type="bucket",
-                            name=bucket.name,
-                            title=bucket.name,
-                            description=f"S3 bucket on {conn.name}",
-                            source="s3",
-                            source_id=conn.id,
-                            path=f"/s3/{conn.id}/{bucket.name}",
-                            metadata={
-                                "connection": conn.name,
-                                "creationDate": bucket.creation_date,
-                            },
-                        ))
+                        results.append(
+                            SearchResult(
+                                type="bucket",
+                                name=bucket.name,
+                                title=bucket.name,
+                                description=f"S3 bucket on {conn.name}",
+                                source="s3",
+                                source_id=conn.id,
+                                path=f"/s3/{conn.id}/{bucket.name}",
+                                metadata={
+                                    "connection": conn.name,
+                                    "creationDate": bucket.creation_date,
+                                },
+                            )
+                        )
             except Exception:
                 pass
 
@@ -270,6 +284,6 @@ class SearchService:
         return suggestions
 
 
-def get_search_service() -> SearchService:
-    """Get the search service singleton."""
-    return SearchService()
+def get_search_service(user_id: str = "default") -> SearchService:
+    """Get a search service for the given user."""
+    return SearchService(user_id)

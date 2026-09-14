@@ -1,0 +1,4 @@
+images:
+  - name: kartoza-cloudbench
+    dockerfile: deployment/docker/Dockerfile
+    buildPath: .

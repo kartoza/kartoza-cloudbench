@@ -22,17 +22,19 @@ class IcebergConnectionListView(APIView):
 
     def get(self, request):
         """List all Iceberg connections."""
-        config = get_config()
+        config = get_config(request.user.id)
         connections = config.list_iceberg_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "warehouse": c.warehouse,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "warehouse": c.warehouse,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new Iceberg connection."""
@@ -47,7 +49,7 @@ class IcebergConnectionListView(APIView):
             client_secret=data.get("clientSecret", ""),
         )
 
-        config = get_config()
+        config = get_config(request.user.id)
         config.add_iceberg_connection(conn)
 
         return Response(
@@ -79,6 +81,7 @@ class IcebergConnectionTestView(APIView):
             warehouse=data.get("warehouse", ""),
             token=data.get("token"),
             credentials=credentials,
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -96,7 +99,7 @@ class IcebergConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_iceberg_connection(conn_id)
         if not conn:
             return Response(
@@ -104,18 +107,20 @@ class IcebergConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "warehouse": conn.warehouse,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "warehouse": conn.warehouse,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         conn = config.get_iceberg_connection(conn_id)
         if not conn:
             return Response(
@@ -142,7 +147,7 @@ class IcebergConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config()
+        config = get_config(request.user.id)
         if not config.delete_iceberg_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -161,7 +166,7 @@ class IcebergConfigView(APIView):
         """Get catalog config."""
         try:
             client = get_iceberg_client(conn_id)
-            config = client.get_config()
+            config = client.get_config(request.user.id)
             return Response({"config": config})
         except ValueError as e:
             return Response(
@@ -186,9 +191,7 @@ class IcebergNamespaceListView(APIView):
         try:
             client = get_iceberg_client(conn_id)
             namespaces = client.list_namespaces(parent=parent_list)
-            return Response({
-                "namespaces": [ns.to_dict() for ns in namespaces]
-            })
+            return Response({"namespaces": [ns.to_dict() for ns in namespaces]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -230,7 +233,7 @@ class IcebergNamespaceListView(APIView):
 class IcebergNamespaceDetailView(APIView):
     """Get namespace details."""
 
-    def get(self, request, conn_id, namespace):
+    def get(self, _request, conn_id, namespace):
         """Get namespace information."""
         namespace_list = namespace.split(".")
 
@@ -260,16 +263,14 @@ class IcebergNamespaceDetailView(APIView):
 class IcebergTableListView(APIView):
     """List tables in a namespace."""
 
-    def get(self, request, conn_id, namespace):
+    def get(self, _request, conn_id, namespace):
         """List all tables."""
         namespace_list = namespace.split(".")
 
         try:
             client = get_iceberg_client(conn_id)
             tables = client.list_tables(namespace_list)
-            return Response({
-                "tables": [t.to_dict() for t in tables]
-            })
+            return Response({"tables": [t.to_dict() for t in tables]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -285,7 +286,7 @@ class IcebergTableListView(APIView):
 class IcebergTableDetailView(APIView):
     """Get table details."""
 
-    def get(self, request, conn_id, namespace, table):
+    def get(self, _request, conn_id, namespace, table):
         """Get table information."""
         namespace_list = namespace.split(".")
 
@@ -315,7 +316,7 @@ class IcebergTableDetailView(APIView):
 class IcebergTableMetadataView(APIView):
     """Get full table metadata."""
 
-    def get(self, request, conn_id, namespace, table):
+    def get(self, _request, conn_id, namespace, table):
         """Get table metadata including schema."""
         namespace_list = namespace.split(".")
 

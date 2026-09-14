@@ -8,6 +8,7 @@ class CoreConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.core"
+    label = "cloudbench_core"
     verbose_name = "CloudBench Core"
 
     def ready(self):

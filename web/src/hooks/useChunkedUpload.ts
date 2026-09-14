@@ -4,7 +4,6 @@ import {
   uploadChunk,
   completeUpload,
   cancelUpload,
-  getGeoServerProgress,
   CHUNK_SIZE,
 } from '../api/chunkedUpload'
 import type { UploadResult } from '../types'
@@ -168,33 +167,9 @@ export function useChunkedUpload(): UseChunkedUpload {
         throw new Error('Upload cancelled')
       }
 
-      let pollHandle: ReturnType<typeof setInterval> | null = setInterval(async () => {
-        try {
-          const p = await getGeoServerProgress(sessionId)
-          setState((prev) => ({
-            ...prev,
-            geoServerSent: p.sent,
-            geoServerTotal: p.total,
-          }))
-          if (p.done && pollHandle) {
-            clearInterval(pollHandle)
-            pollHandle = null
-          }
-        } catch {
-        }
-      }, 400)
+      const result = await completeUpload(sessionId)
 
-      let result
-      try {
-        result = await completeUpload(sessionId)
-      } finally {
-        if (pollHandle) {
-          clearInterval(pollHandle)
-          pollHandle = null
-        }
-      }
-
-      if (!result.success) {
+      if (!result.success && !result.published) {
         const errMsg = result.message || 'GeoServer rejected the upload'
         setState((prev) => ({ ...prev, status: 'error', error: errMsg }))
         throw new Error(errMsg)

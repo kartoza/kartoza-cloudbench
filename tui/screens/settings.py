@@ -1,9 +1,9 @@
 """Settings screen for Kartoza CloudBench TUI."""
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Input, Label, Select, Static, Switch
+from textual.widgets import Button, Input, Label, Select, Static
 
 from apps.core.config import config_manager
 

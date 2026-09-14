@@ -8,4 +8,5 @@ class IcebergConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.iceberg"
+    label = "cloudbench_iceberg"
     verbose_name = "Apache Iceberg Integration"

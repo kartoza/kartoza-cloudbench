@@ -41,7 +41,7 @@ volumes:
 ## Building the Image
 
 ```bash
-docker build -t kartoza/cloudbench:latest .
+docker build -t ghcr.io/kartoza/kartoza-cloudbench:latest .
 ```
 
 ## Environment Variables
@@ -49,11 +49,11 @@ docker build -t kartoza/cloudbench:latest .
 Pass environment variables via:
 
 ```bash
-docker run -e SECRET_KEY=xxx -e DEBUG=false kartoza/cloudbench
+docker run -e SECRET_KEY=xxx -e DEBUG=false ghcr.io/kartoza/kartoza-cloudbench
 ```
 
 Or use an env file:
 
 ```bash
-docker run --env-file .env kartoza/cloudbench
+docker run --env-file .env ghcr.io/kartoza/kartoza-cloudbench
 ```

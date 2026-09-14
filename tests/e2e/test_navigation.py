@@ -4,6 +4,7 @@ import pytest
 
 try:
     from playwright.sync_api import Page, expect
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False

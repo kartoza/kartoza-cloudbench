@@ -1,9 +1,9 @@
 """PostgreSQL browser screen for Kartoza CloudBench TUI."""
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Label, Static, Tree
+from textual.widgets import Button, DataTable, Static
 
 from apps.core.config import config_manager
 

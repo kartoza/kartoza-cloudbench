@@ -1,4 +1,5 @@
 import React, { useMemo, useEffect, useState } from 'react';
+import { getApiBase } from '../config/env';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
@@ -261,7 +262,7 @@ export const SQLEditor: React.FC<SQLEditorProps> = ({
   const loadSchemaInfo = async (service: string) => {
     try {
       // Try to load schema information from the API
-      const response = await fetch(`/api/pg/services/${service}/schemas`);
+      const response = await fetch(`${getApiBase()}/pg/services/${service}/schemas`);
       if (response.ok) {
         const data = await response.json();
         if (data.schemas) {

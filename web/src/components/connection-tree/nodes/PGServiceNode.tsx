@@ -1,34 +1,42 @@
-import { Box, Button, Text, useToast } from '@chakra-ui/react'
+import { Box } from '@chakra-ui/react'
+import { getApiBase } from '../../../config/env'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FiDatabase } from 'react-icons/fi'
-import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
+import { generateNodeId, useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
-import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { PGSchemaNode } from './PGSchemaNode'
 import type { PGServiceNodeProps } from '../types'
+import { useOnlineStatus } from "../../../hooks/useOnlineStatus.ts";
 
-export function PGServiceNode({ service }: PGServiceNodeProps) {
+export function PGServiceNode({ service, ableToEdit = true, ableToDelete = true }: PGServiceNodeProps) {
   const nodeId = generateNodeId('pgservice', service.name)
+  const isOnline = useOnlineStatus(`${getApiBase()}/pg/services/${encodeURIComponent(service.name)}/test`)
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
   const setPGQuery = useUIStore((state) => state.setPGQuery)
-  const toast = useToast()
   const queryClient = useQueryClient()
 
-  // Fetch schemas when expanded and service is parsed
   const { data: schemaData, isLoading: loadingSchemas } = useQuery({
     queryKey: ['pgschemas', service.name],
     queryFn: async () => {
-      const response = await fetch(`/api/pg/services/${encodeURIComponent(service.name)}/schemas`)
+      const response = await fetch(`${getApiBase()}/pg/services/${encodeURIComponent(service.name)}/schemas`)
       if (!response.ok) throw new Error('Failed to fetch schemas')
-      return response.json() as Promise<{ schemas: { name: string; tables: { name: string; schema: string; columns: { name: string; type: string; nullable: boolean }[] }[] }[] }>
+      return response.json() as Promise<{
+        schemas: {
+          name: string;
+          tables: {
+            name: string;
+            schema: string;
+            columns: { name: string; type: string; nullable: boolean }[]
+          }[]
+        }[]
+      }>
     },
-    enabled: isExpanded && service.is_parsed,
+    enabled: isExpanded,
     staleTime: 60000,
   })
 
@@ -44,28 +52,6 @@ export function PGServiceNode({ service }: PGServiceNodeProps) {
   const handleClick = () => {
     selectNode(node)
     toggleNode(nodeId)
-  }
-
-  const handleParse = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      await api.parsePGService(service.name)
-      toast({
-        title: 'Schema Parsed',
-        description: `Successfully parsed schema for ${service.name}`,
-        status: 'success',
-        duration: 3000,
-      })
-      queryClient.invalidateQueries({ queryKey: ['pgservices'] })
-      queryClient.invalidateQueries({ queryKey: ['pgschemas', service.name] })
-    } catch (err) {
-      toast({
-        title: 'Parse Failed',
-        description: (err as Error).message,
-        status: 'error',
-        duration: 5000,
-      })
-    }
   }
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -98,8 +84,6 @@ export function PGServiceNode({ service }: PGServiceNodeProps) {
     queryClient.invalidateQueries({ queryKey: ['pgschemas', service.name] })
   }
 
-  const subtitle = service.host ? `${service.host}:${service.port || '5432'}/${service.dbname || ''}` : ''
-
   return (
     <Box>
       <TreeNodeRow
@@ -109,30 +93,16 @@ export function PGServiceNode({ service }: PGServiceNodeProps) {
         isLoading={loadingSchemas}
         onClick={handleClick}
         onDelete={handleDelete}
-        onQuery={service.is_parsed ? handleQuery : undefined}
+        onQuery={handleQuery}
         onUpload={handleUpload}
-        onRefresh={service.is_parsed ? handleRefresh : undefined}
+        onRefresh={handleRefresh}
         level={2}
         count={schemaData?.schemas?.length}
+        isOnline={isOnline}
+        ableToEdit={ableToEdit}
+        ableToDelete={ableToDelete}
       />
-      {/* Show parse button or schemas */}
-      {isExpanded && !service.is_parsed && (
-        <Box pl={8} py={2}>
-          <Button
-            size="sm"
-            colorScheme="blue"
-            variant="outline"
-            leftIcon={<FiDatabase size={14} />}
-            onClick={handleParse}
-          >
-            Parse Schema
-          </Button>
-          <Text fontSize="xs" color="gray.500" mt={1}>
-            {subtitle}
-          </Text>
-        </Box>
-      )}
-      {isExpanded && service.is_parsed && schemaData?.schemas && schemaData.schemas.map((schema) => (
+      {isExpanded && schemaData?.schemas && schemaData.schemas.map((schema) => (
         <PGSchemaNode
           key={schema.name}
           serviceName={service.name}

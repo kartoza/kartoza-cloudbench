@@ -8,4 +8,5 @@ class QueryConfig(AppConfig):
 
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.query"
+    label = "cloudbench_query"
     verbose_name = "Visual Query Builder"

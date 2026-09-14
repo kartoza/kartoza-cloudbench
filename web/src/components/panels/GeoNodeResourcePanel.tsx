@@ -1,50 +1,51 @@
 import { useState } from 'react'
 import {
-  Box,
-  VStack,
-  HStack,
-  Text,
-  Image,
-  Icon,
   Badge,
+  Box,
   Button,
-  Divider,
-  Link,
   Card,
   CardBody,
-  SimpleGrid,
-  Skeleton,
-  useColorModeValue,
-  Tooltip,
+  HStack,
+  Icon,
+  Image,
+  Link,
   Menu,
   MenuButton,
-  MenuList,
   MenuItem,
+  MenuList,
+  SimpleGrid,
+  Skeleton,
+  Text,
+  Tooltip,
+  useColorModeValue,
   useToast,
+  VStack,
 } from '@chakra-ui/react'
 import {
-  FiExternalLink,
-  FiMap,
-  FiLayers,
-  FiFile,
-  FiBook,
   FiBarChart2,
-  FiGlobe,
-  FiDownload,
+  FiBook,
   FiChevronDown,
+  FiDownload,
+  FiExternalLink,
   FiEye,
+  FiFile,
+  FiGlobe,
+  FiLayers,
+  FiMap,
 } from 'react-icons/fi'
 import { TbWorld } from 'react-icons/tb'
 import type { TreeNode } from '../../types'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
+import { Panel } from "../Panel";
+import { PanelHeader } from "../Panel/PanelHeader";
+import { PanelBody } from "../Panel/PanelBody";
 
 interface GeoNodeResourcePanelProps {
   node: TreeNode
 }
 
 export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
-  const bgColor = useColorModeValue('white', 'gray.800')
   const cardBg = useColorModeValue('gray.50', 'gray.700')
   const toast = useToast()
   const [isDownloading, setIsDownloading] = useState(false)
@@ -161,8 +162,8 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
   }
 
   return (
-    <Box p={6} bg={bgColor} h="100%" overflow="auto">
-      <VStack align="stretch" spacing={6}>
+    <Panel>
+      <PanelHeader>
         {/* Header */}
         <HStack spacing={4}>
           <Box
@@ -170,7 +171,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
             p={3}
             borderRadius="xl"
           >
-            <Icon as={TbWorld} boxSize={8} color="white" />
+            <Icon as={TbWorld} boxSize={8} color="white"/>
           </Box>
           <Box flex="1">
             <HStack spacing={2} mb={1}>
@@ -186,9 +187,8 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
             </Text>
           </Box>
         </HStack>
-
-        <Divider />
-
+      </PanelHeader>
+      <PanelBody>
         {/* Thumbnail */}
         {node.geonodeThumbnailUrl && (
           <Card bg={cardBg} borderRadius="xl" overflow="hidden">
@@ -200,7 +200,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
               w="100%"
               crossOrigin="anonymous"
               referrerPolicy="no-referrer"
-              fallback={<Skeleton h="200px" />}
+              fallback={<Skeleton h="200px"/>}
               onError={(e) => {
                 // Hide the image on error
                 (e.target as HTMLImageElement).style.display = 'none'
@@ -215,7 +215,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
             <VStack align="stretch" spacing={3}>
               <HStack justify="space-between">
                 <HStack spacing={2} color="gray.600">
-                  <Icon as={getResourceIcon()} />
+                  <Icon as={getResourceIcon()}/>
                   <Text fontWeight="500">Type</Text>
                 </HStack>
                 <Text>{node.geonodeResourceType || typeBadge.label}</Text>
@@ -249,7 +249,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
               as={Link}
               href={node.geonodeDetailUrl}
               isExternal
-              leftIcon={<FiExternalLink />}
+              leftIcon={<FiExternalLink/>}
               colorScheme="teal"
               variant="outline"
               _hover={{ textDecor: 'none', bg: 'teal.50' }}
@@ -261,7 +261,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
           {/* WMS Preview button - for datasets and maps with alternate */}
           {canPreviewMap && (
             <Button
-              leftIcon={<FiEye />}
+              leftIcon={<FiEye/>}
               colorScheme="teal"
               onClick={handlePreviewMap}
             >
@@ -274,8 +274,8 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
             <Menu>
               <MenuButton
                 as={Button}
-                leftIcon={<FiDownload />}
-                rightIcon={<FiChevronDown />}
+                leftIcon={<FiDownload/>}
+                rightIcon={<FiChevronDown/>}
                 colorScheme="blue"
                 isLoading={isDownloading}
               >
@@ -284,31 +284,31 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
               <MenuList>
                 <MenuItem onClick={() => handleDownload('gpkg')}>
                   <HStack spacing={2}>
-                    <Icon as={FiFile} />
+                    <Icon as={FiFile}/>
                     <Text>GeoPackage (.gpkg)</Text>
                   </HStack>
                 </MenuItem>
                 <MenuItem onClick={() => handleDownload('shp')}>
                   <HStack spacing={2}>
-                    <Icon as={FiFile} />
+                    <Icon as={FiFile}/>
                     <Text>Shapefile (.shp)</Text>
                   </HStack>
                 </MenuItem>
                 <MenuItem onClick={() => handleDownload('json')}>
                   <HStack spacing={2}>
-                    <Icon as={FiFile} />
+                    <Icon as={FiFile}/>
                     <Text>GeoJSON (.json)</Text>
                   </HStack>
                 </MenuItem>
                 <MenuItem onClick={() => handleDownload('csv')}>
                   <HStack spacing={2}>
-                    <Icon as={FiFile} />
+                    <Icon as={FiFile}/>
                     <Text>CSV (.csv)</Text>
                   </HStack>
                 </MenuItem>
                 <MenuItem onClick={() => handleDownload('xlsx')}>
                   <HStack spacing={2}>
-                    <Icon as={FiFile} />
+                    <Icon as={FiFile}/>
                     <Text>Excel (.xlsx)</Text>
                   </HStack>
                 </MenuItem>
@@ -322,11 +322,12 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
           <Card bg={cardBg} borderRadius="lg" p={4}>
             <HStack spacing={3}>
               <Box bg="teal.100" p={2} borderRadius="lg">
-                <Icon as={FiLayers} color="teal.600" />
+                <Icon as={FiLayers} color="teal.600"/>
               </Box>
               <Box>
                 <Text fontSize="sm" color="gray.500">Resource Type</Text>
-                <Text fontWeight="600">{node.geonodeResourceType || typeBadge.label}</Text>
+                <Text
+                  fontWeight="600">{node.geonodeResourceType || typeBadge.label}</Text>
               </Box>
             </HStack>
           </Card>
@@ -334,7 +335,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
           <Card bg={cardBg} borderRadius="lg" p={4}>
             <HStack spacing={3}>
               <Box bg="blue.100" p={2} borderRadius="lg">
-                <Icon as={FiGlobe} color="blue.600" />
+                <Icon as={FiGlobe} color="blue.600"/>
               </Box>
               <Box>
                 <Text fontSize="sm" color="gray.500">Connection</Text>
@@ -345,7 +346,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
             </HStack>
           </Card>
         </SimpleGrid>
-      </VStack>
-    </Box>
+      </PanelBody>
+    </Panel>
   )
 }

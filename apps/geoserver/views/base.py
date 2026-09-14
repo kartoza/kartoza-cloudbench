@@ -15,6 +15,11 @@ def handle_geoserver_error(error: GeoServerError) -> Response:
     Returns:
         Response with error details
     """
+    if error.status_code == status.HTTP_409_CONFLICT:
+        return Response(
+            {"detail": "Workspace is already created"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     return Response(
         {"error": error.message},
         status=error.status_code or status.HTTP_502_BAD_GATEWAY,

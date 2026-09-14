@@ -14,6 +14,7 @@ interface GeoNodeResourceCategoryNodeProps {
   resources: GeoNodeResource[]
   total: number
   isLoading: boolean
+  onUpload?: (e: React.MouseEvent) => void
 }
 
 const categoryToNodeType: Record<CategoryType, NodeType> = {
@@ -40,6 +41,7 @@ export function GeoNodeResourceCategoryNode({
   resources,
   total,
   isLoading,
+  onUpload
 }: GeoNodeResourceCategoryNodeProps) {
   const nodeId = `geonode-${category}-${connectionId}`
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
@@ -71,6 +73,7 @@ export function GeoNodeResourceCategoryNode({
         onClick={handleClick}
         level={3}
         count={total}
+        onUpload={onUpload}
       />
       {isExpanded && (
         <>

@@ -7,9 +7,12 @@ import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { WorkspaceNode } from './WorkspaceNode'
 import type { ConnectionNodeProps } from '../types'
+import { useOnlineStatus } from '../../../hooks/useOnlineStatus'
+import { API_BASE } from "../../../api";
 
-export function ConnectionNode({ connectionId, name, url }: ConnectionNodeProps) {
+export function ConnectionNode({ connectionId, name, url, ableToEdit = true, ableToDelete = true }: ConnectionNodeProps) {
   const nodeId = generateNodeId('connection', connectionId)
+  const isOnline = useOnlineStatus(`${API_BASE}/connections/${connectionId}/test`)
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
@@ -32,6 +35,7 @@ export function ConnectionNode({ connectionId, name, url }: ConnectionNodeProps)
   const isSelected = selectedNode?.id === nodeId
 
   const handleClick = () => {
+    if (isOnline === false) return
     selectNode(node)
     toggleNode(nodeId)
   }
@@ -66,11 +70,14 @@ export function ConnectionNode({ connectionId, name, url }: ConnectionNodeProps)
         isSelected={isSelected}
         isLoading={isLoading}
         onClick={handleClick}
+        isOnline={isOnline}
         onEdit={handleEdit}
         onDelete={handleDelete}
         onOpenAdmin={handleOpenAdmin}
         level={2}
         count={workspaces?.length}
+        ableToEdit={ableToEdit}
+        ableToDelete={ableToDelete}
       />
       {isExpanded && workspaces && workspaces.map((ws) => (
         <WorkspaceNode

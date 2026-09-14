@@ -7,6 +7,9 @@ main
 *.so
 *.dylib
 
+static/
+.env
+
 # Test binary
 *.test
 
@@ -41,11 +44,23 @@ crash.log
 .DS_Store
 Thumbs.db
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local Django dev database (admin/auth tables + upload session tracking —
+# not app data, that lives in the JSON config store instead)
+db.sqlite3
+
 # Node.js
 node_modules/
 web/node_modules/
 
 # Generated build artifacts
 cloudbench-web
+docker-compose.override.yml
 internal/webserver/static/cesium/
 internal/webserver/static/assets/
+volumes

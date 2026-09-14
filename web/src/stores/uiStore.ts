@@ -32,6 +32,7 @@ export type DialogType =
   | 'qgispreview'
   | 'geonode'
   | 'geonodeupload'
+  | 'geonodeaddremoteservice'
   | 'icebergconnection'
   | 'icebergnamespace'
   | 'icebergtable'
@@ -40,6 +41,7 @@ export type DialogType =
   | 'icebergquery'
   | 'qfieldcloud'
   | 'merginmaps'
+  | 'pgconnect'
   | null
 
 export type DialogMode = 'create' | 'edit' | 'delete' | 'view'
@@ -228,7 +230,7 @@ export const useUIStore = create<UIState>((set) => ({
   errorMessage: null,
   successMessage: null,
   isLoading: false,
-  sidebarWidth: 420,
+  sidebarWidth: 400,
   settings: loadSettings(),
 
   openDialog: (type, data) => {

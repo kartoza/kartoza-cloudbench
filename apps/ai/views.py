@@ -19,21 +19,23 @@ from .engine import AIQueryEngine, get_available_providers, get_schema_context
 class AIProvidersView(APIView):
     """List available LLM providers."""
 
-    def get(self, request):
+    def get(self, _request):
         """List all available providers."""
         providers = get_available_providers()
-        return Response({
-            "providers": [
-                {
-                    "name": p.name,
-                    "type": p.type,
-                    "url": p.url,
-                    "model": p.model,
-                    "available": p.available,
-                }
-                for p in providers
-            ]
-        })
+        return Response(
+            {
+                "providers": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "url": p.url,
+                        "model": p.model,
+                        "available": p.available,
+                    }
+                    for p in providers
+                ]
+            }
+        )
 
 
 class AIQueryView(APIView):
@@ -77,12 +79,14 @@ class AIQueryView(APIView):
             engine = AIQueryEngine(ollama_url=url, model=model)
             result = engine.generate_sql(question, schema_context)
 
-            return Response({
-                "sql": result.sql,
-                "explanation": result.explanation,
-                "confidence": result.confidence,
-                "warnings": result.warnings,
-            })
+            return Response(
+                {
+                    "sql": result.sql,
+                    "explanation": result.explanation,
+                    "confidence": result.confidence,
+                    "warnings": result.warnings,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -117,9 +121,11 @@ class AIExplainView(APIView):
             engine = AIQueryEngine(ollama_url=url, model=model)
             explanation = engine.explain_query(sql)
 
-            return Response({
-                "explanation": explanation,
-            })
+            return Response(
+                {
+                    "explanation": explanation,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -222,9 +228,11 @@ Provide 2-3 specific, actionable suggestions."""
                 temperature=0.3,
             ).strip()
 
-            return Response({
-                "suggestions": suggestions,
-            })
+            return Response(
+                {
+                    "suggestions": suggestions,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -241,11 +249,13 @@ class AISchemaContextView(APIView):
 
         try:
             context = get_schema_context(service_name, schema)
-            return Response({
-                "context": context,
-                "serviceName": service_name,
-                "schema": schema,
-            })
+            return Response(
+                {
+                    "context": context,
+                    "serviceName": service_name,
+                    "schema": schema,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},

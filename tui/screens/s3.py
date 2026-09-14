@@ -99,7 +99,7 @@ class S3Screen(Screen):
         if event.select.id == "s3-connection-select" and event.value:
             self._load_buckets(str(event.value))
 
-    def _load_buckets(self, conn_id: str) -> None:
+    def _load_buckets(self, _conn_id: str) -> None:
         """Load buckets for a connection."""
         tree = self.query_one("#bucket-tree", Tree)
         tree.clear()

@@ -97,9 +97,7 @@ def mock_duckdb_engine():
 class TestS3ConnectionWorkflow:
     """Test S3 connection management workflows."""
 
-    def test_list_s3_connections(
-        self, api_client: APIClient, mock_s3_config
-    ) -> None:
+    def test_list_s3_connections(self, api_client: APIClient, mock_s3_config) -> None:
         """Test listing S3 connections."""
         response = api_client.get("/api/s3/connections")
         assert response.status_code == status.HTTP_200_OK
@@ -107,9 +105,7 @@ class TestS3ConnectionWorkflow:
         assert len(connections) == 1
         assert connections[0]["name"] == "Test MinIO"
 
-    def test_create_s3_connection(
-        self, api_client: APIClient, mock_s3_config
-    ) -> None:
+    def test_create_s3_connection(self, api_client: APIClient, mock_s3_config) -> None:
         """Test creating an S3 connection."""
         response = api_client.post(
             "/api/s3/connections",
@@ -124,17 +120,13 @@ class TestS3ConnectionWorkflow:
         assert response.status_code == status.HTTP_201_CREATED
         mock_s3_config["config"].add_s3_connection.assert_called_once()
 
-    def test_get_s3_connection_detail(
-        self, api_client: APIClient, mock_s3_config
-    ) -> None:
+    def test_get_s3_connection_detail(self, api_client: APIClient, mock_s3_config) -> None:
         """Test getting S3 connection details."""
         response = api_client.get("/api/s3/connections/test-s3-conn")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["connection"]["name"] == "Test MinIO"
 
-    def test_update_s3_connection(
-        self, api_client: APIClient, mock_s3_config
-    ) -> None:
+    def test_update_s3_connection(self, api_client: APIClient, mock_s3_config) -> None:
         """Test updating an S3 connection."""
         response = api_client.put(
             "/api/s3/connections/test-s3-conn",
@@ -144,9 +136,7 @@ class TestS3ConnectionWorkflow:
         assert response.status_code == status.HTTP_200_OK
         mock_s3_config["config"].update_s3_connection.assert_called_once()
 
-    def test_delete_s3_connection(
-        self, api_client: APIClient, mock_s3_config
-    ) -> None:
+    def test_delete_s3_connection(self, api_client: APIClient, mock_s3_config) -> None:
         """Test deleting an S3 connection."""
         response = api_client.delete("/api/s3/connections/test-s3-conn")
         assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -158,9 +148,7 @@ class TestS3ConnectionWorkflow:
 class TestS3BucketWorkflow:
     """Test S3 bucket operations workflows."""
 
-    def test_list_buckets(
-        self, api_client: APIClient, mock_s3_config, mock_s3_client
-    ) -> None:
+    def test_list_buckets(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test listing S3 buckets."""
         response = api_client.get("/api/s3/connections/test-s3-conn/buckets")
         assert response.status_code == status.HTTP_200_OK
@@ -168,9 +156,7 @@ class TestS3BucketWorkflow:
         assert len(buckets) == 1
         assert buckets[0]["name"] == "test-bucket"
 
-    def test_list_objects(
-        self, api_client: APIClient, mock_s3_config, mock_s3_client
-    ) -> None:
+    def test_list_objects(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test listing objects in a bucket."""
         response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket")
         assert response.status_code == status.HTTP_200_OK
@@ -182,9 +168,7 @@ class TestS3BucketWorkflow:
         self, api_client: APIClient, mock_s3_config, mock_s3_client
     ) -> None:
         """Test listing objects with prefix filter."""
-        response = api_client.get(
-            "/api/s3/objects/test-s3-conn/test-bucket?prefix=data/"
-        )
+        response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket?prefix=data/")
         assert response.status_code == status.HTTP_200_OK
         mock_s3_client.list_objects.assert_called_with(
             bucket="test-bucket",
@@ -200,23 +184,15 @@ class TestS3BucketWorkflow:
 class TestS3ObjectWorkflow:
     """Test S3 object operations workflows."""
 
-    def test_get_object_info(
-        self, api_client: APIClient, mock_s3_config, mock_s3_client
-    ) -> None:
+    def test_get_object_info(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test getting object metadata."""
-        response = api_client.get(
-            "/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson"
-        )
+        response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["contentType"] == "application/geo+json"
 
-    def test_delete_object(
-        self, api_client: APIClient, mock_s3_config, mock_s3_client
-    ) -> None:
+    def test_delete_object(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test deleting an object."""
-        response = api_client.delete(
-            "/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson"
-        )
+        response = api_client.delete("/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson")
         assert response.status_code == status.HTTP_204_NO_CONTENT
         mock_s3_client.delete_object.assert_called_once()
 
@@ -226,13 +202,9 @@ class TestS3ObjectWorkflow:
 class TestS3PreviewWorkflow:
     """Test S3 file preview workflows."""
 
-    def test_preview_geojson(
-        self, api_client: APIClient, mock_s3_config, mock_s3_client
-    ) -> None:
+    def test_preview_geojson(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test previewing GeoJSON content from S3."""
-        response = api_client.get(
-            "/api/s3/preview/test-s3-conn/test-bucket/data/file.geojson"
-        )
+        response = api_client.get("/api/s3/preview/test-s3-conn/test-bucket/data/file.geojson")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["type"] == "json"
@@ -248,9 +220,7 @@ class TestS3PreviewWorkflow:
             "contentLength": 2048,
         }
 
-        response = api_client.get(
-            "/api/s3/preview/test-s3-conn/test-bucket/data/file.parquet"
-        )
+        response = api_client.get("/api/s3/preview/test-s3-conn/test-bucket/data/file.parquet")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["type"] == "parquet"
@@ -330,9 +300,7 @@ class TestCloudNativeConversionWorkflow:
             )
             yield mock_subprocess
 
-    def test_list_conversion_tools(
-        self, api_client: APIClient, mock_conversion_tools
-    ) -> None:
+    def test_list_conversion_tools(self, api_client: APIClient, mock_conversion_tools) -> None:
         """Test listing available conversion tools."""
         response = api_client.get("/api/s3/conversion/tools")
         assert response.status_code == status.HTTP_200_OK

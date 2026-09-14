@@ -157,6 +157,24 @@ const theme = extendTheme({
             bg: 'accent.600',
             boxShadow: '0 6px 28px rgba(232, 163, 49, 0.5)',
           },
+          _active: {
+            bg: 'accent.700',
+          },
+          _disabled: {
+            bg: 'accent.200',
+            color: 'white',
+            boxShadow: 'none',
+            cursor: 'not-allowed',
+            opacity: 1,
+
+            _hover: {
+              bg: 'accent.200 !important',
+              boxShadow: 'none',
+            },
+            _active: {
+              bg: 'accent.200 !important',
+            },
+          },
         },
         'accent-outline': {
           borderColor: 'accent.400',

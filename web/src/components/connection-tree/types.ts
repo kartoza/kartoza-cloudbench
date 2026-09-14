@@ -4,6 +4,8 @@ export interface ConnectionNodeProps {
   connectionId: string
   name: string
   url: string
+  ableToEdit?: boolean
+  ableToDelete?: boolean
 }
 
 export interface WorkspaceNodeProps {
@@ -35,6 +37,8 @@ export interface PGServiceNodeProps {
     is_parsed: boolean
     hidden?: boolean
   }
+  ableToEdit?: boolean
+  ableToDelete?: boolean
 }
 
 export interface PGSchemaNodeProps {
@@ -67,7 +71,6 @@ export interface DataStoreContentsNodeProps {
   workspace: string
   storeName: string
   featureTypes: { name: string }[]
-  availableFeatureTypes: string[]
 }
 
 export interface CoverageStoreContentsNodeProps {
@@ -94,9 +97,12 @@ export interface TreeNodeRowProps {
   isSelected: boolean
   isLoading: boolean
   onClick: () => void
+  isOnline?: boolean | null
   onAdd?: (e: React.MouseEvent) => void
   onEdit?: (e: React.MouseEvent) => void
   onDelete?: (e: React.MouseEvent) => void
+  ableToEdit?: boolean
+  ableToDelete?: boolean
   onPreview?: (e: React.MouseEvent) => void
   onTerria?: (e: React.MouseEvent) => void
   onOpenAdmin?: (e: React.MouseEvent) => void

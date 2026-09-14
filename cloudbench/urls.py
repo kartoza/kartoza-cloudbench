@@ -8,12 +8,12 @@ import os
 
 from django.conf import settings
 from django.contrib import admin
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect
 from django.urls import include, path, re_path
 from django.views.static import serve
 
 
-def health_check(request):
+def health_check(_request):
     """Health check endpoint for container orchestration."""
     return HttpResponse("OK", content_type="text/plain")
 
@@ -30,6 +30,18 @@ def serve_react_app(request, path=""):
 
     # Otherwise serve index.html (SPA routing)
     index_path = os.path.join(static_dir, "index.html")
+    if not os.path.isfile(index_path):
+        if settings.DEBUG:
+            # Dev container / bare `runserver` case: source is bind-mounted
+            # over static/, so the built frontend that's normally baked into
+            # the image isn't there — it's served separately by its own
+            # Vite dev server instead (see `npm run dev` in web/). Redirect
+            # there rather than crashing with FileNotFoundError.
+            vite_host = request.get_host().split(":")[0]
+            vite_port = os.environ.get("CLOUDBENCH_VITE_DEV_PORT", "5173")
+            return HttpResponseRedirect(f"http://{vite_host}:{vite_port}{request.get_full_path()}")
+        raise Http404("Frontend build not found. Run `npm run build` in web/.")
+
     return FileResponse(open(index_path, "rb"), content_type="text/html")
 
 
@@ -38,8 +50,6 @@ urlpatterns = [
     path("health/", health_check, name="health-check"),
     # Admin interface (optional, can be disabled in production)
     path("admin/", admin.site.urls),
-    # API endpoints - versioned auth endpoints
-    path("api/", include("apps.accounts.urls")),
     # API endpoints - matching the existing Go backend paths exactly
     path("api/", include("apps.connections.urls")),
     path("api/", include("apps.geoserver.urls")),
@@ -61,24 +71,27 @@ urlpatterns = [
     path("api/", include("apps.iceberg.urls")),
     path("api/", include("apps.qgis.urls")),
     path("api/", include("apps.core.urls")),
-    path("api/preview/", include("apps.preview.urls")),
+    path("api/", include("apps.preview.urls")),
     # Viewer endpoint (Terria/Cesium)
     path("viewer/", include("apps.terria.viewer_urls")),
 ]
 
-# Serve static files (React frontend) in development and production
-# WhiteNoise handles this efficiently in production
+# Serve media files directly in development only — in production these
+# should go through nginx/object storage instead of Django.
 if settings.DEBUG:
     from django.conf.urls.static import static
 
-    # Serve media files
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-    # Serve React frontend - but NOT for /api/, /admin/, /health/, /viewer/ paths
-    # These are handled by the URL patterns above
-    urlpatterns += [
-        re_path(
-            r"^(?!api/|admin/|health/|viewer/)(?P<path>.*)$",
-            serve_react_app,
-        ),
-    ]
+# Serve the React frontend — NOT for /api/, /admin/, /health/, /viewer/
+# paths (handled by the URL patterns above). Registered unconditionally
+# (not just in DEBUG): WhiteNoise only serves files matching STATIC_URL,
+# it doesn't do SPA-style "any other path falls back to index.html"
+# routing, so without this the frontend 404s on every route once
+# DEBUG=False.
+urlpatterns += [
+    re_path(
+        r"^(?!api/|admin/|health/|viewer/)(?P<path>.*)$",
+        serve_react_app,
+    ),
+]

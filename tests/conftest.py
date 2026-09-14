@@ -17,7 +17,6 @@ import pytest
 from django.test import Client
 from rest_framework.test import APIClient
 
-
 # ============================================================================
 # Environment Setup
 # ============================================================================
@@ -242,7 +241,10 @@ def mock_geoserver_client() -> Generator[MagicMock, None, None]:
     with patch("apps.geoserver.client.GeoServerClient") as mock:
         client = MagicMock()
         client.get_workspaces.return_value = [
-            {"name": "test_workspace", "href": "http://localhost:8080/geoserver/rest/workspaces/test_workspace"}
+            {
+                "name": "test_workspace",
+                "href": "http://localhost:8080/geoserver/rest/workspaces/test_workspace",
+            }
         ]
         client.get_layers.return_value = [
             {"name": "test_layer", "href": "http://localhost:8080/geoserver/rest/layers/test_layer"}
@@ -309,16 +311,10 @@ def sample_geojson() -> dict[str, Any]:
         "features": [
             {
                 "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [0.0, 0.0]
-                },
-                "properties": {
-                    "name": "Test Point",
-                    "value": 42
-                }
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+                "properties": {"name": "Test Point", "value": 42},
             }
-        ]
+        ],
     }
 
 
@@ -380,9 +376,7 @@ def temp_geojson_file(sample_geojson: dict[str, Any]) -> Generator[str, None, No
     """Create a temporary GeoJSON file for testing."""
     import json
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".geojson", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".geojson", delete=False) as f:
         json.dump(sample_geojson, f)
         f.flush()
         yield f.name
@@ -392,9 +386,7 @@ def temp_geojson_file(sample_geojson: dict[str, Any]) -> Generator[str, None, No
 @pytest.fixture
 def temp_sld_file(sample_sld_style: str) -> Generator[str, None, None]:
     """Create a temporary SLD file for testing."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".sld", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sld", delete=False) as f:
         f.write(sample_sld_style)
         f.flush()
         yield f.name
@@ -404,9 +396,7 @@ def temp_sld_file(sample_sld_style: str) -> Generator[str, None, None]:
 @pytest.fixture
 def temp_pg_service_file(sample_pg_service_conf: str) -> Generator[str, None, None]:
     """Create a temporary pg_service.conf file for testing."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".conf", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as f:
         f.write(sample_pg_service_conf)
         f.flush()
         yield f.name

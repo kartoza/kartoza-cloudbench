@@ -11,7 +11,11 @@ interface LayoutProps {
   onHelpClick?: () => void
 }
 
-export default function Layout({ children, onSearchClick, onHelpClick }: LayoutProps) {
+export default function Layout({
+                                 children,
+                                 onSearchClick,
+                                 onHelpClick
+                               }: LayoutProps) {
   const sidebarWidth = useUIStore((state) => state.sidebarWidth)
   const setSidebarWidth = useUIStore((state) => state.setSidebarWidth)
   const bgColor = useColorModeValue('gray.50', 'gray.900')
@@ -50,7 +54,7 @@ export default function Layout({ children, onSearchClick, onHelpClick }: LayoutP
 
   return (
     <Flex direction="column" h="100vh" bg={bgColor}>
-      <Header onSearchClick={onSearchClick} onHelpClick={onHelpClick} />
+      <Header onSearchClick={onSearchClick} onHelpClick={onHelpClick}/>
       <Flex flex="1" overflow="hidden" ref={containerRef}>
         <Box
           w={`${sidebarWidth}px`}
@@ -60,7 +64,7 @@ export default function Layout({ children, onSearchClick, onHelpClick }: LayoutP
           flexShrink={0}
           position="relative"
         >
-          <Sidebar />
+          <Sidebar/>
         </Box>
         {/* Resize Handle */}
         <Box
@@ -72,7 +76,7 @@ export default function Layout({ children, onSearchClick, onHelpClick }: LayoutP
           flexShrink={0}
           position="relative"
           onMouseDown={handleMouseDown}
-          ml="-3px"
+          ml="-6px"
           zIndex={10}
         >
           {/* Visual indicator line */}
@@ -98,14 +102,13 @@ export default function Layout({ children, onSearchClick, onHelpClick }: LayoutP
         <Box
           flex="1"
           overflow="auto"
-          p={4}
           display="flex"
           flexDirection="column"
         >
           {children}
         </Box>
       </Flex>
-      <StatusBar />
+      <StatusBar/>
     </Flex>
   )
 }
