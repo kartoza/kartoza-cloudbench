@@ -6,8 +6,6 @@ Tests the ProvidersManager and provider enablement/disablement.
 import json
 import os
 
-import pytest
-
 from apps.core.providers import (
     DEFAULT_PROVIDERS,
     ProviderConfig,

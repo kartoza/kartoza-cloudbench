@@ -6,8 +6,9 @@ from rest_framework.views import APIView
 
 from apps.core.exceptions import GeoServerError
 from apps.postgres.client import get_pg_client
-from .base import get_recurse_param, handle_geoserver_error
+
 from ..client import get_geoserver_client
+from .base import get_recurse_param, handle_geoserver_error
 
 
 class DataStoreListView(APIView):

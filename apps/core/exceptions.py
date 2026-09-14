@@ -22,9 +22,7 @@ def custom_exception_handler(exc, context):
         error_data = {"error": str(exc)}
 
         if hasattr(exc, "detail"):
-            if isinstance(exc.detail, dict):
-                error_data["detail"] = exc.detail
-            elif isinstance(exc.detail, list):
+            if isinstance(exc.detail, dict) or isinstance(exc.detail, list):
                 error_data["detail"] = exc.detail
             else:
                 error_data["error"] = str(exc.detail)

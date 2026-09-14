@@ -6,8 +6,6 @@ Tests the ConfigManager singleton and all connection types.
 import json
 import os
 
-import pytest
-
 from apps.core.config import (
     Config,
     ConfigManager,

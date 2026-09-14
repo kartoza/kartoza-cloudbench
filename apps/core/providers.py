@@ -8,9 +8,7 @@ import json
 import os
 from typing import Any
 
-from pydantic import BaseModel, Field
-
-from .models import ProvidersConfig, ProviderConfig
+from .models import ProviderConfig, ProvidersConfig
 from .utilities import file_lock
 
 # Provider configuration file name
@@ -86,7 +84,7 @@ class ProvidersManager:
     def __init__(self, user_id: str = "default") -> None:
         """Initialise manager for the given user."""
         self._user_id = user_id
-        self._config: "ProvidersConfig | None" = None
+        self._config: ProvidersConfig | None = None
 
     @property
     def config(self) -> ProvidersConfig:
@@ -132,9 +130,8 @@ class ProvidersManager:
             self.save()
             return config
 
-        with file_lock(path, exclusive=False):
-            with open(path) as f:
-                data = json.load(f)
+        with file_lock(path, exclusive=False), open(path) as f:
+            data = json.load(f)
 
         try:
             # Merge with defaults to ensure new providers are added

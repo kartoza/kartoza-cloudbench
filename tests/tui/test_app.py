@@ -5,7 +5,6 @@ Uses Textual's testing framework for widget and screen tests.
 
 import pytest
 
-
 pytestmark = [
     pytest.mark.tui,
     pytest.mark.asyncio,

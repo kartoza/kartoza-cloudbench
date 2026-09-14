@@ -601,7 +601,7 @@ class GeoServerClient:
         # Use WFS GetFeature with resultType=hits
         response = self._request(
             "GET",
-            f"/wfs",
+            "/wfs",
             params={
                 "service": "WFS",
                 "version": "2.0.0",

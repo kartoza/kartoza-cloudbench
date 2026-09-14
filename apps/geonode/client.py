@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from apps.core.config import get_config
+
 from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
 
 

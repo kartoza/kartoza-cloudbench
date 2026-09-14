@@ -2,11 +2,10 @@
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.widgets import Footer, Header, Static, Tree
-from textual.widgets.tree import TreeNode
 
-from apps.core.config import ConfigManager, Connection
+from apps.core.config import ConfigManager
 
 from .screens.connections import ConnectionsScreen
 from .screens.geoserver import GeoServerScreen

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from celery.result import AsyncResult
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,6 +11,13 @@ from apps.upload.views import _assemble_file, _get_session
 
 from ..client import get_geoserver_client
 from ..tasks import run_geoserver_upload
+
+_CELERY_STATE_MAP = {
+    "PENDING": "pending",
+    "STARTED": "running",
+    "SUCCESS": "completed",
+    "FAILURE": "failed",
+}
 
 
 class GeoServerUploadCompleteView(APIView):

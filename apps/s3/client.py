@@ -4,7 +4,6 @@ Provides a unified interface for S3-compatible object storage
 including AWS S3, MinIO, and other compatible services.
 """
 
-import io
 import threading
 from dataclasses import dataclass
 from typing import Any, BinaryIO

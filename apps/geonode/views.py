@@ -18,11 +18,10 @@ from rest_framework.views import APIView
 
 from apps.core.config import GeoNodeConnection, get_config
 from apps.upload.views import _assemble_file, _get_session
+
 from .client import GeoNodeClient, get_geonode_client
 from .remote_service import get_remote_service
-from .utilities import (
-    RESOURCE_TYPE_DETAIL_REQUEST_MAP
-)
+from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
 
 
 class GeoNodeConnectionListView(APIView):

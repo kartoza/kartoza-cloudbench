@@ -16,9 +16,8 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,7 +26,6 @@ from apps.core.config import S3Connection, get_config
 
 from .client import S3Client, S3ClientManager, get_s3_client
 from .duckdb import get_duckdb_engine
-
 
 # ============================================================================
 # S3 Connection Views

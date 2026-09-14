@@ -1,10 +1,9 @@
 """GeoServer browser screen for Kartoza CloudBench TUI."""
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Label, Select, Static, Tree
-from textual.widgets.tree import TreeNode
 
 from apps.core.config import config_manager
 from apps.geoserver.client import GeoServerClient

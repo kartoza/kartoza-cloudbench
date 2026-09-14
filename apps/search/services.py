@@ -164,8 +164,8 @@ class SearchService:
         results = []
 
         try:
-            from apps.postgres.service import list_services
             from apps.postgres.schema import list_tables
+            from apps.postgres.service import list_services
 
             services = list_services()
             for service_name in services:

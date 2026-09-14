@@ -6,13 +6,11 @@ Provides endpoints for:
 - Getting layer metadata from GeoServer
 """
 
-import uuid
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
-from django.conf import settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.response import Response
@@ -29,12 +27,12 @@ class PreviewSession:
     conn_id: str
     workspace: str
     layer_name: str
-    store_name: Optional[str] = None
-    store_type: Optional[str] = None
+    store_name: str | None = None
+    store_type: str | None = None
     layer_type: str = "vector"
     use_cache: bool = False
-    grid_set: Optional[str] = None
-    tile_format: Optional[str] = None
+    grid_set: str | None = None
+    tile_format: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -58,12 +56,12 @@ class PreviewSessionManager:
         conn_id: str,
         workspace: str,
         layer_name: str,
-        store_name: Optional[str] = None,
-        store_type: Optional[str] = None,
+        store_name: str | None = None,
+        store_type: str | None = None,
         layer_type: str = "vector",
         use_cache: bool = False,
-        grid_set: Optional[str] = None,
-        tile_format: Optional[str] = None,
+        grid_set: str | None = None,
+        tile_format: str | None = None,
     ) -> PreviewSession:
         """Create a new preview session."""
         with self._lock:
@@ -85,7 +83,7 @@ class PreviewSessionManager:
             self._sessions[session_id] = session
             return session
 
-    def get_session(self, session_id: str) -> Optional[PreviewSession]:
+    def get_session(self, session_id: str) -> PreviewSession | None:
         """Get a preview session by ID."""
         with self._lock:
             return self._sessions.get(session_id)

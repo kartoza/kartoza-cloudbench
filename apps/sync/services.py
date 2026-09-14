@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from apps.core.config import SyncConfiguration, SyncOptions, get_config
+from apps.core.config import SyncConfiguration, SyncOptions
 from apps.geoserver.client import get_geoserver_client
 
 

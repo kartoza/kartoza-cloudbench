@@ -8,7 +8,6 @@ Provides endpoints for:
 import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 from rest_framework import status
 from rest_framework.response import Response

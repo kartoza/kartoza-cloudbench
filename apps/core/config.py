@@ -9,23 +9,25 @@ import os
 import tempfile
 from pathlib import Path
 
-from .utilities import (
-    file_lock, get_cloudbench_data_path
-)
+from .utilities import file_lock, get_cloudbench_data_path
 
 # Config directory names
 CONFIG_FILE = "config.json"
 
-from .utilities import get_cloudbench_config_path  # noqa: E402
 from .models import (
     Config,
     Connection,
     GeoNodeConnection,
-    QGISProject, SyncOptions,
-
-    SyncConfiguration, PGService, S3Connection, QFieldCloudConnection,
-    MerginMapsConnection, IcebergCatalogConnection
+    IcebergCatalogConnection,
+    MerginMapsConnection,
+    PGService,
+    QFieldCloudConnection,
+    QGISProject,
+    S3Connection,
+    SyncConfiguration,
+    SyncOptions,
 )
+from .utilities import get_cloudbench_config_path  # noqa: E402
 
 __all__ = ["QGISProject", "SyncOptions"]
 
@@ -42,7 +44,7 @@ class ConfigManager:
 
     def __init__(self, user_id: str = "default") -> None:
         self._user_id = user_id
-        self._config: "Config | None" = None
+        self._config: Config | None = None
 
     @property
     def config(self) -> Config:
@@ -83,11 +85,10 @@ class ConfigManager:
         path = self._config_path()
 
         try:
-            with file_lock(path, exclusive=False):
-                with open(path) as f:
-                    data = json.load(f)
+            with file_lock(path, exclusive=False), open(path) as f:
+                data = json.load(f)
             config = Config.model_validate(data)
-        except (json.JSONDecodeError, ValueError, IOError):
+        except (OSError, json.JSONDecodeError, ValueError):
             config = Config()
 
         return self.post_process_config(config)

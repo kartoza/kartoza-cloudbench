@@ -6,10 +6,10 @@ Provides endpoints for:
 - Terria catalog JSON generation
 """
 
-import httpx
 from typing import Any
 
-from django.http import HttpResponse, StreamingHttpResponse
+import httpx
+from django.http import StreamingHttpResponse
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.response import Response

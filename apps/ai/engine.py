@@ -4,9 +4,10 @@ Provides natural language to SQL query generation and explanation
 using local LLM models via Ollama.
 """
 
-import httpx
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 
 @dataclass
@@ -355,7 +356,7 @@ def get_schema_context(
     Returns:
         Schema description string
     """
-    from apps.postgres.schema import list_tables, get_table_columns
+    from apps.postgres.schema import get_table_columns, list_tables
 
     try:
         tables = list_tables(service_name, schema)

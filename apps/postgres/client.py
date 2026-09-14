@@ -28,19 +28,17 @@ class PGServiceClient:
         )
 
     def list_databases(self) -> list[str]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT datname FROM pg_database "
-                    "WHERE datistemplate = false ORDER BY datname"
-                )
-                return [row[0] for row in cur.fetchall()]
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT datname FROM pg_database "
+                "WHERE datistemplate = false ORDER BY datname"
+            )
+            return [row[0] for row in cur.fetchall()]
 
     def list_schema_names(self, database: str | None = None) -> list[str]:
-        with self._connect(dbname=database) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self._connect(dbname=database) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT schema_name
                     FROM information_schema.schemata
                     WHERE schema_name NOT IN (
@@ -50,16 +48,15 @@ class PGServiceClient:
                         )
                     ORDER BY schema_name
                     """
-                )
-                return [row[0] for row in cur.fetchall()]
+            )
+            return [row[0] for row in cur.fetchall()]
 
     def test_connection(self) -> tuple[bool, str]:
         try:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT version()")
-                    version = cur.fetchone()[0]
-                    return True, f"Connected: {version}"
+            with self._connect() as conn, conn.cursor() as cur:
+                cur.execute("SELECT version()")
+                version = cur.fetchone()[0]
+                return True, f"Connected: {version}"
         except Exception as e:
             return False, str(e)
 
@@ -370,9 +367,8 @@ class PGServiceClient:
         return f"{size_bytes} PB"
 
     def list_schemas(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("""
                             SELECT schema_name
                             FROM information_schema.schemata
                             WHERE schema_name NOT IN (
@@ -382,9 +378,9 @@ class PGServiceClient:
                                 )
                             ORDER BY schema_name
                             """)
-                schema_names = [row[0] for row in cur.fetchall()]
+            schema_names = [row[0] for row in cur.fetchall()]
 
-                cur.execute("""
+            cur.execute("""
                             SELECT t.table_schema,
                                    t.table_name,
                                    t.table_type,
@@ -401,34 +397,33 @@ class PGServiceClient:
                                      c.ordinal_position
                             """, (schema_names,))
 
-                schemas: dict[str, dict] = {name: {"name": name, "tables": {}}
-                                            for name in schema_names}
-                for schema, table, table_type, col_name, col_type, nullable in cur.fetchall():
-                    tables = schemas[schema]["tables"]
-                    if table not in tables:
-                        tables[table] = {
-                            "name": table,
-                            "schema": schema,
-                            "columns": [],
-                        }
-                    tables[table]["columns"].append({
-                        "name": col_name,
-                        "type": col_type,
-                        "nullable": nullable == "YES",
-                    })
-
-                return [
-                    {
-                        "name": s["name"],
-                        "tables": list(s["tables"].values()),
+            schemas: dict[str, dict] = {name: {"name": name, "tables": {}}
+                                        for name in schema_names}
+            for schema, table, table_type, col_name, col_type, nullable in cur.fetchall():
+                tables = schemas[schema]["tables"]
+                if table not in tables:
+                    tables[table] = {
+                        "name": table,
+                        "schema": schema,
+                        "columns": [],
                     }
-                    for s in schemas.values()
-                ]
+                tables[table]["columns"].append({
+                    "name": col_name,
+                    "type": col_type,
+                    "nullable": nullable == "YES",
+                })
+
+            return [
+                {
+                    "name": s["name"],
+                    "tables": list(s["tables"].values()),
+                }
+                for s in schemas.values()
+            ]
 
     def list_tables(self, schema: str = "public") -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("""
                             SELECT t.table_name,
                                    t.table_type,
                                    gc.f_geometry_column,
@@ -444,17 +439,17 @@ class PGServiceClient:
                               AND t.table_type IN ('BASE TABLE', 'VIEW')
                             ORDER BY t.table_name
                             """, (schema,))
-                return [
-                    {
-                        "name": row[0],
-                        "type": row[1],
-                        "geometryColumn": row[2],
-                        "geometryType": row[3],
-                        "srid": row[4],
-                        "schema": schema,
-                    }
-                    for row in cur.fetchall()
-                ]
+            return [
+                {
+                    "name": row[0],
+                    "type": row[1],
+                    "geometryColumn": row[2],
+                    "geometryType": row[3],
+                    "srid": row[4],
+                    "schema": schema,
+                }
+                for row in cur.fetchall()
+            ]
 
     def get_table_columns(self, schema: str, table: str) -> list[
         dict[str, Any]]:
@@ -511,17 +506,16 @@ class PGServiceClient:
                 return columns
 
     def get_table_row_count(self, schema: str, table: str) -> int:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("""
                             SELECT reltuples::bigint
                             FROM pg_class c
                                      JOIN pg_namespace n ON n.oid = c.relnamespace
                             WHERE n.nspname = %s
                               AND c.relname = %s
                             """, (schema, table))
-                result = cur.fetchone()
-                return result[0] if result else 0
+            result = cur.fetchone()
+            return result[0] if result else 0
 
     def get_table_data(
             self,
@@ -531,39 +525,38 @@ class PGServiceClient:
             offset: int = 0,
             order_by: str | None = None,
     ) -> dict[str, Any]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
-                total = cur.fetchone()[0]
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+            total = cur.fetchone()[0]
 
-                query = f'SELECT * FROM "{schema}"."{table}"'
-                if order_by:
-                    query += f' ORDER BY "{order_by}"'
-                query += f" LIMIT {limit} OFFSET {offset}"
-                cur.execute(query)
+            query = f'SELECT * FROM "{schema}"."{table}"'
+            if order_by:
+                query += f' ORDER BY "{order_by}"'
+            query += f" LIMIT {limit} OFFSET {offset}"
+            cur.execute(query)
 
-                columns = [desc[0] for desc in
-                           cur.description] if cur.description else []
-                rows = []
-                for row in cur.fetchall():
-                    row_values = []
-                    for value in row:
-                        if hasattr(value, "isoformat"):
-                            value = value.isoformat()
-                        elif isinstance(value, bytes):
-                            value = f"<binary {len(value)} bytes>"
-                        elif value is not None:
-                            value = str(value)
-                        row_values.append(value)
-                    rows.append(row_values)
+            columns = [desc[0] for desc in
+                       cur.description] if cur.description else []
+            rows = []
+            for row in cur.fetchall():
+                row_values = []
+                for value in row:
+                    if hasattr(value, "isoformat"):
+                        value = value.isoformat()
+                    elif isinstance(value, bytes):
+                        value = f"<binary {len(value)} bytes>"
+                    elif value is not None:
+                        value = str(value)
+                    row_values.append(value)
+                rows.append(row_values)
 
-                return {
-                    "columns": columns,
-                    "rows": rows,
-                    "total": total,
-                    "limit": limit,
-                    "offset": offset,
-                }
+            return {
+                "columns": columns,
+                "rows": rows,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
 
     def execute_query(
             self,
@@ -571,33 +564,32 @@ class PGServiceClient:
             params: tuple | None = None,
             limit: int = 1000,
     ) -> dict[str, Any]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                query_lower = query.lower().strip()
-                if "limit" not in query_lower and query_lower.startswith(
-                        "select"):
-                    query = f"{query.rstrip(';')} LIMIT {limit}"
+        with self._connect() as conn, conn.cursor() as cur:
+            query_lower = query.lower().strip()
+            if "limit" not in query_lower and query_lower.startswith(
+                    "select"):
+                query = f"{query.rstrip(';')} LIMIT {limit}"
 
-                cur.execute(query, params)
-                columns = [desc[0] for desc in
-                           cur.description] if cur.description else []
-                rows = []
-                for row in cur.fetchall():
-                    row_dict = {}
-                    for i, col in enumerate(columns):
-                        value = row[i]
-                        if hasattr(value, "isoformat"):
-                            value = value.isoformat()
-                        elif isinstance(value, bytes):
-                            value = value.hex()
-                        row_dict[col] = value
-                    rows.append(row_dict)
+            cur.execute(query, params)
+            columns = [desc[0] for desc in
+                       cur.description] if cur.description else []
+            rows = []
+            for row in cur.fetchall():
+                row_dict = {}
+                for i, col in enumerate(columns):
+                    value = row[i]
+                    if hasattr(value, "isoformat"):
+                        value = value.isoformat()
+                    elif isinstance(value, bytes):
+                        value = value.hex()
+                    row_dict[col] = value
+                rows.append(row_dict)
 
-                return {
-                    "columns": columns,
-                    "rows": rows,
-                    "rowCount": len(rows),
-                }
+            return {
+                "columns": columns,
+                "rows": rows,
+                "rowCount": len(rows),
+            }
 
 
 def get_pg_client(service_name: str,

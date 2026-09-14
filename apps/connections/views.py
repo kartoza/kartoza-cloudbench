@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from apps.core.config import get_config
 from apps.core.managers import make_client
+
 from .serializers import ConnectionResponseSerializer, ConnectionSerializer
 
 

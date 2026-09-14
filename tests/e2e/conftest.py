@@ -3,12 +3,12 @@
 import os
 import subprocess
 import time
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 
 try:
-    from playwright.sync_api import Page, expect, Browser, BrowserContext
+    from playwright.sync_api import Browser, BrowserContext, Page, expect
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
