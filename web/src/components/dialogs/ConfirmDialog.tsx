@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { FiAlertTriangle } from 'react-icons/fi'
 import { useUIStore } from '../../stores/uiStore'
 import { useConnectionStore } from '../../stores/connectionStore'
+import { useTreeStore } from '../../stores/treeStore'
 import * as api from '../../api'
 
 export default function ConfirmDialog() {
@@ -24,6 +25,8 @@ export default function ConfirmDialog() {
   const dialogData = useUIStore((state) => state.dialogData)
   const closeDialog = useUIStore((state) => state.closeDialog)
   const removeConnection = useConnectionStore((state) => state.removeConnection)
+  const selectedNode = useTreeStore((state) => state.selectedNode)
+  const clearSelection = useTreeStore((state) => state.clearSelection)
   const queryClient = useQueryClient()
   const toast = useToast()
 
@@ -64,6 +67,18 @@ export default function ConfirmDialog() {
         // Delete PostgreSQL service
         await api.deletePGService(data.pgServiceName as string)
         queryClient.invalidateQueries({ queryKey: ['pgservices'] })
+        // The sidebar list refreshes via the invalidation above, but
+        // nothing else clears the main panel's selection — if this
+        // service was open there, MainContent would keep rendering
+        // PGServicePanel with the now-deleted name and re-fetching its
+        // stats forever, surfacing "PostgreSQL service not found" as a
+        // permanent error in the panel instead of just going away.
+        if (
+          selectedNode?.type === 'pgservice' &&
+          selectedNode.serviceName === data.pgServiceName
+        ) {
+          clearSelection()
+        }
         toast({
           title: 'PostgreSQL service deleted',
           status: 'success',

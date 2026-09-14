@@ -11,6 +11,13 @@ urlpatterns = [
         views.PGServiceListView.as_view(),
         name="pg-service-list",
     ),
+    # Must come before pg/services/<str:name> or "test" would be swallowed
+    # as a service name.
+    path(
+        "pg/services/test",
+        views.PGServiceTestDirectView.as_view(),
+        name="pg-service-test-direct",
+    ),
     path(
         "pg/services/<str:name>",
         views.PGServiceDetailView.as_view(),

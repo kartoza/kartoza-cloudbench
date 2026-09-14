@@ -66,6 +66,43 @@ cd web && npm install && npm run build && cd ..
 python manage.py runserver 8080
 ```
 
+### Dev Container (VSCode)
+
+Just *Reopen in Container* (or `Dev Containers: Rebuild and Reopen in
+Container` from the command palette) — `deployment/.env` is created from
+`deployment/.template.env` automatically on first open if it doesn't
+already exist (`initializeCommand`, runs before the container starts).
+Edit it afterward if you need non-default admin credentials or a real
+`DJANGO_SECRET_KEY`. This builds the `vscode` target from
+`deployment/docker/Dockerfile`, bind-mounts the repo into the container, and
+attaches to the `django` service — Python, GDAL/PostGIS, and Node are all
+preinstalled, `pip install -e ".[dev]"` and `npm install` (for `web/`) run
+automatically on first create.
+
+Two services come up alongside each other, mirroring the same split
+GeoHosting's own devcontainer uses: `django` (which VS Code attaches to —
+`python manage.py runserver`, port 8000) and `vite` (`npm install && npm
+run dev`, port 5173), both published to the host automatically. No manual
+`npm run dev` needed — just wait for `vite`'s first-run dependency
+pre-bundle to finish (see note below).
+
+Visit `http://localhost:8000/` (**not** `0.0.0.0:8000` — Django's
+`ALLOWED_HOSTS` check rejects that Host header with a 400, and some
+browsers block navigating to `0.0.0.0` outright). It redirects to
+`http://localhost:5173/` for the actual UI once Vite is running.
+
+**First load after a fresh `npm install` can take 30s–2min and looks like
+a blank/hanging tab** — this is expected, not a bug. Vite has to
+pre-bundle every dependency (Cesium, MapLibre, Chakra UI, CodeMirror, ...)
+with esbuild the first time it runs against a given `node_modules`; while
+that's happening the dev server can't yet respond to `/@vite/client` or
+`/src/main.tsx`, which is exactly what a genuine hang would also look
+like. Check `docker compose logs -f vite` — if it's still printing
+`ready in Nms` from startup with no errors since, it's just working; give
+it a minute rather than restarting anything. This only happens once per
+`node_modules` (fresh clone, or after `node_modules` gets reinstalled) —
+normal restarts afterward are fast.
+
 ### Development
 
 ```bash
@@ -120,6 +157,64 @@ kartoza-cloudbench/
 └── static/                 # Compiled frontend assets
 ```
 
+## Deployment
+
+CloudBench is fully standalone — it does not require any other platform
+to run. 
+
+## Embedding in Another Website
+
+CloudBench can optionally be embedded inside another web application via
+iframe, with single sign-on so the visiting user never sees CloudBench's
+own login screen. This is off by default — CloudBench runs fully
+standalone unless you configure it.
+
+### What CloudBench needs
+
+Set these in `deployment/.env` (see `deployment/.template.env`):
+
+| Variable | Purpose |
+|----------|---------|
+| `CLOUDBENCH_SERVICE_TOKEN` | Shared secret between CloudBench and the other website's backend. Used two ways: the other website's backend sends it as `Authorization: Bearer <token>` when calling CloudBench's bridge endpoints, and it's also the HMAC key CloudBench uses to sign/verify SSO tokens. Blank by default — the bridge endpoints refuse all requests until this is set. |
+| `CLOUDBENCH_FRAME_ANCESTORS` | Comma-separated list of origins allowed to embed CloudBench in an iframe, e.g. `https://example.com`. Enforced via a `Content-Security-Policy: frame-ancestors` header (`apps/core/middleware.py`) — without this, browsers refuse to render the iframe at all. Blank means only CloudBench's own origin can embed itself. |
+| `CLOUDBENCH_SSO_TOKEN_MAX_AGE` | How long a minted SSO token stays valid, in seconds (default 12 hours). After it expires, a fresh token must be minted — there's no refresh mechanism. |
+
+CloudBench exposes two endpoints for this, both gated behind
+`CLOUDBENCH_SERVICE_TOKEN` (`apps/core/geohosting_bridge.py`,
+`apps/core/sso_auth.py`):
+
+- `POST /api/geohosting/sso-token/` — given `{"owner_user_id": "<id>"}`,
+  returns `{"token": "<signed-token>"}`. `owner_user_id` is an opaque
+  string the other website picks — CloudBench has no user database of
+  its own, so this id is just the key under which that user's
+  connections/settings are stored.
+- `POST` / `DELETE /api/geohosting/instances/` (optional) — lets the
+  other website pre-populate or remove a GeoServer/GeoNode/PostGIS
+  connection for a given `owner_user_id`, so the embedded CloudBench
+  opens with that connection already configured instead of empty.
+
+### What the other website needs
+
+1. **A backend-to-backend call to mint the token.** The other website's
+   *server* (never client-side JS) calls
+   `POST https://<cloudbench-host>/api/geohosting/sso-token/` with
+   `Authorization: Bearer <CLOUDBENCH_SERVICE_TOKEN>` and the logged-in
+   user's id as `owner_user_id`. `CLOUDBENCH_SERVICE_TOKEN` must stay
+   server-side secret — never ship it to the browser.
+2. **An iframe pointed at CloudBench with the token as a URL param**,
+   e.g. `<iframe src="https://<cloudbench-host>/?token=<signed-token>">`.
+   CloudBench's frontend (`web/src/api/ssoBootstrap.ts`) picks the
+   `token` param up on load, stores it the same way a normal login would,
+   and strips it from the URL — no other frontend integration needed.
+3. **Its own origin listed in `CLOUDBENCH_FRAME_ANCESTORS`** on the
+   CloudBench side, or the browser blocks the iframe outright.
+4. **A fresh token per session/page load**, since tokens expire after
+   `CLOUDBENCH_SSO_TOKEN_MAX_AGE` — mint a new one each time the iframe
+   is (re)loaded rather than trying to reuse one.
+5. *(Optional)* Call the instances endpoint above after provisioning a
+   GeoServer/GeoNode/PostGIS instance for a user, so it shows up
+   pre-configured the first time they open the embedded CloudBench.
+
 ## Configuration
 
 ### Environment Variables
@@ -162,6 +257,7 @@ password=secret
 
 The REST API is available under `/api/`:
 
+- `/api/auth/login/` - Standalone login (username/password → auth token)
 - `/api/connections` - GeoServer connections
 - `/api/workspaces/<conn_id>` - Workspaces
 - `/api/datastores/<conn_id>/<workspace>` - Data stores

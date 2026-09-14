@@ -12,13 +12,26 @@ up:
 up-prod:
 	COMPOSE_FILE=docker-compose.yml docker compose up -d
 
-# Stop all services
+# Start the SSH debug container (PyCharm remote interpreter) and the
+# frontend dev server
+dev:
+	docker compose --profile dev up -d dev vite
+
+# Stop all services (including the dev/vite profile)
 down:
-	docker compose down
+	docker compose --profile dev down
 
 # Follow logs
 logs:
 	docker compose logs -f
+
+# Follow frontend (vite) logs
+logs-vite:
+	docker compose logs -f vite
+
+# Open a shell inside the running vite container
+shell-vite:
+	docker compose exec vite sh
 
 # Open Django shell inside container
 shell:
@@ -38,4 +51,4 @@ test:
 
 # Print image tag
 image:
-	@echo kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
+	@echo ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}

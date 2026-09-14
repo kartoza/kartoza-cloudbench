@@ -1,10 +1,32 @@
 """Views for core app - settings and providers endpoints."""
 
+import os
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .config import get_config
 from .providers import get_providers_manager
+
+
+class FrontendConfigView(APIView):
+    """Deployment-time config the frontend can't get from its own build.
+
+    Vite's VITE_* env vars are baked into the bundle at `npm run build` and
+    can't change without a rebuild. Reading these from the environment at
+    request time instead lets a deployment set/change them via .env + a
+    container restart — see web/src/config/env.ts.
+    """
+
+    def get(self, _request):
+        """Return the "Add <type>" external-URL overrides, if configured."""
+        return Response(
+            {
+                "createGeoServerUrl": os.environ.get("VITE_CREATE_GEOSERVER_URL") or None,
+                "createPostgisUrl": os.environ.get("VITE_CREATE_POSTGIS_URL") or None,
+                "createGeoNodeUrl": os.environ.get("VITE_CREATE_GEONODE_URL") or None,
+            }
+        )
 
 
 class ProvidersView(APIView):

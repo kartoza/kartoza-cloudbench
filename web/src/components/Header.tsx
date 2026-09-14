@@ -18,7 +18,7 @@ import {
   Image,
   Text,
 } from '@chakra-ui/react'
-import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload } from 'react-icons/fi'
+import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload, FiLogOut } from 'react-icons/fi'
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
@@ -278,6 +278,20 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
                 color="gray.600"
                 _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
                 onClick={onHelpClick}
+                size="sm"
+              />
+            </Tooltip>
+            <Tooltip label="Log out" placement="bottom">
+              <IconButton
+                aria-label="Log out"
+                icon={<FiLogOut size={18} />}
+                variant="ghost"
+                color="gray.600"
+                _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
+                onClick={() => {
+                  localStorage.removeItem('token')
+                  window.location.reload()
+                }}
                 size="sm"
               />
             </Tooltip>

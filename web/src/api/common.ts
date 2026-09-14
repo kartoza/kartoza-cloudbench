@@ -20,6 +20,13 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
 }
 
 export async function handleResponse<T>(response: Response): Promise<T> {
+  if ([401, 403].includes(response.status)) {
+    localStorage.removeItem('token')
+    window.location.reload()
+    // Reload is already underway — never resolve, so callers don't race
+    // it with their own error handling.
+    return new Promise<T>(() => {})
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }))
     throw new Error(error.error || error.detail || `HTTP ${response.status}`)

@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -23,6 +24,8 @@ from apps.core.exceptions import UploadError
 from apps.geoserver.client import get_geoserver_client
 
 from .models import UploadSession
+
+User = get_user_model()
 
 
 def _get_session(session_id: str) -> UploadSession | None:
@@ -86,7 +89,10 @@ class UploadInitView(APIView):
         total_chunks = (file_size + chunk_size - 1) // chunk_size
 
         session = UploadSession(
-            user=request.user if request.user.is_authenticated else None,
+            # request.user may be a lightweight stand-in from a trusted-
+            # header/token auth path, not a real User row this FK can
+            # point to, since CloudBench doesn't require a user table.
+            user=request.user if isinstance(request.user, User) else None,
             filename=filename,
             file_size=file_size,
             chunk_size=chunk_size,

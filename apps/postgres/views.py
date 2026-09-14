@@ -21,6 +21,7 @@ from apps.core.models import PGService
 from apps.upload.views import _assemble_file, _get_session
 
 from .client import (
+    PGServiceClient,
     add_pg_service,
     delete_pg_service,
     get_pg_client,
@@ -84,6 +85,43 @@ class PGServiceListView(APIView):
              "dbname": service.dbname, "user": service.user},
             status=status.HTTP_201_CREATED,
         )
+
+
+class PGServiceTestDirectView(APIView):
+    """Test PostgreSQL connection credentials without saving them."""
+
+    def post(self, request):
+        """Test connection credentials.
+
+        Expected body:
+        {
+            "host": "localhost",
+            "port": 5432,
+            "dbname": "mydb",
+            "user": "postgres",
+            "password": "secret",
+            "sslmode": "prefer"
+        }
+        """
+        host = request.data.get("host")
+        dbname = request.data.get("dbname")
+        if not host or not dbname:
+            return Response(
+                {"error": "host and dbname are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = PGService(
+            name="__test__",
+            host=host,
+            port=int(request.data.get("port", 5432)),
+            dbname=dbname,
+            user=request.data.get("user", ""),
+            password=request.data.get("password", ""),
+            sslmode=request.data.get("sslmode", ""),
+        )
+        success, message = PGServiceClient(service).test_connection()
+        return Response({"success": success, "message": message})
 
 
 class PGServiceDetailView(APIView):

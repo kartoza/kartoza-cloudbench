@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import Layout from './components/Layout'
 import MainContent from './components/MainContent'
 import Dialogs from './components/dialogs'
+import Login from './components/Login'
 import { SearchModal, useSearchShortcut } from './components/SearchModal'
 import { HelpPanel, useHelpShortcut } from './components/HelpPanel'
 import { useTreeStore } from './stores/treeStore'
@@ -20,6 +21,10 @@ function applyUrlToTree(restoreNode: (node: TreeNode) => void) {
 function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
+  // GeoHosting's iframe handoff (api/ssoBootstrap.ts) sets this before
+  // React ever mounts. If it's absent, we're being used standalone —
+  // show the login screen instead of the main app.
+  const [isAuthed, setIsAuthed] = useState(() => !!localStorage.getItem('token'))
   const restoreNode = useTreeStore((state) => state.restoreNode)
 
   // Restore selected node + expand parents from URL on initial load
@@ -40,6 +45,10 @@ function App() {
   // Enable ? global shortcut for help
   const toggleHelp = useCallback(() => setIsHelpOpen(prev => !prev), [])
   useHelpShortcut(toggleHelp)
+
+  if (!isAuthed) {
+    return <Login onLogin={() => setIsAuthed(true)} />
+  }
 
   return (
     <>

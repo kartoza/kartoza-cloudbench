@@ -59,7 +59,7 @@ export function PostgreSQLRootNode() {
     if (createUrl) {
       openWindowWithCallback(createUrl, () => refetch(), toast)
     } else {
-      openDialog('pgdashboard', { mode: 'create' })
+      openDialog('connection', { mode: 'create', data: { type: 'postgresql' } })
     }
   }
 

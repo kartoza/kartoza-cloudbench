@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from .config import get_config
 from .models import Connection, GeoNodeConnection, PGService
+from .sso_auth import sign_sso_token
 
 
 class ProductNames:
@@ -187,3 +188,26 @@ class GeoHostingInstanceView(APIView):
         if changed:
             manager.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class GeoHostingSSOTokenView(APIView):
+    """Mint a short-lived SSO token for GeoHosting's iframe handoff.
+
+    GeoHosting's backend calls this when its frontend needs to embed
+    CloudBench for the logged-in user — the returned token is handed to
+    the browser as a URL parameter and used directly against CloudBench's
+    own API from then on (see apps/core/sso_auth.py).
+    """
+
+    permission_classes = [HasServiceToken]
+
+    def post(self, request):
+        """Sign a token for the given GeoHosting user id."""
+        owner_user_id = str(request.data.get("owner_user_id") or "")
+        if not owner_user_id:
+            return Response(
+                {"detail": "owner_user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({"token": sign_sso_token(owner_user_id)})

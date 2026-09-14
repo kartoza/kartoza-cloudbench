@@ -518,6 +518,17 @@ export async function createPGService(service: PGServiceCreate): Promise<PGServi
   return handleResponse<PGService>(response)
 }
 
+export async function testPGServiceDirect(
+  service: Omit<PGServiceCreate, 'name'>
+): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE}/pg/services/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(service),
+  })
+  return handleResponse<{ success: boolean; message: string }>(response)
+}
+
 export async function deletePGService(name: string): Promise<void> {
   const response = await fetch(`${API_BASE}/pg/services/${encodeURIComponent(name)}`, {
     method: 'DELETE',
