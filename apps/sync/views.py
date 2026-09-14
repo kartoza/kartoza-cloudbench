@@ -26,20 +26,22 @@ class SyncConfigListView(APIView):
         """List all sync configurations."""
         config = get_config(request.user.id)
         configs = config.config.sync_configs
-        return Response({
-            "configs": [
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "sourceId": c.source_id,
-                    "destinationIds": c.destination_ids,
-                    "options": c.options.model_dump(),
-                    "createdAt": c.created_at,
-                    "lastSyncedAt": c.last_synced_at,
-                }
-                for c in configs
-            ]
-        })
+        return Response(
+            {
+                "configs": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "sourceId": c.source_id,
+                        "destinationIds": c.destination_ids,
+                        "options": c.options.model_dump(),
+                        "createdAt": c.created_at,
+                        "lastSyncedAt": c.last_synced_at,
+                    }
+                    for c in configs
+                ]
+            }
+        )
 
     def post(self, request):
         """Create a new sync configuration."""
@@ -90,17 +92,19 @@ class SyncConfigDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "config": {
-                "id": sync_config.id,
-                "name": sync_config.name,
-                "sourceId": sync_config.source_id,
-                "destinationIds": sync_config.destination_ids,
-                "options": sync_config.options.model_dump(),
-                "createdAt": sync_config.created_at,
-                "lastSyncedAt": sync_config.last_synced_at,
+        return Response(
+            {
+                "config": {
+                    "id": sync_config.id,
+                    "name": sync_config.name,
+                    "sourceId": sync_config.source_id,
+                    "destinationIds": sync_config.destination_ids,
+                    "options": sync_config.options.model_dump(),
+                    "createdAt": sync_config.created_at,
+                    "lastSyncedAt": sync_config.last_synced_at,
+                }
             }
-        })
+        )
 
     def put(self, request, config_id):
         """Update a sync configuration."""
@@ -115,9 +119,7 @@ class SyncConfigDetailView(APIView):
         data = request.data
         sync_config.name = data.get("name", sync_config.name)
         sync_config.source_id = data.get("sourceId", sync_config.source_id)
-        sync_config.destination_ids = data.get(
-            "destinationIds", sync_config.destination_ids
-        )
+        sync_config.destination_ids = data.get("destinationIds", sync_config.destination_ids)
 
         if "options" in data:
             options_data = data["options"]
@@ -257,32 +259,36 @@ class SyncStatusView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            return Response({
-                "job": {
-                    "id": job.id,
-                    "configId": job.config_id,
-                    "status": job.status,
-                    "progress": job.progress,
-                    "currentStep": job.current_step,
-                    "error": job.error,
-                    "createdAt": job.created_at,
-                    "completedAt": job.completed_at,
-                    "results": job.results,
+            return Response(
+                {
+                    "job": {
+                        "id": job.id,
+                        "configId": job.config_id,
+                        "status": job.status,
+                        "progress": job.progress,
+                        "currentStep": job.current_step,
+                        "error": job.error,
+                        "createdAt": job.created_at,
+                        "completedAt": job.completed_at,
+                        "results": job.results,
+                    }
                 }
-            })
+            )
 
         # List all jobs
         jobs = job_manager.list_jobs()
-        return Response({
-            "jobs": [
-                {
-                    "id": j.id,
-                    "configId": j.config_id,
-                    "status": j.status,
-                    "progress": j.progress,
-                    "createdAt": j.created_at,
-                    "completedAt": j.completed_at,
-                }
-                for j in jobs
-            ]
-        })
+        return Response(
+            {
+                "jobs": [
+                    {
+                        "id": j.id,
+                        "configId": j.config_id,
+                        "status": j.status,
+                        "progress": j.progress,
+                        "createdAt": j.created_at,
+                        "completedAt": j.completed_at,
+                    }
+                    for j in jobs
+                ]
+            }
+        )

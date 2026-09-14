@@ -56,9 +56,7 @@ class GeoNodeRemoteService:
         csrf_token = self.client.cookies.get("csrftoken")
         if not csrf_token:
             tree = html.fromstring(response.content)
-            inputs = tree.xpath(
-                "//input[@name='csrfmiddlewaretoken']/@value"
-            )
+            inputs = tree.xpath("//input[@name='csrfmiddlewaretoken']/@value")
             csrf_token = inputs[0] if inputs else ""
 
         response = self.client.post(
@@ -74,9 +72,7 @@ class GeoNodeRemoteService:
         response.raise_for_status()
 
         if "sessionid" not in self.client.cookies:
-            raise PermissionError(
-                "Login failed — invalid credentials or non-admin user"
-            )
+            raise PermissionError("Login failed — invalid credentials or non-admin user")
 
         self._logged_in = True
 
@@ -94,9 +90,9 @@ class GeoNodeRemoteService:
         return _parse_services_table(response.content)
 
     def create_service(
-            self,
-            base_url: str,
-            service_type: str = "WMS",
+        self,
+        base_url: str,
+        service_type: str = "WMS",
     ) -> None:
         """Register a new remote service via /services/register/."""
         self._ensure_logged_in()
@@ -144,7 +140,7 @@ class GeoNodeRemoteService:
         return _parse_harvest_resources(response.content)
 
     def import_resources(
-            self, service_id: int, resource_ids: list[int] | None = None
+        self, service_id: int, resource_ids: list[int] | None = None
     ) -> list[dict]:
         """Rescan service then import selected resources via the harvest page."""
         self._ensure_logged_in()
@@ -164,9 +160,11 @@ class GeoNodeRemoteService:
         for cb in tree.xpath("//input[@name='resource_list']"):
             available.append({"id": cb.get("value")})
 
-        ids_to_import = resource_ids if resource_ids is not None else [
-            int(r["id"]) for r in available if r.get("id")
-        ]
+        ids_to_import = (
+            resource_ids
+            if resource_ids is not None
+            else [int(r["id"]) for r in available if r.get("id")]
+        )
 
         data = {
             "csrfmiddlewaretoken": csrf_token,
@@ -249,14 +247,15 @@ def _parse_harvest_resources(content: bytes) -> list[dict]:
         checkbox = row.xpath(".//input[@name='resource_list']")[0]
         cols = row.xpath("./td")
 
-        resources.append({
-            "id": checkbox.get("value", ""),
-            "name": cols[1].text_content().strip() if len(cols) > 1 else "",
-            "title": cols[2].text_content().strip() if len(cols) > 2 else "",
-            "abstract": cols[3].text_content().strip() if len(
-                cols) > 3 else "",
-            "type": cols[4].text_content().strip() if len(cols) > 4 else "",
-        })
+        resources.append(
+            {
+                "id": checkbox.get("value", ""),
+                "name": cols[1].text_content().strip() if len(cols) > 1 else "",
+                "title": cols[2].text_content().strip() if len(cols) > 2 else "",
+                "abstract": cols[3].text_content().strip() if len(cols) > 3 else "",
+                "type": cols[4].text_content().strip() if len(cols) > 4 else "",
+            }
+        )
 
     return resources
 
@@ -314,8 +313,9 @@ def _raise_if_form_errors(content: bytes) -> None:
     # Collect every non-empty errorlist item, tagged with its field name
     errors: list[str] = []
     for row in tree.xpath("//*[contains(@class,'grp-errors')]"):
-        field_label = _text(row.xpath(".//*[@class='c-1']")[0]) if row.xpath(
-            ".//*[@class='c-1']") else ""
+        field_label = (
+            _text(row.xpath(".//*[@class='c-1']")[0]) if row.xpath(".//*[@class='c-1']") else ""
+        )
         for li in row.xpath(".//ul[contains(@class,'errorlist')]/li"):
             msg = _text(li)
             if msg:
@@ -329,14 +329,13 @@ def _raise_if_form_errors(content: bytes) -> None:
                 errors.append(msg)
 
     raise ValueError(
-        "GeoNode admin rejected the form: " + "; ".join(errors) if errors
+        "GeoNode admin rejected the form: " + "; ".join(errors)
+        if errors
         else "GeoNode admin returned form errors (no details extracted)"
     )
 
 
-def get_remote_service(
-        connection_id: str, user_id: str = "default"
-) -> GeoNodeRemoteService:
+def get_remote_service(connection_id: str, user_id: str = "default") -> GeoNodeRemoteService:
     """Build a GeoNodeRemoteService from a saved connection."""
     conn = get_config(user_id).get_geonode_connection(connection_id)
     if not conn:

@@ -170,9 +170,7 @@ class UploadChunkView(APIView):
                 f.write(chunk_data)
 
             with transaction.atomic():
-                session = UploadSession.objects.select_for_update().get(
-                    session_id=session_id
-                )
+                session = UploadSession.objects.select_for_update().get(session_id=session_id)
                 if chunk_index not in session.received_chunks:
                     session.received_chunks = session.received_chunks + [chunk_index]
                     session.save(update_fields=["received_chunks"])

@@ -127,8 +127,7 @@ class SyncService:
         # Filter if specified
         if options.workspace_filter:
             source_workspaces = [
-                ws for ws in source_workspaces
-                if ws.get("name") in options.workspace_filter
+                ws for ws in source_workspaces if ws.get("name") in options.workspace_filter
             ]
 
         # Get destination workspaces
@@ -147,10 +146,12 @@ class SyncService:
                 dest.create_workspace(ws_name)
                 results["workspaces"]["created"] += 1
             except Exception as e:
-                results["workspaces"]["errors"].append({
-                    "workspace": ws_name,
-                    "error": str(e),
-                })
+                results["workspaces"]["errors"].append(
+                    {
+                        "workspace": ws_name,
+                        "error": str(e),
+                    }
+                )
 
         return results
 
@@ -201,10 +202,12 @@ class SyncService:
                     dest.create_style(style_name, style_content, workspace)
                     results["styles"]["created"] += 1
             except Exception as e:
-                results["styles"]["errors"].append({
-                    "style": style_name,
-                    "error": str(e),
-                })
+                results["styles"]["errors"].append(
+                    {
+                        "style": style_name,
+                        "error": str(e),
+                    }
+                )
 
         return results
 
@@ -253,9 +256,7 @@ class SyncService:
                     current_step="Syncing styles",
                     progress=current_step / total_steps,
                 )
-                dest_results["styles"] = self.sync_styles(
-                    config.source_id, dest_id
-                )
+                dest_results["styles"] = self.sync_styles(config.source_id, dest_id)
             current_step += 1
 
             # Other sync operations would go here...

@@ -4,6 +4,7 @@ import pytest
 
 try:
     from playwright.sync_api import Page, expect
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -75,9 +76,7 @@ class TestMultipleConnections:
 
         # TODO: Implement actual flow
 
-    def test_manage_connections_across_providers(
-        self, page: Page, base_url: str
-    ) -> None:
+    def test_manage_connections_across_providers(self, page: Page, base_url: str) -> None:
         """Test managing connections across different providers."""
         page.goto(base_url)
         page.wait_for_load_state("networkidle")

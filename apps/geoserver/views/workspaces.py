@@ -43,7 +43,6 @@ class WorkspaceListView(APIView):
             )
         except GeoServerError as e:
 
-
             return handle_geoserver_error(e)
 
 

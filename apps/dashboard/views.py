@@ -83,15 +83,17 @@ class DashboardView(APIView):
                         except Exception:
                             pass
 
-                server_status.update({
-                    "online": True,
-                    "responseTimeMs": response_time,
-                    "workspaceCount": workspace_count,
-                    "layerCount": layer_count,
-                    "dataStoreCount": datastore_count,
-                    "coverageCount": coverage_count,
-                    "styleCount": style_count,
-                })
+                server_status.update(
+                    {
+                        "online": True,
+                        "responseTimeMs": response_time,
+                        "workspaceCount": workspace_count,
+                        "layerCount": layer_count,
+                        "dataStoreCount": datastore_count,
+                        "coverageCount": coverage_count,
+                        "styleCount": style_count,
+                    }
+                )
 
                 online_count += 1
                 total_layers += layer_count
@@ -104,15 +106,17 @@ class DashboardView(APIView):
 
             servers.append(server_status)
 
-        return Response({
-            "servers": servers,
-            "onlineCount": online_count,
-            "offlineCount": offline_count,
-            "totalLayers": total_layers,
-            "totalStores": total_stores,
-            "alertServers": alert_servers,
-            "pingIntervalSecs": 30,  # Default refresh interval
-        })
+        return Response(
+            {
+                "servers": servers,
+                "onlineCount": online_count,
+                "offlineCount": offline_count,
+                "totalLayers": total_layers,
+                "totalStores": total_stores,
+                "alertServers": alert_servers,
+                "pingIntervalSecs": 30,  # Default refresh interval
+            }
+        )
 
 
 class DashboardServerView(APIView):
@@ -120,15 +124,17 @@ class DashboardServerView(APIView):
 
     def get(self, _request):
         """Get server status."""
-        return Response({
-            "server": {
-                "python": sys.version,
-                "platform": platform.platform(),
-                "hostname": platform.node(),
-            },
-            "status": "running",
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        return Response(
+            {
+                "server": {
+                    "python": sys.version,
+                    "platform": platform.platform(),
+                    "hostname": platform.node(),
+                },
+                "status": "running",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
 
 
 class DashboardConnectionsView(APIView):
@@ -145,38 +151,46 @@ class DashboardConnectionsView(APIView):
                 client = get_geoserver_client(conn.id, str(request.user.id))
                 # Try to get version as health check
                 about = client.get_about()
-                connections.append({
-                    "id": conn.id,
-                    "name": conn.name,
-                    "type": "geoserver",
-                    "url": conn.url,
-                    "status": "healthy",
-                    "version": about.get("about", {}).get("resource", [{}])[0].get("Version"),
-                })
+                connections.append(
+                    {
+                        "id": conn.id,
+                        "name": conn.name,
+                        "type": "geoserver",
+                        "url": conn.url,
+                        "status": "healthy",
+                        "version": about.get("about", {}).get("resource", [{}])[0].get("Version"),
+                    }
+                )
             except Exception as e:
-                connections.append({
-                    "id": conn.id,
-                    "name": conn.name,
-                    "type": "geoserver",
-                    "url": conn.url,
-                    "status": "error",
-                    "error": str(e),
-                })
+                connections.append(
+                    {
+                        "id": conn.id,
+                        "name": conn.name,
+                        "type": "geoserver",
+                        "url": conn.url,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                )
 
         # S3 connections
         for conn in config.list_s3_connections():
-            connections.append({
-                "id": conn.id,
-                "name": conn.name,
-                "type": "s3",
-                "endpoint": conn.endpoint,
-                "status": "unknown",  # Would need to test each
-            })
+            connections.append(
+                {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "type": "s3",
+                    "endpoint": conn.endpoint,
+                    "status": "unknown",  # Would need to test each
+                }
+            )
 
-        return Response({
-            "connections": connections,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        return Response(
+            {
+                "connections": connections,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
 
 
 class DashboardGeoServerView(APIView):
@@ -209,14 +223,16 @@ class DashboardGeoServerView(APIView):
                     except Exception:
                         pass
 
-            return Response({
-                "connectionId": conn_id,
-                "workspaces": len(workspaces),
-                "layers": total_layers,
-                "styles": total_styles,
-                "datastores": total_datastores,
-                "timestamp": datetime.utcnow().isoformat(),
-            })
+            return Response(
+                {
+                    "connectionId": conn_id,
+                    "workspaces": len(workspaces),
+                    "layers": total_layers,
+                    "styles": total_styles,
+                    "datastores": total_datastores,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            )
         except ValueError as e:
             return Response(
                 {"error": str(e)},

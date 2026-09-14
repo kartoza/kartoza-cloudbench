@@ -24,15 +24,17 @@ class QFieldCloudConnectionListView(APIView):
         """List all QFieldCloud connections."""
         config = get_config(request.user.id)
         connections = config.list_qfieldcloud_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "username": c.username,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "username": c.username,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new QFieldCloud connection."""
@@ -97,14 +99,16 @@ class QFieldCloudConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "username": conn.username,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "username": conn.username,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
@@ -153,9 +157,7 @@ class QFieldCloudProjectListView(APIView):
         try:
             client = get_qfieldcloud_client(conn_id)
             projects = client.list_projects()
-            return Response({
-                "projects": [p.to_dict() for p in projects]
-            })
+            return Response({"projects": [p.to_dict() for p in projects]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},

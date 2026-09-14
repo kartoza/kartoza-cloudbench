@@ -119,8 +119,7 @@ class ConfigManager:
 
     def remove_connection(self, conn_id: str) -> None:
         """Remove a connection by ID."""
-        self.config.connections = [c for c in self.config.connections if
-                                   c.id != conn_id]
+        self.config.connections = [c for c in self.config.connections if c.id != conn_id]
         if self.config.active_connection == conn_id:
             self.config.active_connection = ""
         self.save()
@@ -162,15 +161,13 @@ class ConfigManager:
 
     def remove_s3_connection(self, conn_id: str) -> None:
         """Remove an S3 connection by ID."""
-        self.config.s3_connections = [c for c in self.config.s3_connections if
-                                      c.id != conn_id]
+        self.config.s3_connections = [c for c in self.config.s3_connections if c.id != conn_id]
         self.save()
 
     def delete_s3_connection(self, conn_id: str) -> bool:
         """Delete an S3 connection by ID. Returns True if found."""
         original_len = len(self.config.s3_connections)
-        self.config.s3_connections = [c for c in self.config.s3_connections if
-                                      c.id != conn_id]
+        self.config.s3_connections = [c for c in self.config.s3_connections if c.id != conn_id]
         if len(self.config.s3_connections) < original_len:
             self.save()
             return True
@@ -200,8 +197,7 @@ class ConfigManager:
 
     def remove_sync_config(self, config_id: str) -> None:
         """Remove a sync configuration by ID."""
-        self.config.sync_configs = [c for c in self.config.sync_configs if
-                                    c.id != config_id]
+        self.config.sync_configs = [c for c in self.config.sync_configs if c.id != config_id]
         self.save()
 
     # PostgreSQL service state management
@@ -239,8 +235,7 @@ class ConfigManager:
         """List all QFieldCloud connections."""
         return list(self.config.qfieldcloud_connections)
 
-    def get_qfieldcloud_connection(self,
-                                   conn_id: str) -> QFieldCloudConnection | None:
+    def get_qfieldcloud_connection(self, conn_id: str) -> QFieldCloudConnection | None:
         """Get a QFieldCloud connection by ID."""
         for conn in self.config.qfieldcloud_connections:
             if conn.id == conn_id:
@@ -252,8 +247,7 @@ class ConfigManager:
         self.config.qfieldcloud_connections.append(conn)
         self.save()
 
-    def update_qfieldcloud_connection(self,
-                                      conn: QFieldCloudConnection) -> bool:
+    def update_qfieldcloud_connection(self, conn: QFieldCloudConnection) -> bool:
         """Update an existing QFieldCloud connection."""
         for i, existing in enumerate(self.config.qfieldcloud_connections):
             if existing.id == conn.id:
@@ -285,8 +279,7 @@ class ConfigManager:
         """List all Mergin Maps connections."""
         return list(self.config.merginmaps_connections)
 
-    def get_mergin_connection(self,
-                              conn_id: str) -> MerginMapsConnection | None:
+    def get_mergin_connection(self, conn_id: str) -> MerginMapsConnection | None:
         """Get a Mergin Maps connection by ID."""
         for conn in self.config.merginmaps_connections:
             if conn.id == conn_id:
@@ -374,8 +367,7 @@ class ConfigManager:
         """List all Iceberg connections."""
         return list(self.config.iceberg_connections)
 
-    def get_iceberg_connection(self,
-                               conn_id: str) -> IcebergCatalogConnection | None:
+    def get_iceberg_connection(self, conn_id: str) -> IcebergCatalogConnection | None:
         """Get an Iceberg connection by ID."""
         for conn in self.config.iceberg_connections:
             if conn.id == conn_id:
@@ -387,9 +379,7 @@ class ConfigManager:
         self.config.iceberg_connections.append(conn)
         self.save()
 
-    def update_iceberg_connection(
-            self, conn: IcebergCatalogConnection
-    ) -> bool:
+    def update_iceberg_connection(self, conn: IcebergCatalogConnection) -> bool:
         """Update an existing Iceberg connection."""
         for i, existing in enumerate(self.config.iceberg_connections):
             if existing.id == conn.id:

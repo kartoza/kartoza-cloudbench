@@ -162,9 +162,7 @@ class TestProvidersManager:
         assert result is True
         assert providers_manager.is_provider_enabled("geoserver") is True
 
-    def test_set_nonexistent_provider_enabled(
-        self, providers_manager: ProvidersManager
-    ) -> None:
+    def test_set_nonexistent_provider_enabled(self, providers_manager: ProvidersManager) -> None:
         """Test setting enabled on nonexistent provider."""
         result = providers_manager.set_provider_enabled("nonexistent", True)
         assert result is False
@@ -244,9 +242,7 @@ class TestProviderHelperFunctions:
         # Should return the same singleton instance
         assert manager1 is manager2
 
-    def test_is_provider_enabled_helper(
-        self, providers_manager: ProvidersManager
-    ) -> None:
+    def test_is_provider_enabled_helper(self, providers_manager: ProvidersManager) -> None:
         """Test is_provider_enabled helper."""
         assert is_provider_enabled("geoserver") is True
         assert is_provider_enabled("s3") is False

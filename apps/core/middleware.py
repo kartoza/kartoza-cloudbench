@@ -50,11 +50,7 @@ class FrameAncestorsMiddleware:
         """Add a Content-Security-Policy: frame-ancestors header."""
         response = self.get_response(request)
 
-        ancestors = ["'self'"] + list(
-            getattr(settings, "CLOUDBENCH_FRAME_ANCESTORS", [])
-        )
-        response["Content-Security-Policy"] = (
-            f"frame-ancestors {' '.join(ancestors)}"
-        )
+        ancestors = ["'self'"] + list(getattr(settings, "CLOUDBENCH_FRAME_ANCESTORS", []))
+        response["Content-Security-Policy"] = f"frame-ancestors {' '.join(ancestors)}"
 
         return response

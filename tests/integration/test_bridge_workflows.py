@@ -178,9 +178,7 @@ class TestBridgePublishableTablesWorkflow:
     ) -> None:
         """Test listing available tables from a datastore."""
         conn_id = setup_test_connection
-        response = api_client.get(
-            f"/api/bridge/{conn_id}/cite/postgis_store/tables"
-        )
+        response = api_client.get(f"/api/bridge/{conn_id}/cite/postgis_store/tables")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "tables" in data

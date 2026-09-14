@@ -102,9 +102,7 @@ class TestGeoHostingInstanceView:
         assert response.status_code == status.HTTP_200_OK
 
         config = get_config("103").config
-        conn = next(
-            c for c in config.geonode_connections if c.id == "geohosting_2"
-        )
+        conn = next(c for c in config.geonode_connections if c.id == "geohosting_2")
         assert conn.url == "https://my-geonode.example.com"
 
     def test_post_adds_postgis_connection(self, api_client: APIClient) -> None:
@@ -131,9 +129,7 @@ class TestGeoHostingInstanceView:
         assert svc.host == "my-postgis.example.com"
         assert svc.dbname == "gis"
 
-    def test_post_does_not_overwrite_existing_password(
-        self, api_client: APIClient
-    ) -> None:
+    def test_post_does_not_overwrite_existing_password(self, api_client: APIClient) -> None:
         """A later sync must not clobber a non-empty password."""
         payload = {
             "owner_user_id": "105",
@@ -145,16 +141,10 @@ class TestGeoHostingInstanceView:
             "password": "first-secret",
             "is_active": True,
         }
-        api_client.post(
-            "/api/geohosting/instances/", payload, format="json",
-            **_auth_headers()
-        )
+        api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
         payload["password"] = "second-secret"
-        api_client.post(
-            "/api/geohosting/instances/", payload, format="json",
-            **_auth_headers()
-        )
+        api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
         config = get_config("105").config
         conn = next(c for c in config.connections if c.id == "geohosting_4")
@@ -172,16 +162,10 @@ class TestGeoHostingInstanceView:
             "password": "",
             "is_active": True,
         }
-        api_client.post(
-            "/api/geohosting/instances/", payload, format="json",
-            **_auth_headers()
-        )
+        api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
         payload["password"] = "filled-in"
-        api_client.post(
-            "/api/geohosting/instances/", payload, format="json",
-            **_auth_headers()
-        )
+        api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
         config = get_config("106").config
         conn = next(c for c in config.connections if c.id == "geohosting_5")
@@ -228,20 +212,14 @@ class TestGeoHostingInstanceView:
             format="json",
             **_auth_headers(),
         )
-        assert any(
-            c.id == "geohosting_7"
-            for c in get_config("109").config.connections
-        )
+        assert any(c.id == "geohosting_7" for c in get_config("109").config.connections)
 
         response = api_client.delete(
             "/api/geohosting/instances/7/?owner_user_id=109",
             **_auth_headers(),
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert not any(
-            c.id == "geohosting_7"
-            for c in get_config("109").config.connections
-        )
+        assert not any(c.id == "geohosting_7" for c in get_config("109").config.connections)
 
     def test_delete_requires_owner_user_id(self, api_client: APIClient) -> None:
         """DELETE without owner_user_id is a 400, not a silent no-op."""
@@ -276,9 +254,7 @@ class TestGeoHostingSSOTokenView:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_returns_a_token_that_authenticates_as_that_user(
-        self, api_client: APIClient
-    ) -> None:
+    def test_returns_a_token_that_authenticates_as_that_user(self, api_client: APIClient) -> None:
         """The minted token round-trips through SignedSSOTokenAuthentication."""
         response = api_client.post(
             "/api/geohosting/sso-token/",
@@ -289,8 +265,6 @@ class TestGeoHostingSSOTokenView:
         assert response.status_code == status.HTTP_200_OK
         token = response.data["token"]
 
-        request = RequestFactory().get(
-            "/", HTTP_AUTHORIZATION=f"Token {token}"
-        )
+        request = RequestFactory().get("/", HTTP_AUTHORIZATION=f"Token {token}")
         user, _ = SignedSSOTokenAuthentication().authenticate(request)
         assert user.id == "42"

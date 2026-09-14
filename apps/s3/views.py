@@ -40,17 +40,19 @@ class S3ConnectionListView(APIView):
         """List all S3 connections."""
         config = get_config(request.user.id)
         connections = config.list_s3_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "endpoint": c.endpoint,
-                "region": c.region,
-                "useSsl": c.use_ssl,
-                "pathStyle": c.path_style,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "endpoint": c.endpoint,
+                    "region": c.region,
+                    "useSsl": c.use_ssl,
+                    "pathStyle": c.path_style,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new S3 connection."""
@@ -119,16 +121,18 @@ class S3ConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "endpoint": conn.endpoint,
-                "region": conn.region,
-                "useSsl": conn.use_ssl,
-                "pathStyle": conn.path_style,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "endpoint": conn.endpoint,
+                    "region": conn.region,
+                    "useSsl": conn.use_ssl,
+                    "pathStyle": conn.path_style,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
@@ -208,9 +212,7 @@ class S3BucketListView(APIView):
         try:
             client = get_s3_client(conn_id)
             buckets = client.list_buckets()
-            return Response({
-                "buckets": [b.to_dict() for b in buckets]
-            })
+            return Response({"buckets": [b.to_dict() for b in buckets]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -338,13 +340,15 @@ class S3PreviewView(APIView):
                 s3_path = f"s3://{bucket}/{key}"
                 schema = engine.get_parquet_schema(s3_path, conn_id)
 
-            return Response({
-                "type": preview_type,
-                "contentType": content_type,
-                "size": size,
-                "content": content,
-                "schema": schema,
-            })
+            return Response(
+                {
+                    "type": preview_type,
+                    "contentType": content_type,
+                    "size": size,
+                    "content": content,
+                    "schema": schema,
+                }
+            )
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -683,14 +687,16 @@ class S3ConversionJobsView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "id": job.id,
-            "status": job.status,
-            "progress": job.progress,
-            "error": job.error,
-            "createdAt": job.created_at,
-            "completedAt": job.completed_at,
-        })
+        return Response(
+            {
+                "id": job.id,
+                "status": job.status,
+                "progress": job.progress,
+                "error": job.error,
+                "createdAt": job.created_at,
+                "completedAt": job.completed_at,
+            }
+        )
 
 
 class S3UploadView(APIView):
@@ -725,11 +731,14 @@ class S3UploadView(APIView):
                 body=uploaded_file.read(),
                 content_type=content_type,
             )
-            return Response({
-                "key": key,
-                "etag": result.get("etag"),
-                "bucket": bucket,
-            }, status=status.HTTP_201_CREATED)
+            return Response(
+                {
+                    "key": key,
+                    "etag": result.get("etag"),
+                    "bucket": bucket,
+                },
+                status=status.HTTP_201_CREATED,
+            )
         except ValueError as e:
             return Response(
                 {"error": str(e)},

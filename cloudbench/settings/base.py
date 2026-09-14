@@ -94,9 +94,7 @@ ASGI_APPLICATION = "cloudbench.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": Path(
-            os.environ.get("CLOUDBENCH_DATA_FOLDER", BASE_DIR)
-        ) / "db.sqlite3",
+        "NAME": Path(os.environ.get("CLOUDBENCH_DATA_FOLDER", BASE_DIR)) / "db.sqlite3",
     }
 }
 
@@ -272,17 +270,13 @@ CLOUDBENCH_SERVICE_TOKEN = os.environ.get("CLOUDBENCH_SERVICE_TOKEN", "")
 
 # How long a signed SSO token (see apps/core/sso_auth.py) stays valid
 # after being minted, in seconds. Default: 12 hours.
-CLOUDBENCH_SSO_TOKEN_MAX_AGE = int(
-    os.environ.get("CLOUDBENCH_SSO_TOKEN_MAX_AGE", 60 * 60 * 12)
-)
+CLOUDBENCH_SSO_TOKEN_MAX_AGE = int(os.environ.get("CLOUDBENCH_SSO_TOKEN_MAX_AGE", 60 * 60 * 12))
 
 # Origins allowed to embed CloudBench in an iframe (CSP frame-ancestors —
 # see apps/core/middleware.py). Comma-separated, e.g.
 # "https://geohosting.example.com". Empty means only 'self'.
 CLOUDBENCH_FRAME_ANCESTORS = [
-    origin
-    for origin in os.environ.get("CLOUDBENCH_FRAME_ANCESTORS", "").split(",")
-    if origin
+    origin for origin in os.environ.get("CLOUDBENCH_FRAME_ANCESTORS", "").split(",") if origin
 ]
 
 # Celery

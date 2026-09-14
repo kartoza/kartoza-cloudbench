@@ -23,7 +23,9 @@ _CELERY_STATE_MAP = {
 class GeoServerUploadCompleteView(APIView):
     """Assemble a chunked upload for GeoServer (file kept for the background task)."""
 
-    def post(self, request, conn_id, workspace):  # noqa: ARG002 - conn_id/workspace must match the URL path converters
+    def post(
+        self, request, conn_id, workspace  # noqa: ARG002 - must match the URL path converters
+    ):
         session_id = request.data.get("sessionId")
         store_name = request.data.get("storeName")
 
@@ -50,13 +52,15 @@ class GeoServerUploadCompleteView(APIView):
         try:
             file_path = _assemble_file(session)
             final_store_name = store_name or session.store_name or Path(session.filename).stem
-            return Response({
-                "sessionId": session_id,
-                "filename": session.filename,
-                "fileSize": session.file_size,
-                "path": str(file_path),
-                "storeName": final_store_name,
-            })
+            return Response(
+                {
+                    "sessionId": session_id,
+                    "filename": session.filename,
+                    "fileSize": session.file_size,
+                    "path": str(file_path),
+                    "storeName": final_store_name,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -96,7 +100,11 @@ class GeoServerUploadStartView(APIView):
         )
         if result.get("status") == "completed":
             return Response(
-                {"status": "completed", "storeName": result.get("storeName", ""), "storeType": result.get("storeType", "")},
+                {
+                    "status": "completed",
+                    "storeName": result.get("storeName", ""),
+                    "storeType": result.get("storeType", ""),
+                },
                 status=status.HTTP_200_OK,
             )
         return Response(

@@ -127,11 +127,13 @@ class BridgePublishableTablesView(APIView):
 
                 tables.append(table_info)
 
-            return Response({
-                "tables": tables,
-                "workspace": workspace,
-                "store": store,
-            })
+            return Response(
+                {
+                    "tables": tables,
+                    "workspace": workspace,
+                    "store": store,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},
@@ -238,24 +240,30 @@ class BridgeBatchPublishView(APIView):
                         title=title,
                         srs=srs,
                     )
-                    results.append({
-                        "table": table_name,
-                        "layer": layer_name,
-                        "status": "published",
-                    })
+                    results.append(
+                        {
+                            "table": table_name,
+                            "layer": layer_name,
+                            "status": "published",
+                        }
+                    )
                 except Exception as e:
-                    results.append({
-                        "table": table_name,
-                        "layer": layer_name,
-                        "status": "error",
-                        "error": str(e),
-                    })
+                    results.append(
+                        {
+                            "table": table_name,
+                            "layer": layer_name,
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
 
-            return Response({
-                "workspace": workspace,
-                "store": store,
-                "results": results,
-            })
+            return Response(
+                {
+                    "workspace": workspace,
+                    "store": store,
+                    "results": results,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": str(e)},

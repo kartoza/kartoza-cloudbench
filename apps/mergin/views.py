@@ -24,15 +24,17 @@ class MerginConnectionListView(APIView):
         """List all Mergin connections."""
         config = get_config(request.user.id)
         connections = config.list_mergin_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "username": c.username,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "username": c.username,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new Mergin connection."""
@@ -97,14 +99,16 @@ class MerginConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "username": conn.username,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "username": conn.username,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
@@ -156,9 +160,7 @@ class MerginProjectListView(APIView):
         try:
             client = get_mergin_client(conn_id)
             projects = client.list_projects(namespace=namespace, flag=flag)
-            return Response({
-                "projects": [p.to_dict() for p in projects]
-            })
+            return Response({"projects": [p.to_dict() for p in projects]})
         except ValueError as e:
             return Response(
                 {"error": str(e)},

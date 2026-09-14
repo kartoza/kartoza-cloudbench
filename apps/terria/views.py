@@ -107,22 +107,15 @@ class TerriaConnectionCatalogView(APIView):
 
                 try:
                     layers = client.list_layers(ws_name)
-                    items = [
-                        generate_terria_item(layer, conn.url, ws_name)
-                        for layer in layers
-                    ]
+                    items = [generate_terria_item(layer, conn.url, ws_name) for layer in layers]
 
                     if items:
-                        workspace_groups.append(
-                            generate_terria_group(ws_name, items)
-                        )
+                        workspace_groups.append(generate_terria_group(ws_name, items))
                 except Exception:
                     pass
 
             catalog = {
-                "catalog": [
-                    generate_terria_group(conn.name, workspace_groups)
-                ],
+                "catalog": [generate_terria_group(conn.name, workspace_groups)],
                 "homeCamera": {
                     "north": 90,
                     "east": 180,
@@ -161,15 +154,10 @@ class TerriaWorkspaceCatalogView(APIView):
             client = get_geoserver_client(conn_id, str(request.user.id))
 
             layers = client.list_layers(workspace)
-            items = [
-                generate_terria_item(layer, conn.url, workspace)
-                for layer in layers
-            ]
+            items = [generate_terria_item(layer, conn.url, workspace) for layer in layers]
 
             catalog = {
-                "catalog": [
-                    generate_terria_group(workspace, items)
-                ],
+                "catalog": [generate_terria_group(workspace, items)],
             }
 
             return Response(catalog)
@@ -280,13 +268,15 @@ class TerriaInitView(APIView):
         catalog_members = []
 
         for conn in connections:
-            catalog_members.append({
-                "type": "group",
-                "name": conn.name,
-                "description": f"GeoServer at {conn.url}",
-                "isOpen": False,
-                "url": reverse("terria-connection-catalog", kwargs={"conn_id": conn.id}),
-            })
+            catalog_members.append(
+                {
+                    "type": "group",
+                    "name": conn.name,
+                    "description": f"GeoServer at {conn.url}",
+                    "isOpen": False,
+                    "url": reverse("terria-connection-catalog", kwargs={"conn_id": conn.id}),
+                }
+            )
 
         init_config = {
             "homeCamera": {

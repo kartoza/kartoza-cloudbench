@@ -38,25 +38,25 @@ class PGServiceListView(APIView):
 
     def get(self, request):
         """List all PostgreSQL services."""
-        return Response([
-            {
-                "name": svc.name,
-                "host": svc.host,
-                "port": svc.port,
-                "dbname": svc.dbname,
-                "user": svc.user,
-                "sslmode": svc.sslmode,
-            }
-            for svc in list_pg_services(str(request.user.id))
-        ])
+        return Response(
+            [
+                {
+                    "name": svc.name,
+                    "host": svc.host,
+                    "port": svc.port,
+                    "dbname": svc.dbname,
+                    "user": svc.user,
+                    "sslmode": svc.sslmode,
+                }
+                for svc in list_pg_services(str(request.user.id))
+            ]
+        )
 
     def post(self, request):
         """Create a new PostgreSQL service."""
         name = request.data.get("name")
         if not name:
-            return Response(
-                {"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         user_id = str(request.user.id)
         try:
@@ -80,8 +80,13 @@ class PGServiceListView(APIView):
         add_pg_service(service, user_id)
 
         return Response(
-            {"name": service.name, "host": service.host, "port": service.port,
-             "dbname": service.dbname, "user": service.user},
+            {
+                "name": service.name,
+                "host": service.host,
+                "port": service.port,
+                "dbname": service.dbname,
+                "user": service.user,
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -131,19 +136,19 @@ class PGServiceDetailView(APIView):
         try:
             client = get_pg_client(name, str(request.user.id))
         except ValueError:
-            return Response(
-                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         service = client.service
-        return Response({
-            "name": service.name,
-            "host": service.host,
-            "port": service.port,
-            "dbname": service.dbname,
-            "user": service.user,
-            "sslmode": service.sslmode,
-            "connectionString": service.connection_string(),
-        })
+        return Response(
+            {
+                "name": service.name,
+                "host": service.host,
+                "port": service.port,
+                "dbname": service.dbname,
+                "user": service.user,
+                "sslmode": service.sslmode,
+                "connectionString": service.connection_string(),
+            }
+        )
 
     def put(self, request, name):
         """Update a service."""
@@ -151,30 +156,30 @@ class PGServiceDetailView(APIView):
         try:
             client = get_pg_client(name, user_id)
         except ValueError:
-            return Response(
-                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         data = request.data
-        updated = client.service.model_copy(update={
-            k: (int(data[k]) if k == "port" else data[k])
-            for k in ("host", "port", "dbname", "user", "password", "sslmode")
-            if k in data
-        })
+        updated = client.service.model_copy(
+            update={
+                k: (int(data[k]) if k == "port" else data[k])
+                for k in ("host", "port", "dbname", "user", "password", "sslmode")
+                if k in data
+            }
+        )
         update_pg_service(updated, user_id)
-        return Response({
-            "name": updated.name,
-            "host": updated.host,
-            "port": updated.port,
-            "dbname": updated.dbname,
-            "user": updated.user,
-        })
+        return Response(
+            {
+                "name": updated.name,
+                "host": updated.host,
+                "port": updated.port,
+                "dbname": updated.dbname,
+                "user": updated.user,
+            }
+        )
 
     def delete(self, request, name):
         """Delete a service."""
         if not delete_pg_service(name, str(request.user.id)):
-            return Response(
-                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -186,9 +191,7 @@ class PGServiceTestView(APIView):
         try:
             client = get_pg_client(name, str(request.user.id))
         except ValueError:
-            return Response(
-                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         success, message = client.test_connection()
         if not success:
             return Response(status=status.HTTP_404_NOT_FOUND)
@@ -199,9 +202,7 @@ class PGServiceTestView(APIView):
         try:
             client = get_pg_client(name, str(request.user.id))
         except ValueError:
-            return Response(
-                {"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         success, message = client.test_connection()
         return Response({"success": success, "message": message})
 
@@ -240,6 +241,7 @@ class PGServiceStatsView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
+
 class PGDatabaseNameListView(APIView):
     """List database names for a PostgreSQL service."""
 
@@ -261,7 +263,9 @@ class PGSchemaNameListView(APIView):
 
     def get(self, request, service_name, database_name):
         try:
-            names = get_pg_client(service_name, str(request.user.id)).list_schema_names(database_name)
+            names = get_pg_client(service_name, str(request.user.id)).list_schema_names(
+                database_name
+            )
             return Response(names)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -315,12 +319,14 @@ class PGTableDetailView(APIView):
             client = get_pg_client(service_name, str(request.user.id))
             columns = client.get_table_columns(schema_name, table_name)
             row_count = client.get_table_row_count(schema_name, table_name)
-            return Response({
-                "schema": schema_name,
-                "table": table_name,
-                "columns": columns,
-                "rowCount": row_count,
-            })
+            return Response(
+                {
+                    "schema": schema_name,
+                    "table": table_name,
+                    "columns": columns,
+                    "rowCount": row_count,
+                }
+            )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -377,26 +383,28 @@ class PGQueryView(APIView):
         """
         query = request.data.get("query")
         if not query:
-            return Response(
-                {"error": "query is required"}, status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "query is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         limit = request.data.get("limit", 1000)
 
         try:
             t0 = time.monotonic()
-            result = get_pg_client(service_name, str(request.user.id)).execute_query(query, limit=limit)
+            result = get_pg_client(service_name, str(request.user.id)).execute_query(
+                query, limit=limit
+            )
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            return Response({
-                "success": True,
-                "sql": query,
-                "result": {
-                    "columns": result["columns"],
-                    "rows": result["rows"],
-                    "row_count": result["rowCount"],
-                    "duration_ms": elapsed_ms,
-                },
-            })
+            return Response(
+                {
+                    "success": True,
+                    "sql": query,
+                    "result": {
+                        "columns": result["columns"],
+                        "rows": result["rows"],
+                        "row_count": result["rowCount"],
+                        "duration_ms": elapsed_ms,
+                    },
+                }
+            )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -521,9 +529,13 @@ class PGImportRasterView(APIView):
 
         raster_cmd = [
             "raster2pgsql",
-            "-s", str(srid),
-            "-I", "-C", "-M",
-            "-t", tile_size,
+            "-s",
+            str(srid),
+            "-I",
+            "-C",
+            "-M",
+            "-t",
+            tile_size,
             file_path,
             f"{target_schema}.{table_name}",
         ]
@@ -557,9 +569,7 @@ class PGDetectLayersView(APIView):
         """
         file_path = request.data.get("filePath")
         if not file_path:
-            return Response(
-                {"error": "filePath is required"}, status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "filePath is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not Path(file_path).exists():
             return Response(
@@ -597,9 +607,7 @@ class PGDetectLayersView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class OGR2OGRStatusView(APIView):
@@ -666,16 +674,18 @@ class OGR2OGRStatusView(APIView):
             }
             supported_extensions = {**vector_extensions, **raster_extensions}
 
-        return Response({
-            "available": ogr_available,
-            "version": ogr_version,
-            "raster_available": raster_available,
-            "raster_version": raster_version,
-            "supported_formats": supported_formats,
-            "supported_extensions": supported_extensions,
-            "vector_extensions": vector_extensions,
-            "raster_extensions": raster_extensions,
-        })
+        return Response(
+            {
+                "available": ogr_available,
+                "version": ogr_version,
+                "raster_available": raster_available,
+                "raster_version": raster_version,
+                "supported_formats": supported_formats,
+                "supported_extensions": supported_extensions,
+                "vector_extensions": vector_extensions,
+                "raster_extensions": raster_extensions,
+            }
+        )
 
 
 class PGUploadCompleteView(APIView):
@@ -712,15 +722,16 @@ class PGUploadCompleteView(APIView):
 
         try:
             file_path = _assemble_file(session)
-            return Response({
-                "sessionId": session_id,
-                "filename": session.filename,
-                "fileSize": session.file_size,
-                "path": str(file_path),
-            })
+            return Response(
+                {
+                    "sessionId": session_id,
+                    "filename": session.filename,
+                    "fileSize": session.file_size,
+                    "path": str(file_path),
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": f"Failed to assemble file: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-

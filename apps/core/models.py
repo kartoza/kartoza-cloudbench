@@ -11,8 +11,7 @@ T = TypeVar("T", bound=BaseModel)
 class Connection(BaseModel):
     """GeoServer connection configuration."""
 
-    id: str = Field(
-        default_factory=lambda: f"conn_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=lambda: f"conn_{datetime.now().strftime('%Y%m%d%H%M%S')}")
     name: str
     url: str
     username: str
@@ -43,7 +42,6 @@ class SyncConfiguration(BaseModel):
     options: SyncOptions = Field(default_factory=SyncOptions)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     last_synced_at: str | None = None
-
 
 
 class PGService(BaseModel):
@@ -97,9 +95,7 @@ class PGService(BaseModel):
 class S3Connection(BaseModel):
     """S3-compatible storage connection configuration."""
 
-    id: str = Field(
-        default_factory=lambda: f"s3_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    id: str = Field(default_factory=lambda: f"s3_{datetime.now().strftime('%Y%m%d%H%M%S')}")
     name: str
     endpoint: str
     access_key: str
@@ -124,9 +120,7 @@ class QGISProject(BaseModel):
 class GeoNodeConnection(BaseModel):
     """GeoNode instance connection configuration."""
 
-    id: str = Field(
-        default_factory=lambda: f"geonode_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    id: str = Field(default_factory=lambda: f"geonode_{datetime.now().strftime('%Y%m%d%H%M%S')}")
     name: str
     url: str
     username: str = ""
@@ -152,9 +146,7 @@ class QFieldCloudConnection(BaseModel):
 class MerginMapsConnection(BaseModel):
     """Mergin Maps server connection configuration."""
 
-    id: str = Field(
-        default_factory=lambda: f"mergin_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    id: str = Field(default_factory=lambda: f"mergin_{datetime.now().strftime('%Y%m%d%H%M%S')}")
     name: str
     url: str = "https://app.merginmaps.com"
     username: str
@@ -166,9 +158,7 @@ class MerginMapsConnection(BaseModel):
 class IcebergCatalogConnection(BaseModel):
     """Apache Iceberg REST Catalog connection."""
 
-    id: str = Field(
-        default_factory=lambda: f"iceberg_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    id: str = Field(default_factory=lambda: f"iceberg_{datetime.now().strftime('%Y%m%d%H%M%S')}")
     name: str
     url: str
     warehouse: str = ""
@@ -208,15 +198,9 @@ class Config(BaseModel):
     s3_connections: list[S3Connection] = Field(default_factory=list)
     qgis_projects: list[QGISProject] = Field(default_factory=list)
     geonode_connections: list[GeoNodeConnection] = Field(default_factory=list)
-    qfieldcloud_connections: list[QFieldCloudConnection] = Field(
-        default_factory=list
-    )
-    iceberg_connections: list[IcebergCatalogConnection] = Field(
-        default_factory=list
-    )
-    merginmaps_connections: list[MerginMapsConnection] = Field(
-        default_factory=list
-    )
+    qfieldcloud_connections: list[QFieldCloudConnection] = Field(default_factory=list)
+    iceberg_connections: list[IcebergCatalogConnection] = Field(default_factory=list)
+    merginmaps_connections: list[MerginMapsConnection] = Field(default_factory=list)
 
     class Config:
         """Pydantic configuration."""

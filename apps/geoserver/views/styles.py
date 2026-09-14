@@ -54,11 +54,13 @@ class StyleDetailView(APIView):
             client = get_geoserver_client(conn_id, str(request.user.id))
             style_info = client.get_style(style, workspace)
             content, style_format = client.get_style_content(style, workspace)
-            return Response({
-                "style": style_info,
-                "content": content,
-                "format": style_format,
-            })
+            return Response(
+                {
+                    "style": style_info,
+                    "content": content,
+                    "format": style_format,
+                }
+            )
         except GeoServerError as e:
             return handle_geoserver_error(e)
 

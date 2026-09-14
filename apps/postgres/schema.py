@@ -92,12 +92,14 @@ def list_schemas(service_name: str) -> list[str]:
         List of schema names
     """
     with get_connection(service_name) as conn, conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
                 SELECT schema_name
                 FROM information_schema.schemata
                 WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
                 ORDER BY schema_name
-            """)
+            """
+        )
         return [row[0] for row in cur.fetchall()]
 
 
@@ -113,7 +115,8 @@ def list_tables(service_name: str, schema: str = "public") -> list[dict[str, Any
     """
     with get_connection(service_name) as conn, conn.cursor() as cur:
         # Get tables with geometry info from geometry_columns
-        cur.execute("""
+        cur.execute(
+            """
                 SELECT
                     t.table_name,
                     t.table_type,
@@ -127,18 +130,22 @@ def list_tables(service_name: str, schema: str = "public") -> list[dict[str, Any
                 WHERE t.table_schema = %s
                     AND t.table_type IN ('BASE TABLE', 'VIEW')
                 ORDER BY t.table_name
-            """, (schema,))
+            """,
+            (schema,),
+        )
 
         tables = []
         for row in cur.fetchall():
-            tables.append({
-                "name": row[0],
-                "type": row[1],
-                "geometryColumn": row[2],
-                "geometryType": row[3],
-                "srid": row[4],
-                "schema": schema,
-            })
+            tables.append(
+                {
+                    "name": row[0],
+                    "type": row[1],
+                    "geometryColumn": row[2],
+                    "geometryType": row[3],
+                    "srid": row[4],
+                    "schema": schema,
+                }
+            )
 
         return tables
 
@@ -160,7 +167,8 @@ def get_table_columns(
     """
     with get_connection(service_name) as conn, conn.cursor() as cur:
         # Get column info
-        cur.execute("""
+        cur.execute(
+            """
                 SELECT
                     c.column_name,
                     c.data_type,
@@ -179,24 +187,31 @@ def get_table_columns(
                 ) pk ON pk.column_name = c.column_name
                 WHERE c.table_schema = %s AND c.table_name = %s
                 ORDER BY c.ordinal_position
-            """, (schema, table, schema, table))
+            """,
+            (schema, table, schema, table),
+        )
 
         columns = []
         for row in cur.fetchall():
-            columns.append({
-                "name": row[0],
-                "dataType": row[1],
-                "isNullable": row[2] == "YES",
-                "default": row[3],
-                "isPrimaryKey": row[4],
-            })
+            columns.append(
+                {
+                    "name": row[0],
+                    "dataType": row[1],
+                    "isNullable": row[2] == "YES",
+                    "default": row[3],
+                    "isPrimaryKey": row[4],
+                }
+            )
 
         # Check for geometry columns
-        cur.execute("""
+        cur.execute(
+            """
                 SELECT f_geometry_column, type, srid
                 FROM geometry_columns
                 WHERE f_table_schema = %s AND f_table_name = %s
-            """, (schema, table))
+            """,
+            (schema, table),
+        )
 
         geom_info = cur.fetchone()
         if geom_info:
@@ -222,12 +237,15 @@ def get_table_row_count(service_name: str, schema: str, table: str) -> int:
     """
     with get_connection(service_name) as conn, conn.cursor() as cur:
         # Use pg_class for fast approximate count
-        cur.execute("""
+        cur.execute(
+            """
                 SELECT reltuples::bigint
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = %s AND c.relname = %s
-            """, (schema, table))
+            """,
+            (schema, table),
+        )
 
         result = cur.fetchone()
         return result[0] if result else 0
@@ -308,9 +326,7 @@ def get_table_data(
     """
     with get_connection(service_name) as conn, conn.cursor() as cur:
         # Get total count
-        cur.execute(
-            f'SELECT COUNT(*) FROM "{schema}"."{table}"'
-        )
+        cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
         total = cur.fetchone()[0]
 
         # Build query

@@ -34,11 +34,13 @@ class SearchView(APIView):
         service = get_search_service(str(request.user.id))
         results = service.search(query, types=types, limit=limit)
 
-        return Response({
-            "query": query,
-            "results": [r.to_dict() for r in results],
-            "count": len(results),
-        })
+        return Response(
+            {
+                "query": query,
+                "results": [r.to_dict() for r in results],
+                "count": len(results),
+            }
+        )
 
 
 class SearchSuggestionsView(APIView):
@@ -60,7 +62,9 @@ class SearchSuggestionsView(APIView):
         service = get_search_service(str(request.user.id))
         suggestions = service.get_suggestions(query, limit=limit)
 
-        return Response({
-            "query": query,
-            "suggestions": suggestions,
-        })
+        return Response(
+            {
+                "query": query,
+                "suggestions": suggestions,
+            }
+        )

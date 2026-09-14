@@ -39,9 +39,7 @@ def serve_react_app(request, path=""):
             # there rather than crashing with FileNotFoundError.
             vite_host = request.get_host().split(":")[0]
             vite_port = os.environ.get("CLOUDBENCH_VITE_DEV_PORT", "5173")
-            return HttpResponseRedirect(
-                f"http://{vite_host}:{vite_port}{request.get_full_path()}"
-            )
+            return HttpResponseRedirect(f"http://{vite_host}:{vite_port}{request.get_full_path()}")
         raise Http404("Frontend build not found. Run `npm run build` in web/.")
 
     return FileResponse(open(index_path, "rb"), content_type="text/html")

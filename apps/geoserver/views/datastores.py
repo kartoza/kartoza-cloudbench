@@ -44,9 +44,7 @@ class DataStoreListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            client.create_datastore(
-                workspace, name, connection_params, description, enabled
-            )
+            client.create_datastore(workspace, name, connection_params, description, enabled)
             return Response(
                 {"message": f"Data store {name} created"},
                 status=status.HTTP_201_CREATED,
@@ -79,10 +77,8 @@ class DataStoreDetailView(APIView):
             # Build update payload
             payload = {"dataStore": {"name": store}}
             if connection_params:
-                entries = [{"@key": k, "$": v} for k, v in
-                           connection_params.items()]
-                payload["dataStore"]["connectionParameters"] = {
-                    "entry": entries}
+                entries = [{"@key": k, "$": v} for k, v in connection_params.items()]
+                payload["dataStore"]["connectionParameters"] = {"entry": entries}
             if description is not None:
                 payload["dataStore"]["description"] = description
             if enabled is not None:
@@ -152,16 +148,12 @@ class DataStorePublishView(APIView):
 
         for name in feature_types:
             try:
-                client.create_featuretype(
-                    workspace, store, name, native_name=name, srs=srs
-                )
+                client.create_featuretype(workspace, store, name, native_name=name, srs=srs)
                 published.append(name)
             except GeoServerError as e:
                 errors.append({"name": name, "error": str(e.message)})
 
-        response_status = (
-            status.HTTP_201_CREATED if published else status.HTTP_400_BAD_REQUEST
-        )
+        response_status = status.HTTP_201_CREATED if published else status.HTTP_400_BAD_REQUEST
         return Response({"published": published, "errors": errors}, status=response_status)
 
 
@@ -203,9 +195,7 @@ class DataStoreConnectPGView(APIView):
 
         try:
             gs_client = get_geoserver_client(conn_id, user_id)
-            gs_client.create_datastore(
-                workspace, name, connection_params, description, enabled
-            )
+            gs_client.create_datastore(workspace, name, connection_params, description, enabled)
             return Response(
                 {"message": f"Data store '{name}' created"},
                 status=status.HTTP_201_CREATED,

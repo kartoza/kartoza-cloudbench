@@ -49,11 +49,11 @@ class GeoNodeClient:
     """Client for GeoNode REST API."""
 
     def __init__(
-            self,
-            url: str,
-            username: str | None = None,
-            password: str | None = None,
-            api_key: str | None = None,
+        self,
+        url: str,
+        username: str | None = None,
+        password: str | None = None,
+        api_key: str | None = None,
     ):
         """Initialize GeoNode client.
 
@@ -112,9 +112,9 @@ class GeoNodeClient:
         return response.json().get("categories", [])
 
     def list_users(
-            self,
-            page: int = 1,
-            page_size: int = 20,
+        self,
+        page: int = 1,
+        page_size: int = 20,
     ) -> dict[str, Any]:
         """List users.
 
@@ -136,12 +136,12 @@ class GeoNodeClient:
         return response.json()
 
     def list_resources(
-            self,
-            resource_type: str,
-            page: int = 1,
-            page_size: int = 20,
-            category: str | None = None,
-            owner: str | None = None,
+        self,
+        resource_type: str,
+        page: int = 1,
+        page_size: int = 20,
+        category: str | None = None,
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """List resources by type.
 
@@ -160,8 +160,7 @@ class GeoNodeClient:
             "page": page,
             "page_size": page_size,
         }
-        params[
-            "filter{resource_type.in}"] = RESOURCE_TYPE_LIST_REQUEST_MAP.get(
+        params["filter{resource_type.in}"] = RESOURCE_TYPE_LIST_REQUEST_MAP.get(
             resource_type, resource_type
         )
         if category:
@@ -183,10 +182,14 @@ class GeoNodeClient:
                     name=item.get("name", ""),
                     title=item.get("title", ""),
                     abstract=item.get("abstract", ""),
-                    category=item.get("category", {}).get("identifier", "")
-                    if item.get("category", {}) else "",
-                    owner=item.get("owner", {}).get("username", "")
-                    if item.get("owner", {}) else "",
+                    category=(
+                        item.get("category", {}).get("identifier", "")
+                        if item.get("category", {})
+                        else ""
+                    ),
+                    owner=(
+                        item.get("owner", {}).get("username", "") if item.get("owner", {}) else ""
+                    ),
                     date=item.get("date", ""),
                     thumbnail_url=item.get("thumbnail_url", ""),
                     detail_url=item.get("detail_url", ""),
@@ -201,12 +204,12 @@ class GeoNodeClient:
         }
 
     def upload_dataset(
-            self,
-            file: bytes,
-            filename: str,
-            charset: str = "UTF-8",
-            title: str | None = None,
-            abstract: str | None = None,
+        self,
+        file: bytes,
+        filename: str,
+        charset: str = "UTF-8",
+        title: str | None = None,
+        abstract: str | None = None,
     ) -> dict[str, Any]:
         """Upload a dataset file to GeoNode.
 
@@ -254,11 +257,11 @@ class GeoNodeClient:
         return response.json()
 
     def upload_document(
-            self,
-            file: bytes,
-            filename: str,
-            title: str | None = None,
-            abstract: str | None = None,
+        self,
+        file: bytes,
+        filename: str,
+        title: str | None = None,
+        abstract: str | None = None,
     ) -> dict[str, Any]:
         """Upload a document to GeoNode.
 
@@ -292,9 +295,7 @@ class GeoNodeClient:
         response.raise_for_status()
         return response.json()
 
-    def get_resource(
-            self, resource_type: str, resource_id: int
-    ) -> GeoNodeResource:
+    def get_resource(self, resource_type: str, resource_id: int) -> GeoNodeResource:
         """Get a specific resource.
 
         Args:
@@ -318,20 +319,17 @@ class GeoNodeClient:
             name=item.get("name", ""),
             title=item.get("title", ""),
             abstract=item.get("abstract", ""),
-            category=item.get("category", {}).get("identifier", "")
-            if item.get("category", {}) else "",
-            owner=item.get("owner", {}).get("username", "")
-            if item.get("owner", {}) else "",
+            category=(
+                item.get("category", {}).get("identifier", "") if item.get("category", {}) else ""
+            ),
+            owner=item.get("owner", {}).get("username", "") if item.get("owner", {}) else "",
             date=item.get("date", ""),
             thumbnail_url=item.get("thumbnail_url", ""),
             detail_url=item.get("detail_url", ""),
         )
 
 
-def get_geonode_client(
-        connection_id: str,
-        user_id: str = "default"
-) -> GeoNodeClient:
+def get_geonode_client(connection_id: str, user_id: str = "default") -> GeoNodeClient:
     """Get a GeoNode client for a connection."""
     conn = get_config(user_id).get_geonode_connection(connection_id)
     if not conn:

@@ -9,6 +9,7 @@ import pytest
 
 try:
     from playwright.sync_api import Browser, BrowserContext, Page, expect
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -53,7 +54,16 @@ def app_server() -> Generator[str, None, None]:
     env["DJANGO_SETTINGS_MODULE"] = "cloudbench.settings.testing"
 
     server_process = subprocess.Popen(
-        ["python", "-m", "uvicorn", "cloudbench.asgi:application", "--host", "127.0.0.1", "--port", "8888"],
+        [
+            "python",
+            "-m",
+            "uvicorn",
+            "cloudbench.asgi:application",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8888",
+        ],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -65,6 +75,7 @@ def app_server() -> Generator[str, None, None]:
     for _ in range(max_retries):
         try:
             import httpx
+
             response = httpx.get(f"{base_url}/health/", timeout=1)
             if response.status_code == 200:
                 break

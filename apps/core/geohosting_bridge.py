@@ -66,12 +66,7 @@ class GeoHostingInstanceView(APIView):
         product = (data.get("product") or "").lower()
         if not owner_user_id or not instance_id or not product:
             return Response(
-                {
-                    "detail": (
-                        "owner_user_id, instance_id and product are "
-                        "required."
-                    )
-                },
+                {"detail": ("owner_user_id, instance_id and product are " "required.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -101,9 +96,7 @@ class GeoHostingInstanceView(APIView):
                 )
                 changed = True
             else:
-                changed = _update_password_if_empty(
-                    config.connections, conn_id, password
-                )
+                changed = _update_password_if_empty(config.connections, conn_id, password)
         elif product == ProductNames.GEONODE:
             existing_ids = {c.id for c in config.geonode_connections}
             if conn_id not in existing_ids:
@@ -119,9 +112,7 @@ class GeoHostingInstanceView(APIView):
                 )
                 changed = True
             else:
-                changed = _update_password_if_empty(
-                    config.geonode_connections, conn_id, password
-                )
+                changed = _update_password_if_empty(config.geonode_connections, conn_id, password)
         elif product == ProductNames.POSTGIS:
             existing_ids = {s.id for s in config.pg_services}
             if conn_id not in existing_ids:
@@ -141,9 +132,7 @@ class GeoHostingInstanceView(APIView):
                 )
                 changed = True
             else:
-                changed = _update_password_if_empty(
-                    config.pg_services, conn_id, password
-                )
+                changed = _update_password_if_empty(config.pg_services, conn_id, password)
         else:
             return Response(
                 {"detail": f"Unknown product '{product}'."},
@@ -173,9 +162,7 @@ class GeoHostingInstanceView(APIView):
             config.connections = filtered
             changed = True
 
-        filtered = [
-            c for c in config.geonode_connections if c.id != conn_id
-        ]
+        filtered = [c for c in config.geonode_connections if c.id != conn_id]
         if len(filtered) != len(config.geonode_connections):
             config.geonode_connections = filtered
             changed = True

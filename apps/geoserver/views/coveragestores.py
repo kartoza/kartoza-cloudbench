@@ -38,9 +38,7 @@ class CoverageStoreListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            client.create_coveragestore(
-                workspace, name, store_type, url, description, enabled
-            )
+            client.create_coveragestore(workspace, name, store_type, url, description, enabled)
             return Response(
                 {"message": f"Coverage store {name} created"},
                 status=status.HTTP_201_CREATED,

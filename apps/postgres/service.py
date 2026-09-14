@@ -91,9 +91,7 @@ def parse_pg_service_file(path: Path | None = None) -> dict[str, PGService]:
             if section_match:
                 # Save previous service if exists
                 if current_service and current_params:
-                    services[current_service] = _params_to_service(
-                        current_service, current_params
-                    )
+                    services[current_service] = _params_to_service(current_service, current_params)
 
                 current_service = section_match.group(1)
                 current_params = {}

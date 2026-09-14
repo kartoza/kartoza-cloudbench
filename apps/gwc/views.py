@@ -112,13 +112,15 @@ class GWCSeedView(APIView):
             formatted_tasks = []
             for task in tasks:
                 if len(task) >= 5:
-                    formatted_tasks.append({
-                        "tilesProcessed": task[0],
-                        "totalTiles": task[1],
-                        "remainingTime": task[2],
-                        "taskId": task[3],
-                        "status": task[4],
-                    })
+                    formatted_tasks.append(
+                        {
+                            "tilesProcessed": task[0],
+                            "totalTiles": task[1],
+                            "remainingTime": task[2],
+                            "taskId": task[3],
+                            "status": task[4],
+                        }
+                    )
 
             return Response({"tasks": formatted_tasks})
         except GeoServerError as e:

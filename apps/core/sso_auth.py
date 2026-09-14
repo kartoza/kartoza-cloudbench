@@ -61,7 +61,7 @@ class SignedSSOTokenAuthentication(BaseAuthentication):
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
         if not auth_header.startswith("Token "):
             return None
-        token = auth_header[len("Token "):].strip()
+        token = auth_header[len("Token ") :].strip()
         if not token:
             return None
 
@@ -69,9 +69,7 @@ class SignedSSOTokenAuthentication(BaseAuthentication):
             salt=_SSO_TOKEN_SALT, key=settings.CLOUDBENCH_SERVICE_TOKEN
         )
         try:
-            user_id = signer.unsign(
-                token, max_age=settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE
-            )
+            user_id = signer.unsign(token, max_age=settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE)
         except signing.BadSignature:
             return None
 

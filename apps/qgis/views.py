@@ -25,17 +25,19 @@ class QGISProjectListView(APIView):
         config = get_config(request.user.id)
         projects = config.config.qgis_projects
 
-        return Response([
-            {
-                "id": p.id,
-                "name": p.name,
-                "path": p.path,
-                "title": p.title,
-                "lastModified": p.lastModified,
-                "size": p.size,
-            }
-            for p in projects
-        ])
+        return Response(
+            [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "path": p.path,
+                    "title": p.title,
+                    "lastModified": p.lastModified,
+                    "size": p.size,
+                }
+                for p in projects
+            ]
+        )
 
     def post(self, request):
         """Upload a new QGIS project file."""
@@ -97,16 +99,18 @@ class QGISProjectDetailView(APIView):
 
         for project in config.config.qgis_projects:
             if project.id == project_id:
-                return Response({
-                    "project": {
-                        "id": project.id,
-                        "name": project.name,
-                        "path": project.path,
-                        "title": project.title,
-                        "lastModified": project.lastModified,
-                        "size": project.size,
+                return Response(
+                    {
+                        "project": {
+                            "id": project.id,
+                            "name": project.name,
+                            "path": project.path,
+                            "title": project.title,
+                            "lastModified": project.lastModified,
+                            "size": project.size,
+                        }
                     }
-                })
+                )
 
         return Response(
             {"error": "Project not found"},
@@ -268,14 +272,18 @@ class SQLViewValidateView(APIView):
                 if col_lower in ("geom", "geometry", "the_geom", "wkb_geometry"):
                     geometry_columns.append(col)
 
-            return Response({
-                "valid": True,
-                "columns": result.get("columns", []),
-                "geometryColumns": geometry_columns,
-                "rowCount": result.get("rowCount", 0),
-            })
+            return Response(
+                {
+                    "valid": True,
+                    "columns": result.get("columns", []),
+                    "geometryColumns": geometry_columns,
+                    "rowCount": result.get("rowCount", 0),
+                }
+            )
         except Exception as e:
-            return Response({
-                "valid": False,
-                "error": str(e),
-            })
+            return Response(
+                {
+                    "valid": False,
+                    "error": str(e),
+                }
+            )

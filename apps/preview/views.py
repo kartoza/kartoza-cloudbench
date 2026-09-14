@@ -147,7 +147,9 @@ class StartPreviewView(APIView):
 
         # Return the preview URL pointing to our API
         # The frontend expects to fetch /api/layer and /api/metadata from this URL
-        preview_url = reverse("preview_layer", kwargs={"session_id": session.id}).removesuffix("/api/layer")
+        preview_url = reverse("preview_layer", kwargs={"session_id": session.id}).removesuffix(
+            "/api/layer"
+        )
 
         return Response(
             {"url": preview_url},
@@ -175,17 +177,19 @@ class PreviewLayerView(APIView):
             client = get_geoserver_client(session.conn_id, str(request.user.id))
             geoserver_url = client.connection.url.rstrip("/")
 
-            return Response({
-                "name": session.layer_name,
-                "workspace": session.workspace,
-                "store_name": session.store_name or "",
-                "store_type": session.store_type or "datastore",
-                "geoserver_url": geoserver_url,
-                "type": session.layer_type,
-                "use_cache": session.use_cache,
-                "grid_set": session.grid_set,
-                "tile_format": session.tile_format,
-            })
+            return Response(
+                {
+                    "name": session.layer_name,
+                    "workspace": session.workspace,
+                    "store_name": session.store_name or "",
+                    "store_type": session.store_type or "datastore",
+                    "geoserver_url": geoserver_url,
+                    "type": session.layer_type,
+                    "use_cache": session.use_cache,
+                    "grid_set": session.grid_set,
+                    "tile_format": session.tile_format,
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": f"Failed to get layer info: {str(e)}"},
@@ -216,9 +220,17 @@ class PreviewMetadataView(APIView):
 
             # Format for frontend - ensure boolean defaults (not None)
             metadata = {
-                "layer_enabled": layer_meta.get("enabled") if layer_meta.get("enabled") is not None else True,
-                "layer_queryable": layer_meta.get("queryable") if layer_meta.get("queryable") is not None else True,
-                "layer_advertised": layer_meta.get("advertised") if layer_meta.get("advertised") is not None else True,
+                "layer_enabled": (
+                    layer_meta.get("enabled") if layer_meta.get("enabled") is not None else True
+                ),
+                "layer_queryable": (
+                    layer_meta.get("queryable") if layer_meta.get("queryable") is not None else True
+                ),
+                "layer_advertised": (
+                    layer_meta.get("advertised")
+                    if layer_meta.get("advertised") is not None
+                    else True
+                ),
             }
 
             # Get default style name

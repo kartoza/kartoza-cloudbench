@@ -17,14 +17,10 @@ CACHE_DIR = "cache"
 def get_data_folder(user_id: str = "default") -> str:
     """Build a data folder path for the given user."""
 
-    if settings.CLOUDBENCH_MUST_AUTHENTICATED and user_id in [
-        "default", None, "None"
-    ]:
+    if settings.CLOUDBENCH_MUST_AUTHENTICATED and user_id in ["default", None, "None"]:
         raise ValueError("User ID is required for authenticated access.")
 
-    return os.environ.get("CLOUDBENCH_DATA_FOLDER") or os.path.join(
-        str(Path.home())
-    )
+    return os.environ.get("CLOUDBENCH_DATA_FOLDER") or os.path.join(str(Path.home()))
 
 
 def get_cloudbench_config_path(filename: str, user_id: str = "default") -> str:
@@ -35,9 +31,7 @@ def get_cloudbench_config_path(filename: str, user_id: str = "default") -> str:
     Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
     user_id is still "default" (i.e., no authenticated user on the thread).
     """
-    return os.path.join(
-        get_data_folder(user_id), user_id, CONFIG_DIR, filename
-    )
+    return os.path.join(get_data_folder(user_id), user_id, CONFIG_DIR, filename)
 
 
 def get_cloudbench_data_path(filename: str, user_id: str = "default") -> str:
@@ -48,9 +42,7 @@ def get_cloudbench_data_path(filename: str, user_id: str = "default") -> str:
     Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
     user_id is still "default" (i.e., no authenticated user on the thread).
     """
-    return os.path.join(
-        get_data_folder(user_id), user_id, DATA_DIR, filename
-    )
+    return os.path.join(get_data_folder(user_id), user_id, DATA_DIR, filename)
 
 
 def get_cloudbench_cache_path(filename: str, user_id: str = "default") -> str:
@@ -61,14 +53,11 @@ def get_cloudbench_cache_path(filename: str, user_id: str = "default") -> str:
     Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
     user_id is still "default" (i.e., no authenticated user on the thread).
     """
-    return os.path.join(
-        get_data_folder(user_id), user_id, CACHE_DIR, filename
-    )
+    return os.path.join(get_data_folder(user_id), user_id, CACHE_DIR, filename)
 
 
 @contextmanager
-def file_lock(path: str, exclusive: bool = True) -> Generator[
-    None, None, None]:
+def file_lock(path: str, exclusive: bool = True) -> Generator[None, None, None]:
     """Context manager for cross-process file locking.
 
     Uses a sibling .lock file so the data file itself is never held open

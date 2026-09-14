@@ -25,9 +25,7 @@ class TestFrameAncestorsMiddleware:
 
     def test_includes_configured_origins(self, settings) -> None:
         """Configured origins are appended after 'self'."""
-        settings.CLOUDBENCH_FRAME_ANCESTORS = [
-            "https://geohosting.example.com"
-        ]
+        settings.CLOUDBENCH_FRAME_ANCESTORS = ["https://geohosting.example.com"]
         middleware = FrameAncestorsMiddleware(_get_response)
         response = middleware(RequestFactory().get("/"))
 

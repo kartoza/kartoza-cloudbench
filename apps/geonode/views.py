@@ -31,15 +31,17 @@ class GeoNodeConnectionListView(APIView):
         """List all GeoNode connections."""
         config = get_config(request.user.id)
         connections = config.list_geonode_connections()
-        return Response([
-            {
-                "id": c.id,
-                "name": c.name,
-                "url": c.url,
-                "username": c.username,
-            }
-            for c in connections
-        ])
+        return Response(
+            [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "url": c.url,
+                    "username": c.username,
+                }
+                for c in connections
+            ]
+        )
 
     def post(self, request):
         """Create a new GeoNode connection."""
@@ -103,14 +105,16 @@ class GeoNodeConnectionDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        return Response({
-            "connection": {
-                "id": conn.id,
-                "name": conn.name,
-                "url": conn.url,
-                "username": conn.username,
+        return Response(
+            {
+                "connection": {
+                    "id": conn.id,
+                    "name": conn.name,
+                    "url": conn.url,
+                    "username": conn.username,
+                }
             }
-        })
+        )
 
     def put(self, request, conn_id):
         """Update a connection."""
@@ -184,17 +188,11 @@ class GeoNodeResourceDetailView(APIView):
 
     def get(self, request, conn_id, resource_type, resource_id):
         """Get layer information."""
-        resource_type = RESOURCE_TYPE_DETAIL_REQUEST_MAP.get(
-            resource_type, resource_type
-        )
+        resource_type = RESOURCE_TYPE_DETAIL_REQUEST_MAP.get(resource_type, resource_type)
         try:
             client = get_geonode_client(conn_id, str(request.user.id))
-            resource = client.get_resource(
-                resource_type, int(resource_id)
-            )
-            return Response(
-                {resource_type.rstrip("s"): resource.to_dict()}
-            )
+            resource = client.get_resource(resource_type, int(resource_id))
+            return Response({resource_type.rstrip("s"): resource.to_dict()})
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return Response(
@@ -291,9 +289,7 @@ class GeoNodeUploadCompleteView(APIView):
             )
 
         except ValueError as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response(
                 {"error": f"Failed to upload to GeoNode: {str(e)}"},
@@ -361,9 +357,7 @@ class GeoNodeRemoteServiceConnectView(APIView):
                     base_url=wms_url,
                     service_type=service_type,
                 )
-            return Response(
-                {"status": "created"}, status=status.HTTP_201_CREATED
-            )
+            return Response({"status": "created"}, status=status.HTTP_201_CREATED)
         except PermissionError as e:
             return Response(
                 {"error": str(e)},
@@ -463,24 +457,16 @@ class GeoNodeTestView(APIView):
         config = get_config(request.user.id)
         conn = config.get_geonode_connection(conn_id)
         if not conn:
-            return Response(
-                {"error": "Connection not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
 
         url_check = request.data.get("url", conn.url)
         try:
             response = requests.head(url_check, allow_redirects=True)
             if response.status_code in [200]:
-                return Response(
-                    {"status": response.status_code, "ok": True}
-                )
+                return Response({"status": response.status_code, "ok": True})
         except requests.exceptions.ConnectionError:
             pass
-        return Response(
-            {"error": "Url can't be reached"},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({"error": "Url can't be reached"}, status=status.HTTP_404_NOT_FOUND)
 
 
 class GeoNodeCategoryListView(APIView):

@@ -48,9 +48,7 @@ class ConnectionForm(Container):
 
         with Horizontal(classes="form-row"):
             yield Label("URL:", classes="form-label")
-            yield Input(
-                placeholder="http://localhost:8080/geoserver", id="input-url"
-            )
+            yield Input(placeholder="http://localhost:8080/geoserver", id="input-url")
 
         with Horizontal(classes="form-row"):
             yield Label("Username:", classes="form-label")
@@ -192,9 +190,7 @@ class ConnectionsScreen(Screen):
                 elif response.status_code == 401:
                     self.app.notify("Authentication failed", severity="error")
                 else:
-                    self.app.notify(
-                        f"Connection failed: {response.status_code}", severity="error"
-                    )
+                    self.app.notify(f"Connection failed: {response.status_code}", severity="error")
 
         except httpx.ConnectError:
             self.app.notify("Could not connect to server", severity="error")
@@ -257,13 +253,9 @@ class ConnectionsScreen(Screen):
                 )
 
                 if response.status_code == 200:
-                    self.app.notify(
-                        f"Connection '{conn.name}' is working!", severity="information"
-                    )
+                    self.app.notify(f"Connection '{conn.name}' is working!", severity="information")
                 else:
-                    self.app.notify(
-                        f"Connection failed: {response.status_code}", severity="error"
-                    )
+                    self.app.notify(f"Connection failed: {response.status_code}", severity="error")
 
         except Exception as e:
             self.app.notify(f"Error: {str(e)}", severity="error")

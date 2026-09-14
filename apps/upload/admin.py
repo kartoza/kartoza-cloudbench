@@ -19,10 +19,7 @@ class UploadSessionAdmin(admin.ModelAdmin):
         "created_at",
     ]
     list_filter = ["completed", "workspace"]
-    search_fields = [
-        "filename", "workspace", "connection_id", "session_id",
-        "user__username"
-    ]
+    search_fields = ["filename", "workspace", "connection_id", "session_id", "user__username"]
     readonly_fields = [
         "session_id",
         "user",

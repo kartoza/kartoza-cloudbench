@@ -241,9 +241,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_datastore(
-        self, workspace: str, name: str, recurse: bool = False
-    ) -> None:
+    def delete_datastore(self, workspace: str, name: str, recurse: bool = False) -> None:
         """Delete a data store.
 
         Args:
@@ -289,9 +287,7 @@ class GeoServerClient:
         Returns:
             Coverage store details dictionary
         """
-        data = self._get_json(
-            f"/rest/workspaces/{workspace}/coveragestores/{name}.json"
-        )
+        data = self._get_json(f"/rest/workspaces/{workspace}/coveragestores/{name}.json")
         return data.get("coverageStore", {})
 
     def create_coveragestore(
@@ -336,9 +332,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_coveragestore(
-        self, workspace: str, name: str, recurse: bool = False
-    ) -> None:
+    def delete_coveragestore(self, workspace: str, name: str, recurse: bool = False) -> None:
         """Delete a coverage store.
 
         Args:
@@ -377,9 +371,7 @@ class GeoServerClient:
             return []
         return featuretypes.get("featureType", [])
 
-    def get_featuretype(
-        self, workspace: str, datastore: str, name: str
-    ) -> dict[str, Any]:
+    def get_featuretype(self, workspace: str, datastore: str, name: str) -> dict[str, Any]:
         """Get feature type details.
 
         Args:
@@ -476,9 +468,7 @@ class GeoServerClient:
             return []
         return coverages.get("coverage", [])
 
-    def get_coverage(
-        self, workspace: str, coveragestore: str, name: str
-    ) -> dict[str, Any]:
+    def get_coverage(self, workspace: str, coveragestore: str, name: str) -> dict[str, Any]:
         """Get coverage details.
 
         Args:
@@ -661,9 +651,7 @@ class GeoServerClient:
             data = self._get_json(f"/rest/styles/{name}.json")
         return data.get("style", {})
 
-    def get_style_content(
-        self, name: str, workspace: str | None = None
-    ) -> tuple[str, str]:
+    def get_style_content(self, name: str, workspace: str | None = None) -> tuple[str, str]:
         """Get style content (SLD/CSS).
 
         Args:
@@ -779,9 +767,7 @@ class GeoServerClient:
                 status_code=response.status_code,
             )
 
-    def delete_style(
-        self, name: str, workspace: str | None = None, purge: bool = False
-    ) -> None:
+    def delete_style(self, name: str, workspace: str | None = None, purge: bool = False) -> None:
         """Delete a style.
 
         Args:
@@ -858,15 +844,15 @@ class GeoServerClient:
 
         # Extract default style name (GeoServer returns {name, href} object)
         default_style_obj = layer_data.get("defaultStyle", {})
-        default_style = default_style_obj.get("name", "") if isinstance(default_style_obj, dict) else ""
+        default_style = (
+            default_style_obj.get("name", "") if isinstance(default_style_obj, dict) else ""
+        )
 
         # Extract additional style names
         styles_obj = layer_data.get("styles", {})
         style_list = styles_obj.get("style", []) if isinstance(styles_obj, dict) else []
         additional_styles = [
-            s.get("name", "") if isinstance(s, dict) else s
-            for s in style_list
-            if s
+            s.get("name", "") if isinstance(s, dict) else s for s in style_list if s
         ]
 
         return {
@@ -896,9 +882,7 @@ class GeoServerClient:
         }
 
         if additional_styles:
-            payload["layer"]["styles"] = {
-                "style": [{"name": s} for s in additional_styles]
-            }
+            payload["layer"]["styles"] = {"style": [{"name": s} for s in additional_styles]}
 
         response = self._request(
             "PUT",
@@ -1044,9 +1028,7 @@ class GeoServerClient:
 
     # === Available (Unpublished) Feature Types ===
 
-    def list_available_featuretypes(
-        self, workspace: str, datastore: str
-    ) -> list[str]:
+    def list_available_featuretypes(self, workspace: str, datastore: str) -> list[str]:
         """List available (unpublished) feature types in a data store.
 
         Args:

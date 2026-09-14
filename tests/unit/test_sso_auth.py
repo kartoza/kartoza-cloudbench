@@ -20,9 +20,7 @@ class TestSignedSSOTokenAuthentication:
         settings.CLOUDBENCH_SERVICE_TOKEN = "shh"
         settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE = 3600
         token = sign_sso_token("7")
-        request = RequestFactory().get(
-            "/", HTTP_AUTHORIZATION=f"Token {token}"
-        )
+        request = RequestFactory().get("/", HTTP_AUTHORIZATION=f"Token {token}")
 
         result = SignedSSOTokenAuthentication().authenticate(request)
 
@@ -36,15 +34,11 @@ class TestSignedSSOTokenAuthentication:
         assert user.is_active is True
         assert auth is None
 
-    def test_rejects_token_signed_with_a_different_secret(
-        self, settings
-    ) -> None:
+    def test_rejects_token_signed_with_a_different_secret(self, settings) -> None:
         """A token signed with a stale/wrong secret must not authenticate."""
         settings.CLOUDBENCH_SERVICE_TOKEN = "shh"
         settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE = 3600
-        stale_signer = signing.TimestampSigner(
-            salt="cloudbench-sso", key="wrong-secret"
-        )
+        stale_signer = signing.TimestampSigner(salt="cloudbench-sso", key="wrong-secret")
         request = RequestFactory().get(
             "/",
             HTTP_AUTHORIZATION=f"Token {stale_signer.sign('7')}",
@@ -57,9 +51,7 @@ class TestSignedSSOTokenAuthentication:
         settings.CLOUDBENCH_SERVICE_TOKEN = "shh"
         settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE = 0
         token = sign_sso_token("7")
-        request = RequestFactory().get(
-            "/", HTTP_AUTHORIZATION=f"Token {token}"
-        )
+        request = RequestFactory().get("/", HTTP_AUTHORIZATION=f"Token {token}")
 
         assert SignedSSOTokenAuthentication().authenticate(request) is None
 
@@ -73,8 +65,6 @@ class TestSignedSSOTokenAuthentication:
     def test_ignores_non_token_authorization_schemes(self, settings) -> None:
         """A Bearer/Basic header (service-to-service auth) is left alone."""
         settings.CLOUDBENCH_SERVICE_TOKEN = "shh"
-        request = RequestFactory().get(
-            "/", HTTP_AUTHORIZATION="Bearer some-service-token"
-        )
+        request = RequestFactory().get("/", HTTP_AUTHORIZATION="Bearer some-service-token")
 
         assert SignedSSOTokenAuthentication().authenticate(request) is None

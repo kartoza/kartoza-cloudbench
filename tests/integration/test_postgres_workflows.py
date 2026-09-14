@@ -15,10 +15,12 @@ from rest_framework.test import APIClient
 @pytest.fixture
 def mock_pg_service():
     """Mock PostgreSQL service functions."""
-    with patch("apps.postgres.views.list_services") as mock_list, \
-         patch("apps.postgres.views.get_service") as mock_get, \
-         patch("apps.postgres.views.write_service") as mock_write, \
-         patch("apps.postgres.views.delete_service") as mock_delete:
+    with (
+        patch("apps.postgres.views.list_services") as mock_list,
+        patch("apps.postgres.views.get_service") as mock_get,
+        patch("apps.postgres.views.write_service") as mock_write,
+        patch("apps.postgres.views.delete_service") as mock_delete,
+    ):
         # Mock list_services
         mock_list.return_value = ["test_service", "another_service"]
 
@@ -31,7 +33,9 @@ def mock_pg_service():
         mock_service.user = "testuser"
         mock_service.password = "testpass"
         mock_service.sslmode = "prefer"
-        mock_service.connection_string.return_value = "postgresql://testuser:testpass@localhost:5432/testdb"
+        mock_service.connection_string.return_value = (
+            "postgresql://testuser:testpass@localhost:5432/testdb"
+        )
         mock_get.return_value = mock_service
 
         # Mock write_service to not fail
@@ -79,8 +83,21 @@ def mock_pg_schema():
         # Mock get_table_columns
         mock_schema.get_table_columns.return_value = [
             {"name": "id", "dataType": "integer", "isNullable": False, "isPrimaryKey": True},
-            {"name": "name", "dataType": "character varying", "isNullable": True, "isPrimaryKey": False},
-            {"name": "geom", "dataType": "geometry", "isNullable": True, "isPrimaryKey": False, "isGeometry": True, "geometryType": "POINT", "srid": 4326},
+            {
+                "name": "name",
+                "dataType": "character varying",
+                "isNullable": True,
+                "isPrimaryKey": False,
+            },
+            {
+                "name": "geom",
+                "dataType": "geometry",
+                "isNullable": True,
+                "isPrimaryKey": False,
+                "isGeometry": True,
+                "geometryType": "POINT",
+                "srid": 4326,
+            },
         ]
 
         # Mock get_table_row_count
@@ -192,18 +209,14 @@ class TestPostgresServiceWorkflow:
 class TestPostgresSchemaWorkflow:
     """Test PostgreSQL schema browsing workflows."""
 
-    def test_list_schemas(
-        self, api_client: APIClient, mock_pg_service, mock_pg_schema
-    ) -> None:
+    def test_list_schemas(self, api_client: APIClient, mock_pg_service, mock_pg_schema) -> None:
         """Test listing schemas in a database."""
         response = api_client.get("/api/pg/services/test_service/schemas")
         assert response.status_code == status.HTTP_200_OK
         assert "schemas" in response.json()
         assert "public" in response.json()["schemas"]
 
-    def test_list_tables(
-        self, api_client: APIClient, mock_pg_service, mock_pg_schema
-    ) -> None:
+    def test_list_tables(self, api_client: APIClient, mock_pg_service, mock_pg_schema) -> None:
         """Test listing tables in a schema."""
         response = api_client.get("/api/pg/services/test_service/schemas/public/tables")
         assert response.status_code == status.HTTP_200_OK
@@ -212,13 +225,9 @@ class TestPostgresSchemaWorkflow:
         assert tables[0]["name"] == "cities"
         assert tables[0]["geometryType"] == "POINT"
 
-    def test_get_table_detail(
-        self, api_client: APIClient, mock_pg_service, mock_pg_schema
-    ) -> None:
+    def test_get_table_detail(self, api_client: APIClient, mock_pg_service, mock_pg_schema) -> None:
         """Test getting table details."""
-        response = api_client.get(
-            "/api/pg/services/test_service/schemas/public/tables/cities"
-        )
+        response = api_client.get("/api/pg/services/test_service/schemas/public/tables/cities")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["table"] == "cities"
@@ -231,9 +240,7 @@ class TestPostgresSchemaWorkflow:
 class TestPostgresQueryWorkflow:
     """Test PostgreSQL query execution workflows."""
 
-    def test_execute_query(
-        self, api_client: APIClient, mock_pg_service, mock_pg_schema
-    ) -> None:
+    def test_execute_query(self, api_client: APIClient, mock_pg_service, mock_pg_schema) -> None:
         """Test executing a SQL query."""
         response = api_client.post(
             "/api/pg/services/test_service/query",
@@ -245,9 +252,7 @@ class TestPostgresQueryWorkflow:
         assert "columns" in data
         assert "rows" in data
 
-    def test_execute_query_missing_query(
-        self, api_client: APIClient, mock_pg_service
-    ) -> None:
+    def test_execute_query_missing_query(self, api_client: APIClient, mock_pg_service) -> None:
         """Test executing without query fails."""
         response = api_client.post(
             "/api/pg/services/test_service/query",
@@ -427,13 +432,11 @@ class TestPostgresImportCleanup:
                     },
                     format="json",
                 )
-                assert response.status_code == status.HTTP_200_OK, (
-                    f"layer {layer} failed: {response.json()}"
-                )
+                assert (
+                    response.status_code == status.HTTP_200_OK
+                ), f"layer {layer} failed: {response.json()}"
                 if i < len(layers) - 1:
-                    assert uploaded_gpkg.exists(), (
-                        f"source must survive after layer {layer}"
-                    )
+                    assert uploaded_gpkg.exists(), f"source must survive after layer {layer}"
 
         assert not uploaded_gpkg.parent.exists()
 

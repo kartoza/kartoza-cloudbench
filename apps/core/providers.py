@@ -115,6 +115,7 @@ class ProvidersManager:
     def _config_path(self) -> str:
         """Get the path to the providers config file."""
         from .utilities import get_cloudbench_config_path
+
         return get_cloudbench_config_path(PROVIDERS_FILE, self._user_id)
 
     def _load(self) -> ProvidersConfig:
@@ -123,9 +124,7 @@ class ProvidersManager:
 
         if not os.path.exists(path):
             # Create default config
-            config = ProvidersConfig(
-                providers=[ProviderConfig(**p) for p in DEFAULT_PROVIDERS]
-            )
+            config = ProvidersConfig(providers=[ProviderConfig(**p) for p in DEFAULT_PROVIDERS])
             self._config = config
             self.save()
             return config
@@ -140,16 +139,12 @@ class ProvidersManager:
 
             for default_provider in DEFAULT_PROVIDERS:
                 if default_provider["id"] not in loaded_ids:
-                    loaded_config.providers.append(
-                        ProviderConfig(**default_provider)
-                    )
+                    loaded_config.providers.append(ProviderConfig(**default_provider))
 
             return loaded_config
         except (json.JSONDecodeError, ValueError):
             # Corrupted config, return default
-            return ProvidersConfig(
-                providers=[ProviderConfig(**p) for p in DEFAULT_PROVIDERS]
-            )
+            return ProvidersConfig(providers=[ProviderConfig(**p) for p in DEFAULT_PROVIDERS])
 
     def get_provider(self, provider_id: str) -> ProviderConfig | None:
         """Get a provider configuration by ID."""
@@ -185,13 +180,11 @@ class ProvidersManager:
         return {p.id for p in self.config.providers if p.enabled}
 
 
-def get_providers_manager(
-        user_id: "str | int" = "default") -> ProvidersManager:
+def get_providers_manager(user_id: "str | int" = "default") -> ProvidersManager:
     """Get the ProvidersManager for the given user."""
     return ProvidersManager(str(user_id))
 
 
-def is_provider_enabled(provider_id: str,
-                        user_id: "str | int" = "default") -> bool:
+def is_provider_enabled(provider_id: str, user_id: "str | int" = "default") -> bool:
     """Check if a provider is enabled for the given user."""
     return get_providers_manager(user_id).is_provider_enabled(provider_id)
