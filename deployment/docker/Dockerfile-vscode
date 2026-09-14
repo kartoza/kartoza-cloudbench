@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=kartoza/cloudbench:latest
+ARG BASE_IMAGE=ghcr.io/kartoza/kartoza-cloudbench:latest
 FROM ${BASE_IMAGE} AS vscode
 
 # git is needed for VS Code's postCreateCommand and Source Control panel

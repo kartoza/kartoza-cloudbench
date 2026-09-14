@@ -51,4 +51,4 @@ test:
 
 # Print image tag
 image:
-	@echo kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
+	@echo ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}

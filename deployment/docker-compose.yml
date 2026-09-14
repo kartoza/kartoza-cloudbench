@@ -5,7 +5,7 @@ volumes:
 
 services:
   django:
-    image: kartoza/cloudbench:${CLOUDBENCH_TAG:-latest}
+    image: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
     env_file: .env
     volumes:
       - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}

@@ -31,7 +31,7 @@ services:
       context: ../
       dockerfile: deployment/docker/Dockerfile-vscode
       target: vscode
-    # Distinct tag — MUST NOT reuse the base file's kartoza/cloudbench:$TAG.
+    # Distinct tag — MUST NOT reuse the base file's ghcr.io/kartoza/kartoza-cloudbench:$TAG.
     # Any other service that referenced that tag without its own `build:`
     # would silently run whatever the `vscode` target produces instead of
     # `prod` (this bit us once already, with a since-removed celery

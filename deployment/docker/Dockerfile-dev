@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=kartoza/cloudbench:latest
+ARG BASE_IMAGE=ghcr.io/kartoza/kartoza-cloudbench:latest
 FROM ${BASE_IMAGE}
 
 # This section taken on 2 July 2015 from
