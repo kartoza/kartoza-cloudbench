@@ -94,7 +94,9 @@ ASGI_APPLICATION = "cloudbench.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(
+            os.environ.get("CLOUDBENCH_DATA_FOLDER", BASE_DIR)
+        ) / "db.sqlite3",
     }
 }
 
