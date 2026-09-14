@@ -60,5 +60,6 @@ web/node_modules/
 
 # Generated build artifacts
 cloudbench-web
+docker-compose.override.yml
 internal/webserver/static/cesium/
 internal/webserver/static/assets/
