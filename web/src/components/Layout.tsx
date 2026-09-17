@@ -9,12 +9,14 @@ interface LayoutProps {
   children: ReactNode
   onSearchClick?: () => void
   onHelpClick?: () => void
+  onMapClick?: () => void
 }
 
 export default function Layout({
                                  children,
                                  onSearchClick,
-                                 onHelpClick
+                                 onHelpClick,
+                                 onMapClick
                                }: LayoutProps) {
   const sidebarWidth = useUIStore((state) => state.sidebarWidth)
   const setSidebarWidth = useUIStore((state) => state.setSidebarWidth)
@@ -54,7 +56,7 @@ export default function Layout({
 
   return (
     <Flex direction="column" h="100vh" bg={bgColor}>
-      <Header onSearchClick={onSearchClick} onHelpClick={onHelpClick}/>
+      <Header onSearchClick={onSearchClick} onHelpClick={onHelpClick} onMapClick={onMapClick}/>
       <Flex flex="1" overflow="hidden" ref={containerRef}>
         <Box
           w={`${sidebarWidth}px`}

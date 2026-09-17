@@ -18,7 +18,7 @@ import {
   Image,
   Text,
 } from '@chakra-ui/react'
-import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload, FiLogOut } from 'react-icons/fi'
+import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload, FiLogOut, FiMap } from 'react-icons/fi'
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
@@ -28,9 +28,10 @@ import { useMemo } from "react";
 interface HeaderProps {
   onSearchClick?: () => void
   onHelpClick?: () => void
+  onMapClick?: () => void
 }
 
-export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
+export default function Header({ onSearchClick, onHelpClick, onMapClick }: HeaderProps) {
   const openDialog = useUIStore((state) => state.openDialog)
   const fetchConnections = useConnectionStore((state) => state.fetchConnections)
   const selectedNode = useTreeStore((state) => state.selectedNode)
@@ -264,6 +265,17 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
 
           {/* Action Icons */}
           <HStack spacing={1}>
+            <Tooltip label="Map Explorer" placement="bottom">
+              <IconButton
+                aria-label="Map Explorer"
+                icon={<FiMap size={18} />}
+                variant="ghost"
+                color="gray.600"
+                _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
+                onClick={onMapClick}
+                size="sm"
+              />
+            </Tooltip>
             <Tooltip label="Refresh" placement="bottom">
               <IconButton
                 aria-label="Refresh"
