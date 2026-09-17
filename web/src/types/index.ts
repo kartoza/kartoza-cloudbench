@@ -609,12 +609,13 @@ export interface ConversionToolStatus {
   gdal?: ConversionToolInfo
   pdal?: ConversionToolInfo
   ogr2ogr?: ConversionToolInfo
+  cloudnativegis?: ConversionToolInfo
 }
 
 // S3 Upload options
 export interface S3UploadOptions {
   convert?: boolean // Whether to suggest/perform cloud-native conversion
-  targetFormat?: 'cog' | 'copc' | 'geoparquet'
+  targetFormat?: 'cog' | 'copc' | 'geoparquet' | 'pmtiles'
 }
 
 // S3 Upload result

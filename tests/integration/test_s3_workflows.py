@@ -152,9 +152,24 @@ class TestS3BucketWorkflow:
         """Test listing S3 buckets."""
         response = api_client.get("/api/s3/connections/test-s3-conn/buckets")
         assert response.status_code == status.HTTP_200_OK
-        buckets = response.json()["buckets"]
+        buckets = response.json()
         assert len(buckets) == 1
         assert buckets[0]["name"] == "test-bucket"
+
+    def test_create_bucket(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
+        """Test creating an S3 bucket."""
+        mock_s3_client.create_bucket.return_value.to_dict.return_value = {
+            "name": "new-bucket",
+            "creationDate": None,
+        }
+        response = api_client.post(
+            "/api/s3/connections/test-s3-conn/buckets",
+            {"name": "new-bucket"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["name"] == "new-bucket"
+        mock_s3_client.create_bucket.assert_called_once_with("new-bucket")
 
     def test_list_objects(self, api_client: APIClient, mock_s3_config, mock_s3_client) -> None:
         """Test listing objects in a bucket."""

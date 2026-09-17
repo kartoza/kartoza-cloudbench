@@ -71,6 +71,7 @@ export default function S3UploadDialog() {
 
   // Form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [companionFiles, setCompanionFiles] = useState<File[]>([])
   const [customKey, setCustomKey] = useState('')
   const [selectedBucket, setSelectedBucket] = useState(bucketName || '')
   const [convertToCloudNative, setConvertToCloudNative] = useState(true)
@@ -86,6 +87,7 @@ export default function S3UploadDialog() {
   const [conversionJobId, setConversionJobId] = useState<string | null>(null)
 
   const isOpen = activeDialog === 's3upload'
+  const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
 
@@ -102,19 +104,32 @@ export default function S3UploadDialog() {
     queryFn: () => api.getConversionToolStatus(),
     enabled: isOpen,
   })
+  const showPMTiles = isShapefile && !!toolStatus?.cloudnativegis?.available
 
   // Poll for conversion job status
-  const { data: conversionJob } = useQuery({
+  const { data: conversionJob, error: conversionJobError } = useQuery({
     queryKey: ['conversionJob', conversionJobId],
     queryFn: () => conversionJobId ? api.getConversionJob(conversionJobId) : null,
     enabled: !!conversionJobId,
-    refetchInterval: conversionJobId ? 2000 : false,
+    refetchInterval: (query) => {
+      const job = query.state.data
+      return job && ['completed', 'failed', 'cancelled'].includes(job.status) ? false : 2000
+    },
   })
+  const isConverting = !!conversionJobId &&
+    (!conversionJob || ['pending', 'running'].includes(conversionJob.status))
+
+  useEffect(() => {
+    if (conversionJob?.status === 'completed') {
+      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
+    }
+  }, [conversionJob?.status, connectionId, selectedBucket, queryClient])
 
   // Reset form when dialog opens
   useEffect(() => {
     if (isOpen) {
       setSelectedFile(null)
+      setCompanionFiles([])
       setCustomKey('')
       setSelectedBucket(bucketName || '')
       setConvertToCloudNative(true)
@@ -131,28 +146,33 @@ export default function S3UploadDialog() {
   // Update recommended format when file changes
   useEffect(() => {
     if (selectedFile) {
-      const recommended = detectRecommendedConversion(selectedFile.name)
+      const recommended = showPMTiles ? 'pmtiles' : detectRecommendedConversion(selectedFile.name)
       setRecommendedFormat(recommended)
       setTargetFormat(recommended || '')
       // Detect if it's a GeoPackage
       const ext = selectedFile.name.split('.').pop()?.toLowerCase()
       setIsGeoPackage(ext === 'gpkg')
     }
-  }, [selectedFile])
+  }, [selectedFile, showPMTiles])
 
-  const handleFileSelect = useCallback((file: File) => {
+  const handleFileSelect = useCallback((files: File[]) => {
+    if (isUploading || isConverting) return
+    const file = files.find((component) => /\.shp$/i.test(component.name)) || files[0]
+    if (!file) return
+    if (files.length > 1 && !/\.shp$/i.test(file.name)) {
+      toast({ title: 'Select one file, or the components of one shapefile', status: 'warning' })
+      return
+    }
     setSelectedFile(file)
+    setCompanionFiles(files.filter((component) => component !== file))
     setUploadResult(null)
     // Set custom key to filename by default
     setCustomKey(file.name)
-  }, [])
+  }, [isUploading, isConverting, toast])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file) {
-      handleFileSelect(file)
-    }
+    handleFileSelect(Array.from(e.dataTransfer.files))
   }, [handleFileSelect])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -160,6 +180,7 @@ export default function S3UploadDialog() {
   }, [])
 
   const handleUpload = async () => {
+    if (isUploading || isConverting) return
     if (!selectedFile || !connectionId || !selectedBucket) {
       toast({
         title: 'Missing required fields',
@@ -181,10 +202,11 @@ export default function S3UploadDialog() {
         selectedFile,
         customKey || undefined,
         convertToCloudNative && !!targetFormat,
-        targetFormat || undefined,
+        convertToCloudNative ? targetFormat || undefined : undefined,
         (progress) => setUploadProgress(progress),
         isGeoPackage ? createSubfolder : undefined,
-        undefined // prefix would come from current folder context if needed
+        undefined,
+        companionFiles
       )
 
       setUploadResult({
@@ -201,7 +223,7 @@ export default function S3UploadDialog() {
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
 
       toast({
-        title: 'Upload successful',
+        title: result.conversionJobId ? 'Conversion started' : 'Upload successful',
         description: result.message,
         status: 'success',
         duration: 3000,
@@ -231,6 +253,8 @@ export default function S3UploadDialog() {
         return toolStatus.pdal?.available || false
       case 'geoparquet':
         return toolStatus.ogr2ogr?.available || false
+      case 'pmtiles':
+        return showPMTiles
       default:
         return false
     }
@@ -271,6 +295,7 @@ export default function S3UploadDialog() {
                 <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Target Bucket</FormLabel>
                 <Select
                   value={selectedBucket}
+                  isDisabled={isUploading || isConverting}
                   onChange={(e) => setSelectedBucket(e.target.value)}
                   placeholder="Select a bucket"
                   size="sm"
@@ -308,17 +333,25 @@ export default function S3UploadDialog() {
                   <input
                     ref={fileInputRef}
                     type="file"
+                    multiple
                     hidden
                     onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) handleFileSelect(file)
+                      handleFileSelect(Array.from(e.target.files || []))
+                      e.target.value = ''
                     }}
                   />
                   {selectedFile ? (
                     <VStack spacing={1}>
                       <Icon as={FiFile} boxSize={6} color="orange.500" />
                       <Text fontWeight="500" color="gray.700" fontSize="sm" noOfLines={1}>{selectedFile.name}</Text>
-                      <Text fontSize="xs" color="gray.500">{formatFileSize(selectedFile.size)}</Text>
+                      <Text fontSize="xs" color="gray.500">
+                        {formatFileSize(selectedFile.size + companionFiles.reduce((total, file) => total + file.size, 0))}
+                      </Text>
+                      {companionFiles.length > 0 && (
+                        <Text fontSize="xs" color="gray.600">
+                          Also selected: {companionFiles.map((file) => file.name).join(', ')}
+                        </Text>
+                      )}
                       {recommendedFormat && (
                         <Badge colorScheme="orange" fontSize="xs">
                           → {recommendedFormat.toUpperCase()}
@@ -337,6 +370,10 @@ export default function S3UploadDialog() {
                     </VStack>
                   )}
                 </Box>
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Select .shp, .shx and .dbf together (plus .prj if available).
+                  Cloudbench will ZIP them automatically.
+                </Text>
               </FormControl>
 
               {/* Object Key (path) */}
@@ -344,6 +381,7 @@ export default function S3UploadDialog() {
                 <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Object Key (optional)</FormLabel>
                 <Input
                   value={customKey}
+                  isDisabled={isUploading || isConverting}
                   onChange={(e) => setCustomKey(e.target.value)}
                   placeholder="path/to/file.tif"
                   size="sm"
@@ -358,12 +396,13 @@ export default function S3UploadDialog() {
             {/* Right column: Conversion options */}
             <VStack spacing={3} flex="1" align="stretch">
               {/* Cloud-Native Conversion Options */}
-              {recommendedFormat ? (
+              {recommendedFormat || showPMTiles ? (
                 <Box p={3} bg="orange.50" borderRadius="lg" border="1px solid" borderColor="orange.200" h="100%">
                   <HStack justify="space-between" mb={2}>
                     <Text fontWeight="500" color="gray.700" fontSize="sm">Convert to Cloud-Native</Text>
                     <Switch
                       isChecked={convertToCloudNative}
+                      isDisabled={isUploading || isConverting}
                       onChange={(e) => setConvertToCloudNative(e.target.checked)}
                       colorScheme="orange"
                       size="sm"
@@ -374,7 +413,9 @@ export default function S3UploadDialog() {
                     <VStack spacing={2} align="stretch">
                       <Select
                         value={targetFormat}
+                        isDisabled={isUploading || isConverting}
                         onChange={(e) => setTargetFormat(e.target.value)}
+                        placeholder="Select a format"
                         size="sm"
                         borderRadius="lg"
                       >
@@ -387,6 +428,11 @@ export default function S3UploadDialog() {
                         <option value="geoparquet" disabled={!canConvert('geoparquet')}>
                           GeoParquet {!canConvert('geoparquet') && '- unavailable'}
                         </option>
+                        {showPMTiles && (
+                          <option value="pmtiles">
+                            PMTiles
+                          </option>
+                        )}
                       </Select>
 
                       {/* GeoPackage-specific options */}
@@ -410,7 +456,7 @@ export default function S3UploadDialog() {
                         </Box>
                       )}
 
-                      {!canConvert(targetFormat) && (
+                      {targetFormat && !canConvert(targetFormat) && (
                         <Alert status="warning" size="sm" borderRadius="md" py={1} px={2}>
                           <AlertIcon boxSize={3} />
                           <Text fontSize="xs">
@@ -452,7 +498,7 @@ export default function S3UploadDialog() {
             )}
 
             {/* Conversion Job Progress */}
-            {conversionJob && conversionJob.status === 'running' && (
+            {conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
               <Box w="100%" p={2} bg="blue.50" borderRadius="lg">
                 <HStack mb={1}>
                   <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
@@ -474,6 +520,12 @@ export default function S3UploadDialog() {
 
             {/* Upload/Conversion Result */}
             <AnimatePresence>
+              {conversionJobError && (
+                <Alert status="error" borderRadius="lg">
+                  <AlertIcon />
+                  <Text fontSize="xs">Unable to check conversion status: {(conversionJobError as Error).message}</Text>
+                </Alert>
+              )}
               {uploadResult && !conversionJob && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
@@ -545,8 +597,9 @@ export default function S3UploadDialog() {
             <Button
               colorScheme="orange"
               onClick={handleUpload}
-              isLoading={isUploading}
-              isDisabled={!selectedFile || !selectedBucket}
+              isLoading={isUploading || isConverting}
+              loadingText={isConverting ? 'Converting...' : 'Uploading...'}
+              isDisabled={!selectedFile || !selectedBucket || (convertToCloudNative && targetFormat === 'pmtiles' && !showPMTiles)}
               borderRadius="lg"
               px={6}
               leftIcon={<FiUpload />}

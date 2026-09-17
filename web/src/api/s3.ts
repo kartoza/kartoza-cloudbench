@@ -245,10 +245,12 @@ export async function uploadToS3(
   targetFormat?: string,
   onProgress?: (progress: number) => void,
   subfolder?: boolean,
-  prefix?: string
+  prefix?: string,
+  companionFiles: File[] = []
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
+  companionFiles.forEach((component) => formData.append('companions', component))
   if (key) {
     formData.append('key', key)
   }
@@ -287,7 +289,9 @@ export async function uploadToS3(
       reject(new Error('Network error'))
     })
 
-    xhr.open('POST', `${API_BASE}/s3/connections/${connectionId}/buckets/${bucketName}/objects`)
+    xhr.open('POST', `${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}/${encodeURIComponent(bucketName)}`)
+    const token = localStorage.getItem('token')
+    if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
     xhr.send(formData)
   })
 }

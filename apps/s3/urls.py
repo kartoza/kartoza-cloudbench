@@ -32,6 +32,11 @@ urlpatterns = [
         views.S3BucketListView.as_view(),
         name="s3-bucket-list",
     ),
+    path(
+        "s3/connections/<str:conn_id>/buckets/<str:bucket>",
+        views.S3BucketDetailView.as_view(),
+        name="s3-bucket-detail",
+    ),
     # Objects
     path(
         "s3/objects/<str:conn_id>/<str:bucket>",

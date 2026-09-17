@@ -140,6 +140,31 @@ class S3Client:
             )
         return buckets
 
+    def create_bucket(self, bucket: str) -> S3Bucket:
+        """Create a new bucket.
+
+        Args:
+            bucket: Bucket name
+
+        Returns:
+            The created S3Bucket
+        """
+        kwargs: dict[str, Any] = {"Bucket": bucket}
+        # us-east-1 is the default region and must NOT be passed as a
+        # LocationConstraint, or AWS rejects the request.
+        if self.region and self.region != "us-east-1":
+            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.region}
+        self.client.create_bucket(**kwargs)
+        return S3Bucket(name=bucket)
+
+    def delete_bucket(self, bucket: str) -> None:
+        """Delete an empty bucket.
+
+        Args:
+            bucket: Bucket name
+        """
+        self.client.delete_bucket(Bucket=bucket)
+
     def list_objects(
         self,
         bucket: str,
@@ -362,11 +387,12 @@ class S3ClientManager:
                     cls._instance._clients: dict[str, S3Client] = {}
         return cls._instance
 
-    def get_client(self, connection_id: str) -> S3Client:
+    def get_client(self, connection_id: str, user_id: str = "default") -> S3Client:
         """Get or create an S3 client for a connection.
 
         Args:
             connection_id: S3 connection ID
+            user_id: User ID the connection is scoped to
 
         Returns:
             S3Client instance
@@ -374,12 +400,13 @@ class S3ClientManager:
         Raises:
             ValueError: If connection not found
         """
+        cache_key = f"{user_id}:{connection_id}"
         with self._lock:
-            if connection_id in self._clients:
-                return self._clients[connection_id]
+            if cache_key in self._clients:
+                return self._clients[cache_key]
 
             # Get connection config
-            config = get_config()
+            config = get_config(user_id)
             conn = config.get_s3_connection(connection_id)
             if not conn:
                 raise ValueError(f"S3 connection not found: {connection_id}")
@@ -394,17 +421,18 @@ class S3ClientManager:
                 path_style=conn.path_style,
             )
 
-            self._clients[connection_id] = client
+            self._clients[cache_key] = client
             return client
 
-    def remove_client(self, connection_id: str) -> None:
+    def remove_client(self, connection_id: str, user_id: str = "default") -> None:
         """Remove a cached client.
 
         Args:
             connection_id: Connection ID to remove
+            user_id: User ID the connection is scoped to
         """
         with self._lock:
-            self._clients.pop(connection_id, None)
+            self._clients.pop(f"{user_id}:{connection_id}", None)
 
     def clear_all(self) -> None:
         """Clear all cached clients."""
@@ -412,14 +440,15 @@ class S3ClientManager:
             self._clients.clear()
 
 
-def get_s3_client(connection_id: str) -> S3Client:
+def get_s3_client(connection_id: str, user_id: str = "default") -> S3Client:
     """Get an S3 client for a connection.
 
     Args:
         connection_id: S3 connection ID
+        user_id: User ID the connection is scoped to
 
     Returns:
         S3Client instance
     """
     manager = S3ClientManager()
-    return manager.get_client(connection_id)
+    return manager.get_client(connection_id, user_id)

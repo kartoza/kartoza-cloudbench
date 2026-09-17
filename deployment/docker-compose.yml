@@ -7,6 +7,12 @@ services:
   django:
     image: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
     env_file: .env
+    environment:
+      CLOUDNATIVEGIS_URL: ${CLOUDNATIVEGIS_URL:-http://host.docker.internal:${CLOUDNATIVEGIS_PORT:-8100}}
+      CLOUDNATIVEGIS_USERNAME: ${CLOUDNATIVEGIS_USERNAME:-${CLOUDNATIVEGIS_ADMIN_USERNAME:-admin}}
+      CLOUDNATIVEGIS_PASSWORD: ${CLOUDNATIVEGIS_PASSWORD:-${CLOUDNATIVEGIS_ADMIN_PASSWORD:-admin}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     ports:

@@ -227,7 +227,7 @@ class SearchService:
             try:
                 from apps.s3.client import get_s3_client
 
-                client = get_s3_client(conn.id)
+                client = get_s3_client(conn.id, str(self._user_id))
                 buckets = client.list_buckets()
 
                 for bucket in buckets:

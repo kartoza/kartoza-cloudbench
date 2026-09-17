@@ -7,6 +7,7 @@ GeoHosting required). Run everything from inside this directory.
 
 ```bash
 cp .template.env .env   # fill in ADMIN_USERNAME/PASSWORD, DJANGO_SECRET_KEY, etc.
+cp docker-compose.override.template.yml docker-compose.override.yml
 make up                 # picks up docker-compose.override.yml automatically (dev mode)
 ```
 
@@ -53,6 +54,7 @@ Run from inside `deployment/`:
 | `make build` | Rebuild the `django` image after a dependency change |
 | `make up` | Start the full stack in dev mode (source-mounted) |
 | `make up-prod` | Start the base compose file only, no source mounts |
+| `make dev` | Start the SSH debug container and Vite |
 | `make down` | Stop everything |
 | `make logs` | Follow logs from all services |
 | `make logs-vite` | Follow logs from the `vite` service only |
@@ -65,3 +67,22 @@ Run from inside `deployment/`:
 
 These are also runnable directly with `docker compose <command>` if you
 prefer.
+
+## CloudNativeGIS
+
+S3's PMTiles conversion uses [CloudNativeGIS](https://github.com/kartoza/CloudNativeGIS),
+which runs as a separate service — see
+[S3 upload details](../docs/user-guide/uploads.md#s3-cloud-native-options).
+Point Cloudbench at wherever it's deployed:
+
+- `CLOUDNATIVEGIS_URL` — base URL of the CloudNativeGIS instance.
+- `CLOUDNATIVEGIS_USERNAME` / `CLOUDNATIVEGIS_PASSWORD` — Basic auth
+  credentials for its API. No CloudNativeGIS credentials are sent to the
+  browser. Use HTTPS if the service isn't on a trusted local network.
+- `CLOUDNATIVEGIS_CONVERSION_TIMEOUT` / `CLOUDNATIVEGIS_POLL_INTERVAL` — how
+  long to wait for a conversion and how often to poll it.
+
+Run `python manage.py migrate` in the Cloudbench backend after updating to
+create the PMTiles conversion-job table (the normal container entrypoint also
+runs migrations). Keep Cloudbench running during conversions — restarting its
+server interrupts in-flight background jobs.

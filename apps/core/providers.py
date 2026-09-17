@@ -41,7 +41,7 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "id": "s3",
         "name": "S3 Storage",
         "description": "S3-compatible object storage (MinIO, AWS S3, etc.)",
-        "enabled": False,
+        "enabled": True,
         "experimental": True,
     },
     {

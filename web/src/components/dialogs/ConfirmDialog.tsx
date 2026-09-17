@@ -63,6 +63,33 @@ export default function ConfirmDialog() {
           status: 'success',
           duration: 2000,
         })
+      } else if (data?.s3ConnectionId && data?.s3BucketName) {
+        // Delete S3 bucket
+        await api.deleteS3Bucket(
+          data.s3ConnectionId as string,
+          data.s3BucketName as string
+        )
+        queryClient.invalidateQueries({ queryKey: ['s3buckets', data.s3ConnectionId] })
+        toast({
+          title: 'Bucket deleted',
+          status: 'success',
+          duration: 2000,
+        })
+      } else if (data?.s3ConnectionId) {
+        // Delete S3 connection
+        await api.deleteS3Connection(data.s3ConnectionId as string)
+        queryClient.invalidateQueries({ queryKey: ['s3connections'] })
+        if (
+          selectedNode?.type === 's3connection' &&
+          selectedNode.s3ConnectionId === data.s3ConnectionId
+        ) {
+          clearSelection()
+        }
+        toast({
+          title: 'S3 connection deleted',
+          status: 'success',
+          duration: 2000,
+        })
       } else if (data?.pgServiceName) {
         // Delete PostgreSQL service
         await api.deletePGService(data.pgServiceName as string)

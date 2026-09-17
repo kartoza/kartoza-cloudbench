@@ -206,6 +206,17 @@ build-go-web:
 	@echo "Building Go Web server..."
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/kartoza-cloudbench-web-go ./cmd/web
 
+.PHONY: deploy-up deploy-up-prod deploy-down
+
+deploy-up:
+	$(MAKE) -C deployment up
+
+deploy-up-prod:
+	$(MAKE) -C deployment up-prod
+
+deploy-down:
+	$(MAKE) -C deployment down
+
 # === Help ===
 
 help:

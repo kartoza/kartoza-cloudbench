@@ -22,6 +22,7 @@ import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevro
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
+import { useProvidersStore } from '../stores/providersStore'
 import { useMemo } from "react";
 
 interface HeaderProps {
@@ -33,15 +34,27 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
   const openDialog = useUIStore((state) => state.openDialog)
   const fetchConnections = useConnectionStore((state) => state.fetchConnections)
   const selectedNode = useTreeStore((state) => state.selectedNode)
+  const isGeoServerEnabled = useProvidersStore((state) => state.isProviderEnabled('geoserver'))
   const isIframe = useMemo(() => window.self !== window.top, [])
 
   const handleUpload = () => {
     if (!selectedNode) {
-      useUIStore.getState().setError('Select a workspace or PostgreSQL service first')
+      useUIStore.getState().setError('Select a workspace, PostgreSQL service, or S3 connection first')
       return
     }
 
     const nodeType = selectedNode.type
+
+    if (selectedNode.s3ConnectionId) {
+      openDialog('s3upload', {
+        mode: 'create',
+        data: {
+          connectionId: selectedNode.s3ConnectionId,
+          bucketName: selectedNode.s3Bucket,
+        },
+      })
+      return
+    }
 
     // PostgreSQL-related nodes → open PG upload dialog
     if (nodeType === 'postgresql' || nodeType === 'pgservice' || nodeType === 'pgschema' ||
@@ -191,12 +204,14 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
                 </HStack>
               </MenuButton>
               <MenuList>
-                <MenuItem
-                  icon={<FiRefreshCcw />}
-                  onClick={() => openDialog('sync', { mode: 'create' })}
-                >
-                  Sync GeoServer(s)
-                </MenuItem>
+                {isGeoServerEnabled && (
+                  <MenuItem
+                    icon={<FiRefreshCcw />}
+                    onClick={() => openDialog('sync', { mode: 'create' })}
+                  >
+                    Sync GeoServer(s)
+                  </MenuItem>
+                )}
                 <MenuItem
                   icon={<FiUpload />}
                   onClick={handleUpload}
@@ -267,6 +282,7 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
                 variant="ghost"
                 color="gray.600"
                 _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
+                onClick={() => openDialog('settings')}
                 size="sm"
               />
             </Tooltip>
@@ -299,21 +315,6 @@ export default function Header({ onSearchClick, onHelpClick }: HeaderProps) {
         </Flex>
       </Box>
 
-      {/* News Ticker Bar - Teal colored like Kartoza website */}
-      <Box
-        bg="kartoza.700"
-        py={2}
-        px={6}
-      >
-        <Text
-          color="white"
-          fontSize="sm"
-          textAlign="center"
-          fontWeight="400"
-        >
-          Kartoza Cloudbench — Manage your GeoServer and PostgreSQL instances
-        </Text>
-      </Box>
     </Box>
   )
 }

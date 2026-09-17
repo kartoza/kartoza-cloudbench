@@ -148,7 +148,7 @@ class TestProvidersManager:
     def test_is_provider_enabled(self, providers_manager: ProvidersManager) -> None:
         """Test checking if provider is enabled."""
         assert providers_manager.is_provider_enabled("geoserver") is True
-        assert providers_manager.is_provider_enabled("s3") is False
+        assert providers_manager.is_provider_enabled("iceberg") is False
 
     def test_set_provider_enabled(self, providers_manager: ProvidersManager) -> None:
         """Test enabling/disabling a provider."""
@@ -172,7 +172,7 @@ class TestProvidersManager:
         enabled_ids = providers_manager.get_enabled_provider_ids()
         assert isinstance(enabled_ids, set)
         assert "geoserver" in enabled_ids
-        assert "s3" not in enabled_ids
+        assert "iceberg" not in enabled_ids
 
     def test_config_persistence(self, providers_manager: ProvidersManager) -> None:
         """Test that config is persisted to disk."""
@@ -245,5 +245,5 @@ class TestProviderHelperFunctions:
     def test_is_provider_enabled_helper(self, providers_manager: ProvidersManager) -> None:
         """Test is_provider_enabled helper."""
         assert is_provider_enabled("geoserver") is True
-        assert is_provider_enabled("s3") is False
+        assert is_provider_enabled("iceberg") is False
         assert is_provider_enabled("nonexistent") is False

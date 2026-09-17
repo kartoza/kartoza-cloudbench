@@ -912,7 +912,8 @@ export async function getDocumentation(): Promise<DocumentationResponse> {
 
 export async function getConversionToolStatus(): Promise<ConversionToolStatus> {
   const response = await fetch(`${API_BASE}/s3/conversion/tools`)
-  return handleResponse<ConversionToolStatus>(response)
+  const result = await handleResponse<{ tools: ConversionToolStatus }>(response)
+  return result.tools
 }
 
 export async function getConversionJobs(): Promise<ConversionJob[]> {

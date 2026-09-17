@@ -50,6 +50,41 @@ When uploading shapefiles:
   - `.dbf` - Attributes
   - `.prj` - Projection (recommended)
 
+## S3 Cloud-Native Options
+
+For S3 uploads, selecting a `.shp` file or a zipped shapefile (`.zip`) shows
+**PMTiles** under **Convert to Cloud-Native** when CloudNativeGIS
+is reachable. Cloudbench checks the service from Django using
+`CLOUDNATIVEGIS_URL`; an unreachable service hides the option without blocking
+normal uploads.
+
+PMTiles is the default recommendation when available, replacing GeoParquet
+for shapefile uploads. Select or drag the matching `.shp`, `.shx`, and `.dbf`
+files together; include `.prj` for the projection. Cloudbench creates the ZIP
+automatically before sending it to CloudNativeGIS. A lone `.shp` is not enough:
+the browser cannot automatically read companion files you have not selected.
+You can also supply an existing ZIP with exactly one shapefile. Nested shapefile
+folders in ZIPs are flattened before forwarding. With conversion switched off,
+selected shapefile components are uploaded to S3 as a ZIP instead.
+
+Cloudbench uploads the layer to CloudNativeGIS, waits for the import to succeed
+and the PMTiles file to be ready, then downloads it and uploads it to the selected
+S3 bucket. The original ZIP is not uploaded to S3. The object key keeps its prefix
+and replaces `.zip` or `.shp.zip` with `.pmtiles`. The dialog reports each stage,
+refreshes the S3 listing on completion, and displays conversion errors.
+
+CloudNativeGIS credentials are configured server-side using
+`CLOUDNATIVEGIS_USERNAME` / `CLOUDNATIVEGIS_PASSWORD` (falling back to its
+`CLOUDNATIVEGIS_ADMIN_USERNAME` / `CLOUDNATIVEGIS_ADMIN_PASSWORD`). The service's
+Celery worker must be running. The default conversion wait timeout is 30 minutes,
+configurable with `CLOUDNATIVEGIS_CONVERSION_TIMEOUT`; polling defaults to 5 seconds
+via `CLOUDNATIVEGIS_POLL_INTERVAL`.
+
+Conversion continues if the dialog is closed. Cloudbench tracks jobs in its Django
+database, but the background thread does not survive a Django restart; interrupted
+jobs eventually report failure and must be retried. Local temporary files are
+removed after processing. The created layer remains in CloudNativeGIS for inspection.
+
 ## GeoPackage
 
 GeoPackage files can contain:
