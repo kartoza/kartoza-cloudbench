@@ -1,6 +1,28 @@
 """Custom middleware for Kartoza CloudBench."""
 
 from django.conf import settings
+from django.http import HttpResponse
+
+
+class HealthCheckMiddleware:
+    """Serve the container health check before Host header validation.
+
+    Kubernetes' kubelet sends liveness/readiness probes straight to the
+    pod's IP rather than the public hostname, so CommonMiddleware's
+    ALLOWED_HOSTS check rejects them with DisallowedHost. This middleware
+    must be listed first so it runs before that check, keeping
+    ALLOWED_HOSTS strict for every other path.
+    """
+
+    def __init__(self, get_response):
+        """Store the next middleware/view in the chain."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        """Short-circuit /health/ requests, otherwise continue as normal."""
+        if request.path == "/health/":
+            return HttpResponse("OK", content_type="text/plain")
+        return self.get_response(request)
 
 
 class COOPCOEPMiddleware:
