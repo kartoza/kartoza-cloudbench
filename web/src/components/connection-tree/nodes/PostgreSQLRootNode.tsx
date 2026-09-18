@@ -1,12 +1,10 @@
 import { useEffect } from 'react'
-import { Box, Text, useToast } from '@chakra-ui/react'
+import { Box, Text } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
-import { getCreatePostGISUrl } from '../../../config/env'
-import { openWindowWithCallback } from '../../../utils/openWindowWithCallback'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { PGServiceNode } from './PGServiceNode'
 
@@ -17,10 +15,9 @@ export function PostgreSQLRootNode() {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const showHiddenPGServices = useUIStore((state) => state.settings.showHiddenPGServices)
-  const createUrl = getCreatePostGISUrl()
 
   // Fetch PostgreSQL services
-  const { data: pgServices, isLoading, refetch } = useQuery({
+  const { data: pgServices, isLoading } = useQuery({
     queryKey: ['pgservices'],
     queryFn: () => api.getPGServices(),
     staleTime: 30000,
@@ -47,7 +44,6 @@ export function PostgreSQLRootNode() {
   const isSelected = selectedNode?.id === nodeId
 
   const openDialog = useUIStore((state) => state.openDialog)
-  const toast = useToast()
 
   const handleClick = () => {
     selectNode(node)
@@ -56,11 +52,7 @@ export function PostgreSQLRootNode() {
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (createUrl) {
-      openWindowWithCallback(createUrl, () => refetch(), toast)
-    } else {
-      openDialog('connection', { mode: 'create', data: { type: 'postgresql' } })
-    }
+    openDialog('connection', { mode: 'create', data: { type: 'postgresql' } })
   }
 
   return (
@@ -88,7 +80,6 @@ export function PostgreSQLRootNode() {
               <PGServiceNode
                 key={svc.name}
                 service={svc}
-                ableToDelete={!createUrl}
               />
             ))
           )}
