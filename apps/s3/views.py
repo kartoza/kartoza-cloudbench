@@ -681,7 +681,7 @@ class S3ConversionToolsView(APIView):
         if cloudnativegis_url:
             try:
                 response = httpx.get(
-                    f"{cloudnativegis_url}/admin/login/",
+                    f"{cloudnativegis_url}/health",
                     timeout=2.0,
                     follow_redirects=False,
                 )

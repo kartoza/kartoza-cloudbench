@@ -15,13 +15,16 @@ import {
   Tooltip,
   Button,
 } from '@chakra-ui/react'
-import { FiX, FiChevronDown, FiAlertTriangle, FiLayers, FiClock } from 'react-icons/fi'
+import { FiX, FiChevronDown, FiAlertTriangle, FiClock } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
 import { getS3Connections, getS3Buckets } from '../../api/s3'
 import { listPmtilesObjects, getS3PresignedUrl } from '../../api/mapExplorer'
 import type { S3Connection, S3Bucket } from '../../types'
+import StacCataloguePage from './StacCataloguePage'
+import type { MapTarget } from './StacCataloguePage'
+import { getMapExplorerTabUrlParam, setMapExplorerTabUrlParam } from '../../utils/mapViewUrl'
 
 const LAYER_COLORS = ['#2d7d9b', '#E8A331', '#7c5cbf', '#3f9142', '#c2434f', '#3a8fa6']
 const LEGEND_GRADIENT = 'linear(to-r, #eaf6ff, #4a9cb8, #E8A331, #c0392b)'
@@ -40,7 +43,11 @@ interface MapExplorerViewProps {
 }
 
 export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
-  const [view, setView] = useState<'map' | 'catalogue'>('map')
+  const [view, setViewState] = useState<'map' | 'catalogue'>(() => getMapExplorerTabUrlParam())
+  const setView = useCallback((next: 'map' | 'catalogue') => {
+    setViewState(next)
+    setMapExplorerTabUrlParam(next)
+  }, [])
   const mapContainer = useRef<HTMLDivElement | null>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const protocolRef = useRef<Protocol | null>(null)
@@ -53,6 +60,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const [bucketName, setBucketName] = useState('')
   const [layers, setLayers] = useState<MapLayerState[]>([])
   const [isLoadingSources, setIsLoadingSources] = useState(false)
+  const pendingBucketRef = useRef<string | null>(null)
 
   const failedCount = layers.filter((l) => l.status === 'error').length
 
@@ -112,7 +120,13 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     getS3Buckets(connectionId)
       .then((b) => {
         setBuckets(b)
-        setBucketName(b.length > 0 ? b[0].name : '')
+        const pending = pendingBucketRef.current
+        pendingBucketRef.current = null
+        if (pending && b.some((bucket) => bucket.name === pending)) {
+          setBucketName(pending)
+        } else {
+          setBucketName(b.length > 0 ? b[0].name : '')
+        }
       })
       .catch(() => {
         setBuckets([])
@@ -132,7 +146,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     activeLayerIdsRef.current = []
     setIsLoadingSources(true)
 
-    async function run() {
+    async function run(mapInstance: maplibregl.Map) {
       const objects = await listPmtilesObjects(connectionId, bucketName).catch(() => [])
       if (cancelled) return
 
@@ -170,7 +184,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
               paint: { 'raster-opacity': layer.opacity / 100 },
             })
           } else {
-            const metadata = await pmtiles.getMetadata()
+            const metadata = (await pmtiles.getMetadata()) as { vector_layers?: { id: string }[] }
             const sourceLayerName = metadata?.vector_layers?.[0]?.id ?? 'default'
             mapInstance.addSource(layer.id, { type: 'vector', url: sourceUrl })
             mapInstance.addLayer({
@@ -214,13 +228,10 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       }
     }
 
-    run()
+    run(mapInstance)
 
     return () => {
       cancelled = true
-      // On unmount, the map-init effect's cleanup (mapInstance.remove()) may
-      // run before this one, tearing down mapInstance.style — guard against
-      // operating on an already-removed map so that doesn't throw uncaught.
       try {
         for (const id of activeLayerIdsRef.current) {
           if (mapInstance.getLayer(`${id}-fill`)) mapInstance.removeLayer(`${id}-fill`)
@@ -229,7 +240,6 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
           if (mapInstance.getSource(id)) mapInstance.removeSource(id)
         }
       } catch {
-        // Map already torn down — nothing left to clean up.
       }
       activeLayerIdsRef.current = []
     }
@@ -246,6 +256,20 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       mapInstance.setPaintProperty(layerId, 'raster-opacity', value / 100)
     }
   }, [])
+
+  const openOnMap = useCallback((target: MapTarget) => {
+    if (target.connectionId === connectionId) {
+      setBucketName(target.bucketName)
+    } else {
+      pendingBucketRef.current = target.bucketName
+      setConnectionId(target.connectionId)
+    }
+    setView('map')
+  }, [connectionId, setView])
+
+  useEffect(() => {
+    if (view === 'map') map.current?.resize()
+  }, [view])
 
   const handleRemoveLayer = useCallback((layerId: string) => {
     const mapInstance = map.current
@@ -311,15 +335,9 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
       {/* Body */}
       <Box position="relative" flex={1} bg="gray.50">
-        {view === 'catalogue' ? (
-          <Flex align="center" justify="center" h="100%">
-            <VStack spacing={2}>
-              <FiLayers size={32} color="#adb5bd" />
-              <Text color="gray.500">Catalogue browsing is coming soon.</Text>
-            </VStack>
-          </Flex>
-        ) : (
-          <>
+        {view === 'catalogue' && <StacCataloguePage onOpenOnMap={openOnMap} />}
+
+        <Box position="absolute" inset={0} display={view === 'catalogue' ? 'none' : 'block'}>
             <Box ref={mapContainer} position="absolute" inset={0} />
 
             {connections.length === 0 ? (
@@ -521,8 +539,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                 )}
               </>
             )}
-          </>
-        )}
+        </Box>
       </Box>
     </Box>
   )

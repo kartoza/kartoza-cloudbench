@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "apps.geonode",
     "apps.iceberg",
     "apps.qgis",
+    "apps.stac",
 ]
 
 MIDDLEWARE = [
@@ -195,13 +196,7 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 COOP_COEP_ENABLED = False
 
 # CloudBench specific settings
-CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8100").rstrip("/")
-CLOUDNATIVEGIS_USERNAME = os.environ.get("CLOUDNATIVEGIS_USERNAME") or os.environ.get(
-    "CLOUDNATIVEGIS_ADMIN_USERNAME", ""
-)
-CLOUDNATIVEGIS_PASSWORD = os.environ.get("CLOUDNATIVEGIS_PASSWORD") or os.environ.get(
-    "CLOUDNATIVEGIS_ADMIN_PASSWORD", ""
-)
+CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8000").rstrip("/")
 CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800")))
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
 

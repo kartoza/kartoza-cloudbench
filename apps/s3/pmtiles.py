@@ -1,4 +1,4 @@
-"""Upload shapefiles to CloudNativeGIS and transfer completed PMTiles to S3."""
+"""Convert shapefiles via CloudNativeGIS Lite and transfer the resulting PMTiles to S3."""
 
 import logging
 import shutil
@@ -7,7 +7,6 @@ import time
 import zipfile
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlsplit
 
 import httpx
 from django.conf import settings
@@ -33,6 +32,21 @@ def output_key(key):
 
 def job_directory(job_id):
     return Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job_id)
+
+
+def sources_directory_key(target_key, job_id):
+    """Folder for persisting a job's raw uploads, grouped alongside its eventual output."""
+    directory = str(PurePosixPath(target_key).parent)
+    prefix = "" if directory in ("", ".") else f"{directory}/"
+    return f"{prefix}sources/{job_id}"
+
+
+def source_object_key(target_key, job_id, uploaded_name):
+    """Key for persisting the synthesized shapefile zip used as the conversion input."""
+    name = uploaded_name
+    if not name.lower().endswith(".zip"):
+        name = f"{PurePosixPath(name).stem}.zip"
+    return f"{sources_directory_key(target_key, job_id)}/{name}"
 
 
 def prepare_shapefile(uploaded_file, destination, identifier, companion_files=()):
@@ -107,11 +121,19 @@ def prepare_shapefile(uploaded_file, destination, identifier, companion_files=()
         raise ValueError("The shapefile ZIP is invalid, encrypted, or unsupported.") from exc
 
 
+def upload_raw_components(s3_client, bucket, output_key_value, job_id, uploaded_file, companion_files):
+    """Persist each originally-uploaded file (not just the synthesized zip) to S3."""
+    directory = sources_directory_key(output_key_value, job_id)
+    for component in (uploaded_file, *companion_files):
+        component.seek(0)
+        key = f"{directory}/{PurePosixPath(component.name).name}"
+        content_type = component.content_type or "application/octet-stream"
+        s3_client.client.upload_fileobj(component, bucket, key, ExtraArgs={"ContentType": content_type})
+
+
 def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, companion_files=()):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
-    if not settings.CLOUDNATIVEGIS_USERNAME or not settings.CLOUDNATIVEGIS_PASSWORD:
-        raise ValueError("Configure CloudNativeGIS username and password before converting.")
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
@@ -126,7 +148,19 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
     directory = job_directory(job.id)
     directory.mkdir(parents=True, mode=0o700)
     try:
-        prepare_shapefile(uploaded_file, directory / "source.zip", job.id, companion_files)
+        source_path = directory / "source.zip"
+        prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
+        job.source_key = source_object_key(job.output_key, job.id, uploaded_file.name)
+        s3_client = get_s3_client(connection_id, owner_id)
+        if companion_files:
+            upload_raw_components(s3_client, bucket, job.output_key, job.id, uploaded_file, companion_files)
+        with source_path.open("rb") as source_file:
+            s3_client.client.upload_fileobj(
+                source_file,
+                bucket,
+                job.source_key,
+                ExtraArgs={"ContentType": "application/zip"},
+            )
         job.save()
         threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
     except Exception:
@@ -161,40 +195,47 @@ def expire_stalled_job(job):
 def request_json(client, method, path, **kwargs):
     response = client.request(method, path, **kwargs)
     response.raise_for_status()
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ValueError(
+            f"CloudNativeGIS returned a non-JSON response from {method} {path} "
+            f"(HTTP {response.status_code}): {response.text[:200]!r}. "
+            "Check that CLOUDNATIVEGIS_URL points at CloudNativeGIS Lite."
+        ) from exc
 
 
-def wait_for_pmtiles(client, job, deadline):
-    layer_path = f"api/layer/{job.layer_id}/"
+def submit_pmtiles_job(client, s3_client, bucket, source_key, expiration):
+    """Submit the job, handing cng-lite a presigned URL to the zip already in S3.
+
+    A presigned URL lets cng-lite fetch the file with a plain HTTPS GET,
+    using the credentials of whichever S3 connection the user picked,
+    without cng-lite ever needing S3 credentials of its own.
+    """
+    source_url = s3_client.generate_presigned_url(bucket, source_key, expiration=expiration)
+    submission = request_json(client, "POST", "api/v1/pmtiles", json={"source": source_url})
+    return submission["job_id"]
+
+
+def wait_for_pmtiles(client, cng_job_id, deadline):
+    """Poll cng-lite until the conversion finishes, returning its result path.
+    """
+    expected_result_path = f"/api/v1/jobs/{cng_job_id}/result"
     while time.monotonic() < deadline:
-        uploads = request_json(client, "GET", f"{layer_path}layer-upload/")
-        uploads = uploads.get("results", []) if isinstance(uploads, dict) else uploads
-        latest = uploads[0] if uploads else {}
-        if latest.get("status") == "Failed":
-            raise ValueError(
-                f"CloudNativeGIS import failed: {latest.get('note') or 'Unknown error'}"
-            )
-        layer = request_json(client, "GET", layer_path)
-        if latest.get("status") == "Success":
-            if layer.get("is_ready") and layer.get("pmtile"):
-                return layer["pmtile"]
-            raise ValueError("CloudNativeGIS finished importing but did not produce PMTiles.")
-        update_job(
-            job.id,
-            progress=20 + int(min(100, max(0, latest.get("progress", 0))) * 0.6),
-            message=latest.get("note") or "Waiting for CloudNativeGIS conversion",
-        )
+        body = client.get(f"api/v1/jobs/{cng_job_id}").json()
+        if body.get("status") == "failed":
+            raise ValueError(f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}")
+        if body.get("status") == "done":
+            if body.get("result_url") != expected_result_path:
+                raise ValueError("CloudNativeGIS returned an unexpected result location.")
+            return expected_result_path
         time.sleep(min(settings.CLOUDNATIVEGIS_POLL_INTERVAL, max(0, deadline - time.monotonic())))
     raise TimeoutError("Timed out waiting for CloudNativeGIS to produce PMTiles.")
 
 
-def download_pmtiles(client, remote_url, destination):
-    """Download only from the configured service, never a returned external host."""
-    remote_path = urlsplit(remote_url).path
-    if not remote_path.startswith("/media/") or not remote_path.lower().endswith(".pmtiles"):
-        raise ValueError("CloudNativeGIS returned an unexpected PMTiles path.")
+def download_pmtiles(client, result_path, destination):
     size = 0
-    with client.stream("GET", remote_path.lstrip("/")) as response:
+    with client.stream("GET", result_path.lstrip("/")) as response:
         response.raise_for_status()
         with destination.open("wb") as output:
             for chunk in response.iter_bytes(1024 * 1024):
@@ -214,40 +255,22 @@ def run_conversion(job_id):
     try:
         job = PMTilesJob.objects.get(pk=job_id)
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
-        update_job(job.id, status="running", progress=5, message="Uploading to CloudNativeGIS")
+        update_job(job.id, status="running", progress=10, message="Submitting to CloudNativeGIS")
+        s3_client = get_s3_client(job.connection_id, job.owner_id)
         with httpx.Client(
             base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
-            auth=(settings.CLOUDNATIVEGIS_USERNAME, settings.CLOUDNATIVEGIS_PASSWORD),
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
         ) as client:
-            layer = request_json(
-                client, "POST", "api/layer/", data={"name": PurePosixPath(job.output_key).stem}
+            cng_job_id = submit_pmtiles_job(
+                client, s3_client, job.bucket, job.source_key, settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
             )
-            job.layer_id = int(layer["id"])
-            update_job(job.id, layer_id=job.layer_id)
-            with (directory / "source.zip").open("rb") as source:
-                request_json(
-                    client,
-                    "POST",
-                    f"api/layer/{job.layer_id}/layer-upload/",
-                    # CloudNativeGIS's PMTiles step shells out to the `ogr2ogr`
-                    # CLI on the raw uploaded path. GDAL's Shapefile driver only
-                    # auto-mounts a zip archive when the filename ends in
-                    # ".shp.zip" — a bare ".zip" fails there even though
-                    # geopandas.read_file() (used for the PostGIS import step)
-                    # tolerates it via its own path wrapping. Without this,
-                    # CloudNativeGIS marks the upload "Success" anyway (it
-                    # never checks generate_pmtiles()'s return value), and no
-                    # PMTiles are produced.
-                    files={"file": (f"{job.id}.shp.zip", source, "application/zip")},
-                )
-            remote_url = wait_for_pmtiles(client, job, deadline)
+            update_job(job.id, progress=20, message="Waiting for CloudNativeGIS conversion")
+            result_path = wait_for_pmtiles(client, cng_job_id, deadline)
             update_job(job.id, progress=85, message="Downloading converted PMTiles")
             output = directory / "output.pmtiles"
-            size = download_pmtiles(client, remote_url, output)
+            size = download_pmtiles(client, result_path, output)
         update_job(job.id, progress=95, message="Uploading PMTiles to S3")
-        s3_client = get_s3_client(job.connection_id, job.owner_id)
         with output.open("rb") as source:
             s3_client.client.upload_fileobj(
                 source,
@@ -267,7 +290,7 @@ def run_conversion(job_id):
         logger.exception("PMTiles conversion %s failed", job_id)
         error = str(exc)
         if isinstance(exc, httpx.HTTPStatusError):
-            error = f"CloudNativeGIS returned HTTP {exc.response.status_code}. Check its credentials and logs."
+            error = f"CloudNativeGIS returned HTTP {exc.response.status_code}. Check its logs."
         elif isinstance(exc, httpx.RequestError):
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
         update_job(

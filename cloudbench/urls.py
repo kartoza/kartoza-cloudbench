@@ -72,6 +72,7 @@ urlpatterns = [
     path("api/", include("apps.qgis.urls")),
     path("api/", include("apps.core.urls")),
     path("api/", include("apps.preview.urls")),
+    path("api/", include("apps.stac.urls")),
     # Viewer endpoint (Terria/Cesium)
     path("viewer/", include("apps.terria.viewer_urls")),
 ]

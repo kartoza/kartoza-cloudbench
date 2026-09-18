@@ -11,10 +11,10 @@ class PMTilesJob(models.Model):
     connection_id = models.CharField(max_length=255)
     bucket = models.CharField(max_length=255)
     source_name = models.CharField(max_length=255)
+    source_key = models.TextField(blank=True)
     output_key = models.TextField()
     input_size = models.BigIntegerField()
     output_size = models.BigIntegerField(default=0)
-    layer_id = models.PositiveBigIntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, default="pending")
     progress = models.PositiveSmallIntegerField(default=0)
     message = models.TextField(default="Waiting to upload to CloudNativeGIS")
@@ -31,6 +31,7 @@ class PMTilesJob(models.Model):
             "message": self.message,
             "error": self.error,
             "sourcePath": self.source_name,
+            "sourceStoredPath": f"s3://{self.bucket}/{self.source_key}" if self.source_key else None,
             "outputPath": f"s3://{self.bucket}/{self.output_key}",
             "sourceFormat": "shapefile",
             "targetFormat": "pmtiles",
