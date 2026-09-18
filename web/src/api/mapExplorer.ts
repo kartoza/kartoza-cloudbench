@@ -34,11 +34,12 @@ function encodeKey(key: string): string {
   return key.split('/').map(encodeURIComponent).join('/')
 }
 
-// Walks the whole bucket (delimiter='' -> flat/recursive listing) and
-// returns every object whose key ends in .pmtiles.
-export async function listPmtilesObjects(
+const SOURCE_ARTIFACT_PATTERN = /\/sources\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/]+$/i
+
+async function listObjectsByExtensions(
   connectionId: string,
-  bucketName: string
+  bucketName: string,
+  extensions: string[]
 ): Promise<S3PmtilesObject[]> {
   const found: S3PmtilesObject[] = []
   let continuationToken: string | undefined
@@ -53,7 +54,8 @@ export async function listPmtilesObjects(
     const data = await handleResponse<ListObjectsResult>(response)
 
     for (const obj of data.objects) {
-      if (obj.key.toLowerCase().endsWith('.pmtiles')) {
+      const lowerKey = obj.key.toLowerCase()
+      if (extensions.some((ext) => lowerKey.endsWith(ext)) && !SOURCE_ARTIFACT_PATTERN.test(obj.key)) {
         found.push({ key: obj.key, size: obj.size, lastModified: obj.lastModified })
       }
     }
@@ -62,6 +64,20 @@ export async function listPmtilesObjects(
   } while (continuationToken)
 
   return found
+}
+
+export async function listPmtilesObjects(
+  connectionId: string,
+  bucketName: string
+): Promise<S3PmtilesObject[]> {
+  return listObjectsByExtensions(connectionId, bucketName, ['.pmtiles'])
+}
+
+export async function listCogObjects(
+  connectionId: string,
+  bucketName: string
+): Promise<S3PmtilesObject[]> {
+  return listObjectsByExtensions(connectionId, bucketName, ['.tif', '.tiff'])
 }
 
 export async function getS3PresignedUrl(

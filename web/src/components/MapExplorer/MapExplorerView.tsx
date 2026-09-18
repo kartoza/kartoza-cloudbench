@@ -15,12 +15,13 @@ import {
   Tooltip,
   Button,
 } from '@chakra-ui/react'
-import { FiX, FiChevronDown, FiAlertTriangle, FiClock } from 'react-icons/fi'
+import { FiX, FiChevronDown, FiAlertTriangle, FiClock, FiMaximize2 } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
+import { cogProtocol, getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import { getS3Connections, getS3Buckets } from '../../api/s3'
-import { listPmtilesObjects, getS3PresignedUrl } from '../../api/mapExplorer'
+import { listPmtilesObjects, listCogObjects, getS3PresignedUrl } from '../../api/mapExplorer'
 import type { S3Connection, S3Bucket } from '../../types'
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
@@ -33,9 +34,35 @@ interface MapLayerState {
   id: string
   key: string
   name: string
+  format: 'pmtiles' | 'cog'
   color: string
   opacity: number
   status: 'loading' | 'ready' | 'error'
+  bounds?: [number, number, number, number]
+}
+
+async function addCogLayer(
+  mapInstance: maplibregl.Map,
+  layerId: string,
+  url: string,
+  opacity: number
+): Promise<[number, number, number, number]> {
+  const metadata = await getCogMetadata(url)
+  if (!metadata.bbox) throw new Error('COG has no readable bounding box.')
+
+  mapInstance.addSource(layerId, {
+    type: 'raster',
+    url: `cog://${url}`,
+    tileSize: 256,
+  })
+  mapInstance.addLayer({
+    id: layerId,
+    type: 'raster',
+    source: layerId,
+    paint: { 'raster-opacity': opacity / 100 },
+  })
+
+  return metadata.bbox
 }
 
 interface MapExplorerViewProps {
@@ -64,13 +91,14 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
   const failedCount = layers.filter((l) => l.status === 'error').length
 
-  // Set up the map + pmtiles protocol once.
+  // Set up the map + pmtiles/cog protocols once.
   useEffect(() => {
     if (!mapContainer.current || map.current) return
 
     const protocol = new Protocol()
     protocolRef.current = protocol
     maplibregl.addProtocol('pmtiles', protocol.tile)
+    maplibregl.addProtocol('cog', cogProtocol)
 
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
@@ -97,6 +125,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       mapInstance.remove()
       map.current = null
       maplibregl.removeProtocol('pmtiles')
+      maplibregl.removeProtocol('cog')
     }
   }, [])
 
@@ -147,17 +176,32 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setIsLoadingSources(true)
 
     async function run(mapInstance: maplibregl.Map) {
-      const objects = await listPmtilesObjects(connectionId, bucketName).catch(() => [])
+      const [pmtilesObjects, cogObjects] = await Promise.all([
+        listPmtilesObjects(connectionId, bucketName).catch(() => []),
+        listCogObjects(connectionId, bucketName).catch(() => []),
+      ])
       if (cancelled) return
 
-      const initialLayers: MapLayerState[] = objects.map((obj, i) => ({
-        id: `pmtiles-${i}-${obj.key.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        key: obj.key,
-        name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
-        color: LAYER_COLORS[i % LAYER_COLORS.length],
-        opacity: 80,
-        status: 'loading',
-      }))
+      const initialLayers: MapLayerState[] = [
+        ...pmtilesObjects.map((obj, i) => ({
+          id: `pmtiles-${i}-${obj.key.replace(/[^a-zA-Z0-9]/g, '_')}`,
+          key: obj.key,
+          name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
+          format: 'pmtiles' as const,
+          color: LAYER_COLORS[i % LAYER_COLORS.length],
+          opacity: 80,
+          status: 'loading' as const,
+        })),
+        ...cogObjects.map((obj, i) => ({
+          id: `cog-${i}-${obj.key.replace(/[^a-zA-Z0-9]/g, '_')}`,
+          key: obj.key,
+          name: obj.key.split('/').pop()?.replace(/\.tiff?$/i, '') ?? obj.key,
+          format: 'cog' as const,
+          color: LAYER_COLORS[(pmtilesObjects.length + i) % LAYER_COLORS.length],
+          opacity: 80,
+          status: 'loading' as const,
+        })),
+      ]
       setLayers(initialLayers)
       setIsLoadingSources(false)
 
@@ -167,6 +211,18 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         if (cancelled) break
         try {
           const url = await getS3PresignedUrl(connectionId, bucketName, layer.key)
+
+          if (layer.format === 'cog') {
+            const layerBounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
+            if (cancelled) break
+            activeLayerIdsRef.current.push(layer.id)
+            bounds.push(layerBounds)
+            setLayers((prev) =>
+              prev.map((l) => (l.id === layer.id ? { ...l, status: 'ready', bounds: layerBounds } : l))
+            )
+            continue
+          }
+
           const pmtiles = new PMTiles(url)
           protocolRef.current?.add(pmtiles)
           const header = await pmtiles.getHeader()
@@ -204,8 +260,16 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
           }
 
           activeLayerIdsRef.current.push(layer.id)
-          bounds.push([header.minLon, header.minLat, header.maxLon, header.maxLat])
-          setLayers((prev) => prev.map((l) => (l.id === layer.id ? { ...l, status: 'ready' } : l)))
+          const pmtilesBounds: [number, number, number, number] = [
+            header.minLon,
+            header.minLat,
+            header.maxLon,
+            header.maxLat,
+          ]
+          bounds.push(pmtilesBounds)
+          setLayers((prev) =>
+            prev.map((l) => (l.id === layer.id ? { ...l, status: 'ready', bounds: pmtilesBounds } : l))
+          )
         } catch {
           if (!cancelled) {
             setLayers((prev) => prev.map((l) => (l.id === layer.id ? { ...l, status: 'error' } : l)))
@@ -244,6 +308,18 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       activeLayerIdsRef.current = []
     }
   }, [mapReady, connectionId, bucketName])
+
+  const handleZoomToExtent = useCallback((bounds: [number, number, number, number]) => {
+    const mapInstance = map.current
+    if (!mapInstance) return
+    mapInstance.fitBounds(
+      [
+        [bounds[0], bounds[1]],
+        [bounds[2], bounds[3]],
+      ],
+      { padding: 60, maxZoom: 16 }
+    )
+  }, [])
 
   const handleOpacityChange = useCallback((layerId: string, value: number) => {
     setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, opacity: value } : l)))
@@ -417,7 +493,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
                   {layers.length === 0 && !isLoadingSources && (
                     <Text fontSize="sm" color="gray.500">
-                      No PMTiles layers found in this bucket.
+                      No PMTiles or COG layers found in this bucket.
                     </Text>
                   )}
 
@@ -439,13 +515,25 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                               </Tooltip>
                             )}
                           </HStack>
-                          <IconButton
-                            aria-label={`Remove ${layer.name}`}
-                            icon={<FiX size={14} />}
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => handleRemoveLayer(layer.id)}
-                          />
+                          <HStack spacing={1}>
+                            <Tooltip label="Zoom to extent">
+                              <IconButton
+                                aria-label={`Zoom to extent of ${layer.name}`}
+                                icon={<FiMaximize2 size={12} />}
+                                size="xs"
+                                variant="ghost"
+                                isDisabled={!layer.bounds}
+                                onClick={() => layer.bounds && handleZoomToExtent(layer.bounds)}
+                              />
+                            </Tooltip>
+                            <IconButton
+                              aria-label={`Remove ${layer.name}`}
+                              icon={<FiX size={14} />}
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => handleRemoveLayer(layer.id)}
+                            />
+                          </HStack>
                         </HStack>
                         <Box h="8px" borderRadius="full" bgGradient={LEGEND_GRADIENT} mb={1} />
                         <HStack justify="space-between" mb={1}>

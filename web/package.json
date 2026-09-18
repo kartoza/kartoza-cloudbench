@@ -22,6 +22,7 @@
     "@codemirror/lang-xml": "^6.1.0",
     "@emotion/react": "^11.11.3",
     "@emotion/styled": "^11.11.0",
+    "@geomatico/maplibre-cog-protocol": "^0.9.3",
     "@qgis-js/utils": "^0.0.5",
     "@tanstack/react-query": "^5.17.19",
     "@uiw/react-codemirror": "^4.21.21",
