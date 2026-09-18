@@ -8,6 +8,7 @@ explicitly whenever an instance's status changes.
 """
 
 from django.conf import settings
+from django.contrib.auth.models import User
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -15,6 +16,12 @@ from rest_framework.views import APIView
 from .config import get_config
 from .models import Connection, GeoNodeConnection, PGService
 from .sso_auth import sign_sso_token
+
+
+def get_user(username: str) -> User:
+    """Get the Django user for the given username, creating it if needed."""
+    user, _ = User.objects.get_or_create(username=username)
+    return user
 
 
 class ProductNames:
@@ -61,12 +68,12 @@ class GeoHostingInstanceView(APIView):
         clobbered by a later sync.
         """
         data = request.data
-        owner_user_id = str(data.get("owner_user_id") or "")
+        owner_username = str(data.get("owner_username") or "")
         instance_id = data.get("instance_id")
         product = (data.get("product") or "").lower()
-        if not owner_user_id or not instance_id or not product:
+        if not owner_username or not instance_id or not product:
             return Response(
-                {"detail": ("owner_user_id, instance_id and product are " "required.")},
+                {"detail": ("owner_username, instance_id and product are " "required.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -77,7 +84,8 @@ class GeoHostingInstanceView(APIView):
         is_active = bool(data.get("is_active", False))
         conn_id = _connection_id(instance_id)
 
-        manager = get_config(owner_user_id)
+        get_user(owner_username)
+        manager = get_config(owner_username)
         config = manager.config
         changed = False
 
@@ -145,15 +153,16 @@ class GeoHostingInstanceView(APIView):
 
     def delete(self, request, instance_id):
         """Remove a GeoHosting instance's connection from CloudBench."""
-        owner_user_id = str(request.query_params.get("owner_user_id") or "")
-        if not owner_user_id:
+        owner_username = str(request.query_params.get("owner_username") or "")
+        if not owner_username:
             return Response(
-                {"detail": "owner_user_id is required."},
+                {"detail": "owner_username is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         conn_id = _connection_id(instance_id)
-        manager = get_config(owner_user_id)
+        get_user(owner_username)
+        manager = get_config(owner_username)
         config = manager.config
         changed = False
 
@@ -189,12 +198,13 @@ class GeoHostingSSOTokenView(APIView):
     permission_classes = [HasServiceToken]
 
     def post(self, request):
-        """Sign a token for the given GeoHosting user id."""
-        owner_user_id = str(request.data.get("owner_user_id") or "")
-        if not owner_user_id:
+        """Sign a token for the given GeoHosting user."""
+        owner_username = str(request.data.get("owner_username") or "")
+        if not owner_username:
             return Response(
-                {"detail": "owner_user_id is required."},
+                {"detail": "owner_username is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return Response({"token": sign_sso_token(owner_user_id)})
+        get_user(owner_username)
+        return Response({"token": sign_sso_token(owner_username)})

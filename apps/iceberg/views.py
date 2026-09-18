@@ -22,7 +22,7 @@ class IcebergConnectionListView(APIView):
 
     def get(self, request):
         """List all Iceberg connections."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         connections = config.list_iceberg_connections()
         return Response(
             [
@@ -49,7 +49,7 @@ class IcebergConnectionListView(APIView):
             client_secret=data.get("clientSecret", ""),
         )
 
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         config.add_iceberg_connection(conn)
 
         return Response(
@@ -81,7 +81,7 @@ class IcebergConnectionTestView(APIView):
             warehouse=data.get("warehouse", ""),
             token=data.get("token"),
             credentials=credentials,
-            user_id=str(request.user.id),
+            user_id=str(request.user.username),
         )
 
         success, message = client.test_connection()
@@ -99,7 +99,7 @@ class IcebergConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         conn = config.get_iceberg_connection(conn_id)
         if not conn:
             return Response(
@@ -120,7 +120,7 @@ class IcebergConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         conn = config.get_iceberg_connection(conn_id)
         if not conn:
             return Response(
@@ -147,7 +147,7 @@ class IcebergConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         if not config.delete_iceberg_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -166,7 +166,7 @@ class IcebergConfigView(APIView):
         """Get catalog config."""
         try:
             client = get_iceberg_client(conn_id)
-            config = client.get_config(request.user.id)
+            config = client.get_config(request.user.username)
             return Response({"config": config})
         except ValueError as e:
             return Response(

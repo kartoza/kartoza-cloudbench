@@ -1,11 +1,9 @@
 import { useEffect } from 'react'
-import { Box, Text, useToast } from '@chakra-ui/react'
+import { Box, Text } from '@chakra-ui/react'
 import { useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import { useConnectionStore } from '../../../stores/connectionStore'
 import type { Connection, TreeNode } from '../../../types'
-import { getCreateGeoServerUrl } from '../../../config/env'
-import { openWindowWithCallback } from '../../../utils/openWindowWithCallback'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { ConnectionNode } from './ConnectionNode'
 
@@ -16,12 +14,9 @@ export function GeoServerRootNode() {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
-  const createUrl = getCreateGeoServerUrl()
-  const toast = useToast()
 
   const connections = useConnectionStore((state) => state.connections)
   const isLoading = useConnectionStore((state) => state.isLoading)
-  const fetchConnections = useConnectionStore((state) => state.fetchConnections)
 
   // Auto-expand GeoServer section on mount
   useEffect(() => {
@@ -45,13 +40,7 @@ export function GeoServerRootNode() {
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (createUrl) {
-      openWindowWithCallback(createUrl, () => {
-        void fetchConnections()
-      }, toast)
-    } else {
-      openDialog('connection', { mode: 'create' })
-    }
+    openDialog('connection', { mode: 'create', data: { type: 'geoserver' } })
   }
 
   return (
@@ -81,7 +70,6 @@ export function GeoServerRootNode() {
                 connectionId={conn.id}
                 name={conn.name}
                 url={conn.url}
-                ableToDelete={!createUrl}
               />
             ))
           )}

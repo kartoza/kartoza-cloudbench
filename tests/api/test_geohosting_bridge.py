@@ -35,7 +35,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "100",
+                "owner_username": "100",
                 "instance_id": 1,
                 "product": "geoserver",
             },
@@ -48,7 +48,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "101",
+                "owner_username": "101",
                 "instance_id": 1,
                 "product": "geoserver",
             },
@@ -62,7 +62,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "102",
+                "owner_username": "102",
                 "instance_id": 1,
                 "product": "geoserver",
                 "name": "my-geoserver",
@@ -87,7 +87,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "103",
+                "owner_username": "103",
                 "instance_id": 2,
                 "product": "geonode",
                 "name": "my-geonode",
@@ -110,7 +110,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "104",
+                "owner_username": "104",
                 "instance_id": 3,
                 "product": "postgis",
                 "name": "my-postgis",
@@ -132,7 +132,7 @@ class TestGeoHostingInstanceView:
     def test_post_does_not_overwrite_existing_password(self, api_client: APIClient) -> None:
         """A later sync must not clobber a non-empty password."""
         payload = {
-            "owner_user_id": "105",
+            "owner_username": "105",
             "instance_id": 4,
             "product": "geoserver",
             "name": "my-geoserver",
@@ -153,7 +153,7 @@ class TestGeoHostingInstanceView:
     def test_post_fills_blank_password(self, api_client: APIClient) -> None:
         """A blank password on an existing connection can be filled in."""
         payload = {
-            "owner_user_id": "106",
+            "owner_username": "106",
             "instance_id": 5,
             "product": "geoserver",
             "name": "my-geoserver",
@@ -175,7 +175,7 @@ class TestGeoHostingInstanceView:
         """Missing required fields is a 400, not a 500."""
         response = api_client.post(
             "/api/geohosting/instances/",
-            {"owner_user_id": "107"},
+            {"owner_username": "107"},
             format="json",
             **_auth_headers(),
         )
@@ -186,7 +186,7 @@ class TestGeoHostingInstanceView:
         response = api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "108",
+                "owner_username": "108",
                 "instance_id": 6,
                 "product": "not-a-real-product",
             },
@@ -200,7 +200,7 @@ class TestGeoHostingInstanceView:
         api_client.post(
             "/api/geohosting/instances/",
             {
-                "owner_user_id": "109",
+                "owner_username": "109",
                 "instance_id": 7,
                 "product": "geoserver",
                 "name": "to-delete",
@@ -215,14 +215,14 @@ class TestGeoHostingInstanceView:
         assert any(c.id == "geohosting_7" for c in get_config("109").config.connections)
 
         response = api_client.delete(
-            "/api/geohosting/instances/7/?owner_user_id=109",
+            "/api/geohosting/instances/7/?owner_username=109",
             **_auth_headers(),
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
         assert not any(c.id == "geohosting_7" for c in get_config("109").config.connections)
 
-    def test_delete_requires_owner_user_id(self, api_client: APIClient) -> None:
-        """DELETE without owner_user_id is a 400, not a silent no-op."""
+    def test_delete_requires_owner_username(self, api_client: APIClient) -> None:
+        """DELETE without owner_username is a 400, not a silent no-op."""
         response = api_client.delete(
             "/api/geohosting/instances/7/",
             **_auth_headers(),
@@ -239,13 +239,13 @@ class TestGeoHostingSSOTokenView:
         """No Authorization header at all is rejected."""
         response = api_client.post(
             "/api/geohosting/sso-token/",
-            {"owner_user_id": "42"},
+            {"owner_username": "42"},
             format="json",
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_requires_owner_user_id(self, api_client: APIClient) -> None:
-        """A missing owner_user_id is a 400, not a token for nobody."""
+    def test_requires_owner_username(self, api_client: APIClient) -> None:
+        """A missing owner_username is a 400, not a token for nobody."""
         response = api_client.post(
             "/api/geohosting/sso-token/",
             {},
@@ -258,7 +258,7 @@ class TestGeoHostingSSOTokenView:
         """The minted token round-trips through SignedSSOTokenAuthentication."""
         response = api_client.post(
             "/api/geohosting/sso-token/",
-            {"owner_user_id": "42"},
+            {"owner_username": "42"},
             format="json",
             **_auth_headers(),
         )

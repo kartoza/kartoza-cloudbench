@@ -37,7 +37,7 @@ class ProvidersView(APIView):
 
         Returns list of providers with their enabled/experimental status.
         """
-        providers = get_providers_manager(request.user.id).list_providers()
+        providers = get_providers_manager(request.user.username).list_providers()
         return Response(
             {
                 "providers": [
@@ -66,7 +66,7 @@ class ProvidersView(APIView):
         """
         data = request.data
         providers_updates = data.get("providers", [])
-        manager = get_providers_manager(request.user.id)
+        manager = get_providers_manager(request.user.username)
 
         for update in providers_updates:
             provider_id = update.get("id")
@@ -100,7 +100,7 @@ class SettingsView(APIView):
 
         Returns theme, ping interval, and other app-wide settings.
         """
-        config = get_config(request.user.id).config
+        config = get_config(request.user.username).config
         return Response(
             {
                 "theme": config.theme,
@@ -120,7 +120,7 @@ class SettingsView(APIView):
         }
         """
         data = request.data
-        config_manager = get_config(request.user.id)
+        config_manager = get_config(request.user.username)
 
         if "theme" in data:
             config_manager.config.theme = data["theme"]
