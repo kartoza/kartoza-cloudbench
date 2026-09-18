@@ -25,7 +25,7 @@ class DashboardView(APIView):
         """Get dashboard summary with server status."""
         import time
 
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         servers = []
         online_count = 0
         offline_count = 0
@@ -55,7 +55,7 @@ class DashboardView(APIView):
             }
 
             try:
-                client = get_geoserver_client(conn.id, str(request.user.id))
+                client = get_geoserver_client(conn.id, str(request.user.username))
 
                 # Get workspace count as connectivity check
                 workspaces = client.list_workspaces()
@@ -142,13 +142,13 @@ class DashboardConnectionsView(APIView):
 
     def get(self, request):
         """Get status of all connections."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         connections = []
 
         # Check GeoServer connections
         for conn in config.list_connections():
             try:
-                client = get_geoserver_client(conn.id, str(request.user.id))
+                client = get_geoserver_client(conn.id, str(request.user.username))
                 # Try to get version as health check
                 about = client.get_about()
                 connections.append(
@@ -199,7 +199,7 @@ class DashboardGeoServerView(APIView):
     def get(self, request, conn_id):
         """Get GeoServer statistics."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.id))
+            client = get_geoserver_client(conn_id, str(request.user.username))
 
             # Get counts
             workspaces = client.list_workspaces()

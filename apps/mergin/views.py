@@ -22,7 +22,7 @@ class MerginConnectionListView(APIView):
 
     def get(self, request):
         """List all Mergin connections."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         connections = config.list_mergin_connections()
         return Response(
             [
@@ -48,7 +48,7 @@ class MerginConnectionListView(APIView):
             token=data.get("token", ""),
         )
 
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         config.add_mergin_connection(conn)
 
         return Response(
@@ -73,7 +73,7 @@ class MerginConnectionTestView(APIView):
             username=data.get("username", ""),
             password=data.get("password"),
             token=data.get("token"),
-            user_id=str(request.user.id),
+            user_id=str(request.user.username),
         )
 
         success, message = client.test_connection()
@@ -91,7 +91,7 @@ class MerginConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         conn = config.get_mergin_connection(conn_id)
         if not conn:
             return Response(
@@ -112,7 +112,7 @@ class MerginConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         conn = config.get_mergin_connection(conn_id)
         if not conn:
             return Response(
@@ -137,7 +137,7 @@ class MerginConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         if not config.delete_mergin_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},

@@ -22,7 +22,7 @@ class QGISProjectListView(APIView):
 
     def get(self, request):
         """List all QGIS projects."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         projects = config.config.qgis_projects
 
         return Response(
@@ -58,7 +58,7 @@ class QGISProjectListView(APIView):
             )
 
         # Save file to projects directory
-        projects_dir = get_qgis_projects_dir(request.user.id)
+        projects_dir = get_qgis_projects_dir(request.user.username)
         project_id = str(uuid.uuid4())
         file_path = projects_dir / f"{project_id}_{name}"
 
@@ -76,7 +76,7 @@ class QGISProjectListView(APIView):
             size=uploaded_file.size,
         )
 
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
         config.config.qgis_projects.append(project)
         config.save()
 
@@ -95,7 +95,7 @@ class QGISProjectDetailView(APIView):
 
     def get(self, request, project_id):
         """Get project details."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
 
         for project in config.config.qgis_projects:
             if project.id == project_id:
@@ -119,7 +119,7 @@ class QGISProjectDetailView(APIView):
 
     def delete(self, request, project_id):
         """Delete a project."""
-        config = get_config(request.user.id)
+        config = get_config(request.user.username)
 
         for i, project in enumerate(config.config.qgis_projects):
             if project.id == project_id:
@@ -177,7 +177,7 @@ class SQLViewPublishView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id, str(request.user.id))
+            client = get_geoserver_client(conn_id, str(request.user.username))
 
             # Create SQL view feature type
             feature_type = {
