@@ -215,7 +215,9 @@ class PGSchemaStatsView(APIView):
 
     def get(self, request, service_name, schema_name):
         try:
-            stats = get_pg_client(service_name, str(request.user.username)).get_schema_stats(schema_name)
+            stats = get_pg_client(service_name, str(request.user.username)).get_schema_stats(
+                schema_name
+            )
             return Response(stats)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -299,7 +301,9 @@ class PGTableListView(APIView):
     def get(self, request, service_name, schema_name):
         """List all tables in a schema."""
         try:
-            tables = get_pg_client(service_name, str(request.user.username)).list_tables(schema_name)
+            tables = get_pg_client(service_name, str(request.user.username)).list_tables(
+                schema_name
+            )
             return Response({"tables": tables})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
