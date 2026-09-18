@@ -30,9 +30,11 @@ from rest_framework.views import APIView
 from apps.core.config import S3Connection, get_config
 
 from .client import S3Client, S3ClientManager, get_s3_client
+from .cng_lite import expire_stalled_job
+from .cog import start_conversion as start_cog_conversion
 from .duckdb import get_duckdb_engine
-from .models import PMTilesJob
-from .pmtiles import expire_stalled_job, prepare_shapefile, start_conversion
+from .models import CngLiteJob
+from .pmtiles import prepare_shapefile, start_conversion as start_pmtiles_conversion
 
 # ============================================================================
 # S3 Connection Views
@@ -689,6 +691,12 @@ class S3ConversionToolsView(APIView):
             except (httpx.HTTPError, httpx.InvalidURL):
                 pass
 
+        # COG conversion runs inside the CloudNativeGIS Lite container, not locally.
+        tools["gdal"] = {
+            "available": tools["cloudnativegis"]["available"],
+            "tool": "GDAL (via CloudNativeGIS)",
+        }
+
         return Response({"tools": tools})
 
 
@@ -750,12 +758,12 @@ class S3ConversionJobsView(APIView):
             conversion_id = uuid.UUID(job_id)
         except ValueError:
             return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
-        pmtiles_job = PMTilesJob.objects.filter(
+        cng_lite_job = CngLiteJob.objects.filter(
             pk=conversion_id, owner_id=str(request.user.id)
         ).first()
-        if pmtiles_job:
-            expire_stalled_job(pmtiles_job)
-            return Response(pmtiles_job.to_dict())
+        if cng_lite_job:
+            expire_stalled_job(cng_lite_job)
+            return Response(cng_lite_job.to_dict())
 
         manager = ConversionJobManager()
         job = manager.get_job(job_id)
@@ -805,20 +813,31 @@ class S3UploadView(APIView):
 
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            if (
-                str(request.data.get("convert", "false")).lower() == "true"
-                and request.data.get("targetFormat") == "pmtiles"
+            target_format = request.data.get("targetFormat")
+            if str(request.data.get("convert", "false")).lower() == "true" and target_format in (
+                "pmtiles",
+                "cog",
             ):
                 try:
-                    job = start_conversion(
-                        uploaded_file, key, conn_id, bucket, str(request.user.id), companion_files
-                    )
+                    if target_format == "pmtiles":
+                        job = start_pmtiles_conversion(
+                            uploaded_file, key, conn_id, bucket, str(request.user.id), companion_files
+                        )
+                        message = "Shapefile accepted for CloudNativeGIS conversion"
+                    else:
+                        if companion_files:
+                            return Response(
+                                {"error": "COG conversion accepts a single TIFF file."},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        job = start_cog_conversion(uploaded_file, key, conn_id, bucket, str(request.user.id))
+                        message = "TIFF accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
                 return Response(
                     {
                         "success": True,
-                        "message": "Shapefile accepted for CloudNativeGIS conversion",
+                        "message": message,
                         "key": job.output_key,
                         "size": job.input_size,
                         "conversionJobId": str(job.id),

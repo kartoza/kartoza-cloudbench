@@ -88,6 +88,7 @@ export default function S3UploadDialog() {
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
+  const isTiff = !!selectedFile && /\.(tif|tiff)$/i.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
 
@@ -105,6 +106,7 @@ export default function S3UploadDialog() {
     enabled: isOpen,
   })
   const showPMTiles = isShapefile && !!toolStatus?.cloudnativegis?.available
+  const showCOG = isTiff && !!toolStatus?.cloudnativegis?.available
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -146,14 +148,18 @@ export default function S3UploadDialog() {
   // Update recommended format when file changes
   useEffect(() => {
     if (selectedFile) {
-      const recommended = showPMTiles ? 'pmtiles' : detectRecommendedConversion(selectedFile.name)
+      const recommended = showPMTiles
+        ? 'pmtiles'
+        : showCOG
+          ? 'cog'
+          : detectRecommendedConversion(selectedFile.name)
       setRecommendedFormat(recommended)
       setTargetFormat(recommended || '')
       // Detect if it's a GeoPackage
       const ext = selectedFile.name.split('.').pop()?.toLowerCase()
       setIsGeoPackage(ext === 'gpkg')
     }
-  }, [selectedFile, showPMTiles])
+  }, [selectedFile, showPMTiles, showCOG])
 
   const handleFileSelect = useCallback((files: File[]) => {
     if (isUploading || isConverting) return
@@ -248,7 +254,7 @@ export default function S3UploadDialog() {
     if (!toolStatus) return false
     switch (format) {
       case 'cog':
-        return toolStatus.gdal?.available || false
+        return showCOG
       case 'copc':
         return toolStatus.pdal?.available || false
       case 'geoparquet':
@@ -599,7 +605,11 @@ export default function S3UploadDialog() {
               onClick={handleUpload}
               isLoading={isUploading || isConverting}
               loadingText={isConverting ? 'Converting...' : 'Uploading...'}
-              isDisabled={!selectedFile || !selectedBucket || (convertToCloudNative && targetFormat === 'pmtiles' && !showPMTiles)}
+              isDisabled={
+                !selectedFile ||
+                !selectedBucket ||
+                (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
+              }
               borderRadius="lg"
               px={6}
               leftIcon={<FiUpload />}

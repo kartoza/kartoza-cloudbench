@@ -4,9 +4,16 @@ import uuid
 
 from django.db import models
 
+# Source/target labels per job kind, used only for API responses.
+CONVERSION_FORMATS = {
+    "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
+    "cog": {"sourceFormat": "tiff", "targetFormat": "cog"},
+}
 
-class PMTilesJob(models.Model):
+
+class CngLiteJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=20, default="pmtiles")
     owner_id = models.CharField(max_length=255)
     connection_id = models.CharField(max_length=255)
     bucket = models.CharField(max_length=255)
@@ -24,6 +31,7 @@ class PMTilesJob(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
 
     def to_dict(self):
+        formats = CONVERSION_FORMATS[self.kind]
         return {
             "id": str(self.id),
             "status": self.status,
@@ -33,8 +41,8 @@ class PMTilesJob(models.Model):
             "sourcePath": self.source_name,
             "sourceStoredPath": f"s3://{self.bucket}/{self.source_key}" if self.source_key else None,
             "outputPath": f"s3://{self.bucket}/{self.output_key}",
-            "sourceFormat": "shapefile",
-            "targetFormat": "pmtiles",
+            "sourceFormat": formats["sourceFormat"],
+            "targetFormat": formats["targetFormat"],
             "inputSize": self.input_size,
             "outputSize": self.output_size,
             "startedAt": self.created_at.isoformat(),
