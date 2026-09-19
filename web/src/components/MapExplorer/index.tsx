@@ -1,21 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Box,
-  Flex,
-  HStack,
-  VStack,
-  Text,
-  IconButton,
-  Select,
-  Spinner,
-  Slider,
-  SliderTrack,
-  SliderFilledTrack,
-  SliderThumb,
-  Tooltip,
-  Button,
-} from '@chakra-ui/react'
-import { FiX, FiChevronDown, FiAlertTriangle, FiClock, FiMaximize2 } from 'react-icons/fi'
+import { Box, Flex, HStack, VStack, Text, IconButton, Select, Tooltip, Button } from '@chakra-ui/react'
+import { FiX, FiChevronDown, FiAlertTriangle, FiClock } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
@@ -25,21 +10,12 @@ import { listPmtilesObjects, listCogObjects, getS3PresignedUrl } from '../../api
 import type { S3Connection, S3Bucket } from '../../types'
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
+import LayersPanel from './LayersPanel'
+import type { MapLayerState } from './types'
 import { getMapExplorerTabUrlParam, setMapExplorerTabUrlParam } from '../../utils/mapViewUrl'
+import './styles.css'
 
 const LAYER_COLORS = ['#2d7d9b', '#E8A331', '#7c5cbf', '#3f9142', '#c2434f', '#3a8fa6']
-const LEGEND_GRADIENT = 'linear(to-r, #eaf6ff, #4a9cb8, #E8A331, #c0392b)'
-
-interface MapLayerState {
-  id: string
-  key: string
-  name: string
-  format: 'pmtiles' | 'cog'
-  color: string
-  opacity: number
-  status: 'loading' | 'ready' | 'error'
-  bounds?: [number, number, number, number]
-}
 
 async function addCogLayer(
   mapInstance: maplibregl.Map,
@@ -471,96 +447,13 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                   </Tooltip>
                 </Box>
 
-                {/* Layers panel — shifted left of the map's zoom controls */}
-                <Box
-                  position="absolute"
-                  top={4}
-                  right="64px"
-                  bg="white"
-                  rounded="xl"
-                  shadow="lg"
-                  p={4}
-                  w="300px"
-                  maxH="75vh"
-                  overflowY="auto"
-                >
-                  <HStack mb={3} justify="space-between">
-                    <Text fontWeight="600" color="gray.800">
-                      Layers
-                    </Text>
-                    {isLoadingSources && <Spinner size="xs" color="gray.400" />}
-                  </HStack>
-
-                  {layers.length === 0 && !isLoadingSources && (
-                    <Text fontSize="sm" color="gray.500">
-                      No PMTiles or COG layers found in this bucket.
-                    </Text>
-                  )}
-
-                  <VStack spacing={4} align="stretch">
-                    {layers.map((layer) => (
-                      <Box key={layer.id}>
-                        <HStack justify="space-between" mb={1}>
-                          <HStack spacing={2}>
-                            <Box w="10px" h="10px" borderRadius="full" bg={layer.color} />
-                            <Text fontSize="sm" fontWeight="500" color="gray.700" noOfLines={1}>
-                              {layer.name}
-                            </Text>
-                            {layer.status === 'loading' && <Spinner size="xs" />}
-                            {layer.status === 'error' && (
-                              <Tooltip label="This source could not be read">
-                                <Box color="orange.500">
-                                  <FiAlertTriangle size={12} />
-                                </Box>
-                              </Tooltip>
-                            )}
-                          </HStack>
-                          <HStack spacing={1}>
-                            <Tooltip label="Zoom to extent">
-                              <IconButton
-                                aria-label={`Zoom to extent of ${layer.name}`}
-                                icon={<FiMaximize2 size={12} />}
-                                size="xs"
-                                variant="ghost"
-                                isDisabled={!layer.bounds}
-                                onClick={() => layer.bounds && handleZoomToExtent(layer.bounds)}
-                              />
-                            </Tooltip>
-                            <IconButton
-                              aria-label={`Remove ${layer.name}`}
-                              icon={<FiX size={14} />}
-                              size="xs"
-                              variant="ghost"
-                              onClick={() => handleRemoveLayer(layer.id)}
-                            />
-                          </HStack>
-                        </HStack>
-                        <Box h="8px" borderRadius="full" bgGradient={LEGEND_GRADIENT} mb={1} />
-                        <HStack justify="space-between" mb={1}>
-                          <Text fontSize="xs" color="gray.400">
-                            0%
-                          </Text>
-                          <Text fontSize="xs" color="gray.400">
-                            100%
-                          </Text>
-                        </HStack>
-                        <Slider
-                          value={layer.opacity}
-                          min={0}
-                          max={100}
-                          isDisabled={layer.status !== 'ready'}
-                          onChange={(v) => handleOpacityChange(layer.id, v)}
-                          colorScheme="orange"
-                        >
-                          <SliderTrack>
-                            <SliderFilledTrack />
-                          </SliderTrack>
-                          <SliderThumb boxSize={4} bg="accent.400" />
-                        </Slider>
-                      </Box>
-                    ))}
-                  </VStack>
-                </Box>
+                <LayersPanel
+                  layers={layers}
+                  isLoadingSources={isLoadingSources}
+                  onZoomToExtent={handleZoomToExtent}
+                  onOpacityChange={handleOpacityChange}
+                  onRemoveLayer={handleRemoveLayer}
+                />
 
                 {/* Bucket/connection source picker (bottom-left) */}
                 <HStack
