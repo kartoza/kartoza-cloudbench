@@ -52,6 +52,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setMapExplorerTabUrlParam(next)
   }, [])
   const mapContainer = useRef<HTMLDivElement | null>(null)
+  const overlayContainer = useRef<HTMLDivElement | null>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const protocolRef = useRef<Protocol | null>(null)
   const activeLayerIdsRef = useRef<string[]>([])
@@ -389,7 +390,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       <Box position="relative" flex={1} bg="gray.50">
         {view === 'catalogue' && <StacCataloguePage onOpenOnMap={openOnMap} />}
 
-        <Box position="absolute" inset={0} display={view === 'catalogue' ? 'none' : 'block'}>
+        <Box ref={overlayContainer} position="absolute" inset={0} display={view === 'catalogue' ? 'none' : 'block'}>
             <Box ref={mapContainer} position="absolute" inset={0} />
 
             {connections.length === 0 ? (
@@ -453,6 +454,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                   onZoomToExtent={handleZoomToExtent}
                   onOpacityChange={handleOpacityChange}
                   onRemoveLayer={handleRemoveLayer}
+                  dragConstraintsRef={overlayContainer}
                 />
 
                 {/* Bucket/connection source picker (bottom-left) */}
