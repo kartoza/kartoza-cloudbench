@@ -121,6 +121,9 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const overlayContainer = useRef<HTMLDivElement | null>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const protocolRef = useRef<Protocol | null>(null)
+  // Synchronous add-guard, independent of React's (batched/deferred) state
+  // updates — addLayer needs to know immediately whether an id is new.
+  const addedLayerIdsRef = useRef<Set<string>>(new Set())
 
   // A stale tree-sidebar selection (e.g. `?node=s3connection:...`) has no
   // bearing here now that Map Explorer searches across every connection —
@@ -190,49 +193,42 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     if (!mapInstance || !protocol) return
 
     const id = layerIdFor(option)
+    if (addedLayerIdsRef.current.has(id)) return
+    addedLayerIdsRef.current.add(id)
 
-    setLayers((prev) => {
-      if (prev.some((l) => l.id === id)) return prev
+    const newLayer: MapLayerState = {
+      id,
+      connectionId: option.connectionId,
+      bucketName: option.bucketName,
+      key: option.key,
+      name: option.name,
+      format: option.format,
+      color: LAYER_COLORS[(addedLayerIdsRef.current.size - 1) % LAYER_COLORS.length],
+      opacity: 80,
+      status: 'loading',
+    }
+    setLayers((prev) => [...prev, newLayer])
 
-      const newLayer: MapLayerState = {
-        id,
-        connectionId: option.connectionId,
-        bucketName: option.bucketName,
-        key: option.key,
-        name: option.name,
-        format: option.format,
-        color: LAYER_COLORS[prev.length % LAYER_COLORS.length],
-        opacity: 80,
-        status: 'loading',
-      }
-
-      loadLayerOntoMap(mapInstance, protocol, option.connectionId, option.bucketName, newLayer)
-        .then((bounds) => {
-          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds } : l)))
-          mapInstance.fitBounds(
-            [
-              [bounds[0], bounds[1]],
-              [bounds[2], bounds[3]],
-            ],
-            { padding: 60, maxZoom: 16 }
-          )
-        })
-        .catch(() => {
-          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'error' } : l)))
-        })
-
-      return [...prev, newLayer]
-    })
+    loadLayerOntoMap(mapInstance, protocol, option.connectionId, option.bucketName, newLayer)
+      .then((bounds) => {
+        setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds } : l)))
+        mapInstance.fitBounds(
+          [
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[3]],
+          ],
+          { padding: 60, maxZoom: 16 }
+        )
+      })
+      .catch(() => {
+        setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'error' } : l)))
+      })
   }, [])
 
   // Always-current addLayer, callable from effects without becoming a dependency.
   const addLayerRef = useRef(addLayer)
   addLayerRef.current = addLayer
 
-  // Discover available .pmtiles/COG objects across every connected S3 bucket,
-  // once the map is ready, for the search box. Nothing is added to the map
-  // by default — the user picks layers explicitly (except for layers named
-  // in the URL, restored once below).
   useEffect(() => {
     if (!mapReady) return
 
@@ -331,6 +327,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId)
       if (mapInstance.getSource(layerId)) mapInstance.removeSource(layerId)
     }
+    addedLayerIdsRef.current.delete(layerId)
     setLayers((prev) => prev.filter((l) => l.id !== layerId))
   }, [])
 
