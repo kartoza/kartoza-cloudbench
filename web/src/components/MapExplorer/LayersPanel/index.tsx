@@ -16,7 +16,8 @@ import {
 import { motion, useDragControls } from 'framer-motion'
 import { FiX, FiAlertTriangle, FiMaximize2, FiMove } from 'react-icons/fi'
 
-import type { MapLayerState } from '../types'
+import type { LayerSearchOption, MapLayerState } from '../types'
+import LayerSearch from './LayerSearch'
 import './styles.css'
 
 const LEGEND_GRADIENT = 'linear(to-r, #eaf6ff, #4a9cb8, #E8A331, #c0392b)'
@@ -25,7 +26,9 @@ const MotionBox = chakra(motion.div)
 
 interface LayersPanelProps {
   layers: MapLayerState[]
+  availableLayers: LayerSearchOption[]
   isLoadingSources: boolean
+  onAddLayer: (option: LayerSearchOption) => void
   onZoomToExtent: (bounds: [number, number, number, number]) => void
   onOpacityChange: (layerId: string, value: number) => void
   onRemoveLayer: (layerId: string) => void
@@ -35,7 +38,9 @@ interface LayersPanelProps {
 
 export default function LayersPanel({
   layers,
+  availableLayers,
   isLoadingSources,
+  onAddLayer,
   onZoomToExtent,
   onOpacityChange,
   onRemoveLayer,
@@ -84,9 +89,11 @@ export default function LayersPanel({
         {isLoadingSources && <Spinner size="xs" color="gray.400" />}
       </HStack>
 
-      {layers.length === 0 && !isLoadingSources && (
+      <LayerSearch options={availableLayers} onSelect={onAddLayer} isDisabled={isLoadingSources} />
+
+      {layers.length === 0 && (
         <Text fontSize="sm" color="gray.500">
-          No PMTiles or COG layers found in this bucket.
+          {isLoadingSources ? 'Looking for layers across your S3 connections…' : 'Search above to add a layer to the map.'}
         </Text>
       )}
 

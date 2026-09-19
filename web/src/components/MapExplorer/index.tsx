@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Box, Flex, HStack, VStack, Text, IconButton, Select, Tooltip, Button } from '@chakra-ui/react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Box, Flex, HStack, VStack, Text, IconButton, Tooltip, Button } from '@chakra-ui/react'
 import { FiX, FiChevronDown, FiAlertTriangle, FiClock } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
 import { cogProtocol, getCogMetadata } from '@geomatico/maplibre-cog-protocol'
-import { getS3Connections, getS3Buckets } from '../../api/s3'
-import { listPmtilesObjects, listCogObjects, getS3PresignedUrl } from '../../api/mapExplorer'
-import type { S3Connection, S3Bucket } from '../../types'
+import { getS3PresignedUrl, listAllLayerObjects } from '../../api/mapExplorer'
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
 import LayersPanel from './LayersPanel'
-import type { MapLayerState } from './types'
-import { getMapExplorerTabUrlParam, setMapExplorerTabUrlParam } from '../../utils/mapViewUrl'
+import type { LayerSearchOption, MapLayerState } from './types'
+import {
+  getMapExplorerLayersUrlParam,
+  getMapExplorerTabUrlParam,
+  setMapExplorerLayersUrlParam,
+  setMapExplorerTabUrlParam,
+} from '../../utils/mapViewUrl'
+import { clearNodeUrlParamQuietly } from '../../utils/nodeUrl'
 import './styles.css'
 
 const LAYER_COLORS = ['#2d7d9b', '#E8A331', '#7c5cbf', '#3f9142', '#c2434f', '#3a8fa6']
@@ -41,6 +45,68 @@ async function addCogLayer(
   return metadata.bbox
 }
 
+/** Fetches and renders a single layer's source/layer(s) onto the map, returning its bounds. */
+async function loadLayerOntoMap(
+  mapInstance: maplibregl.Map,
+  protocol: Protocol,
+  connectionId: string,
+  bucketName: string,
+  layer: { id: string; key: string; format: 'pmtiles' | 'cog'; color: string; opacity: number }
+): Promise<[number, number, number, number]> {
+  const url = await getS3PresignedUrl(connectionId, bucketName, layer.key)
+
+  if (layer.format === 'cog') {
+    return addCogLayer(mapInstance, layer.id, url, layer.opacity)
+  }
+
+  const pmtiles = new PMTiles(url)
+  protocol.add(pmtiles)
+  const header = await pmtiles.getHeader()
+  const sourceUrl = `pmtiles://${url}`
+  const isRaster = header.tileType >= 2
+
+  if (isRaster) {
+    mapInstance.addSource(layer.id, { type: 'raster', url: sourceUrl, tileSize: 256 })
+    mapInstance.addLayer({
+      id: layer.id,
+      type: 'raster',
+      source: layer.id,
+      paint: { 'raster-opacity': layer.opacity / 100 },
+    })
+  } else {
+    const metadata = (await pmtiles.getMetadata()) as { vector_layers?: { id: string }[] }
+    const sourceLayerName = metadata?.vector_layers?.[0]?.id ?? 'default'
+    mapInstance.addSource(layer.id, { type: 'vector', url: sourceUrl })
+    mapInstance.addLayer({
+      id: `${layer.id}-fill`,
+      type: 'fill',
+      source: layer.id,
+      'source-layer': sourceLayerName,
+      paint: { 'fill-color': layer.color, 'fill-opacity': layer.opacity / 100 },
+    })
+    mapInstance.addLayer({
+      id: `${layer.id}-line`,
+      type: 'line',
+      source: layer.id,
+      'source-layer': sourceLayerName,
+      paint: { 'line-color': layer.color, 'line-width': 1 },
+    })
+  }
+
+  return [header.minLon, header.minLat, header.maxLon, header.maxLat]
+}
+
+function layerNameFromKey(key: string, format: 'pmtiles' | 'cog'): string {
+  const base = key.split('/').pop() ?? key
+  return format === 'cog' ? base.replace(/\.tiff?$/i, '') : base.replace(/\.pmtiles$/i, '')
+}
+
+/** Stable, content-derived id so the same object is never added twice and needs no counter. */
+function layerIdFor(option: { connectionId: string; bucketName: string; key: string; format: 'pmtiles' | 'cog' }): string {
+  const slug = `${option.connectionId}-${option.bucketName}-${option.key}`.replace(/[^a-zA-Z0-9]/g, '_')
+  return `${option.format}-${slug}`
+}
+
 interface MapExplorerViewProps {
   onClose: () => void
 }
@@ -55,18 +121,29 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const overlayContainer = useRef<HTMLDivElement | null>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const protocolRef = useRef<Protocol | null>(null)
-  const activeLayerIdsRef = useRef<string[]>([])
+
+  // A stale tree-sidebar selection (e.g. `?node=s3connection:...`) has no
+  // bearing here now that Map Explorer searches across every connection —
+  // drop it so the URL doesn't imply a single "current" connection.
+  useEffect(() => {
+    clearNodeUrlParamQuietly()
+  }, [])
+
+  // Read once at mount: a shared/refreshed URL may name layers to restore —
+  // consumed once the full cross-bucket catalog has loaded below.
+  const pendingLayerRefsRef = useRef(getMapExplorerLayersUrlParam())
 
   const [mapReady, setMapReady] = useState(false)
-  const [connections, setConnections] = useState<S3Connection[]>([])
-  const [connectionId, setConnectionId] = useState('')
-  const [buckets, setBuckets] = useState<S3Bucket[]>([])
-  const [bucketName, setBucketName] = useState('')
+  const [hasConnections, setHasConnections] = useState(true)
+  const [availableLayers, setAvailableLayers] = useState<LayerSearchOption[]>([])
   const [layers, setLayers] = useState<MapLayerState[]>([])
   const [isLoadingSources, setIsLoadingSources] = useState(false)
-  const pendingBucketRef = useRef<string | null>(null)
 
   const failedCount = layers.filter((l) => l.status === 'error').length
+  const searchableLayers = useMemo(
+    () => availableLayers.filter((option) => !layers.some((l) => l.id === layerIdFor(option))),
+    [availableLayers, layers]
+  )
 
   // Set up the map + pmtiles/cog protocols once.
   useEffect(() => {
@@ -106,185 +183,108 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     }
   }, [])
 
-  // Load S3 connections on mount.
-  useEffect(() => {
-    getS3Connections()
-      .then((conns) => {
-        setConnections(conns)
-        if (conns.length > 0) setConnectionId(conns[0].id)
-      })
-      .catch(() => setConnections([]))
+  // Adds a single layer to the map, looked up from the already-discovered catalog.
+  const addLayer = useCallback((option: LayerSearchOption) => {
+    const mapInstance = map.current
+    const protocol = protocolRef.current
+    if (!mapInstance || !protocol) return
+
+    const id = layerIdFor(option)
+
+    setLayers((prev) => {
+      if (prev.some((l) => l.id === id)) return prev
+
+      const newLayer: MapLayerState = {
+        id,
+        connectionId: option.connectionId,
+        bucketName: option.bucketName,
+        key: option.key,
+        name: option.name,
+        format: option.format,
+        color: LAYER_COLORS[prev.length % LAYER_COLORS.length],
+        opacity: 80,
+        status: 'loading',
+      }
+
+      loadLayerOntoMap(mapInstance, protocol, option.connectionId, option.bucketName, newLayer)
+        .then((bounds) => {
+          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds } : l)))
+          mapInstance.fitBounds(
+            [
+              [bounds[0], bounds[1]],
+              [bounds[2], bounds[3]],
+            ],
+            { padding: 60, maxZoom: 16 }
+          )
+        })
+        .catch(() => {
+          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'error' } : l)))
+        })
+
+      return [...prev, newLayer]
+    })
   }, [])
 
-  // Load buckets whenever the connection changes.
+  // Always-current addLayer, callable from effects without becoming a dependency.
+  const addLayerRef = useRef(addLayer)
+  addLayerRef.current = addLayer
+
+  // Discover available .pmtiles/COG objects across every connected S3 bucket,
+  // once the map is ready, for the search box. Nothing is added to the map
+  // by default — the user picks layers explicitly (except for layers named
+  // in the URL, restored once below).
   useEffect(() => {
-    if (!connectionId) {
-      setBuckets([])
-      setBucketName('')
-      return
-    }
-    getS3Buckets(connectionId)
-      .then((b) => {
-        setBuckets(b)
-        const pending = pendingBucketRef.current
-        pendingBucketRef.current = null
-        if (pending && b.some((bucket) => bucket.name === pending)) {
-          setBucketName(pending)
-        } else {
-          setBucketName(b.length > 0 ? b[0].name : '')
+    if (!mapReady) return
+
+    let cancelled = false
+    setIsLoadingSources(true)
+
+    listAllLayerObjects()
+      .then(({ hasConnections: found, entries }) => {
+        if (cancelled) return
+
+        const options: LayerSearchOption[] = entries.map((entry) => ({
+          connectionId: entry.connectionId,
+          connectionName: entry.connectionName,
+          bucketName: entry.bucketName,
+          key: entry.key,
+          name: layerNameFromKey(entry.key, entry.format),
+          format: entry.format,
+        }))
+        setHasConnections(found)
+        setAvailableLayers(options)
+        setIsLoadingSources(false)
+
+        const pendingRefs = pendingLayerRefsRef.current
+        pendingLayerRefsRef.current = []
+        if (pendingRefs.length > 0) {
+          for (const ref of pendingRefs) {
+            const match = options.find(
+              (o) => o.connectionId === ref.connectionId && o.bucketName === ref.bucketName && o.key === ref.key
+            )
+            if (match) addLayerRef.current(match)
+          }
         }
       })
       .catch(() => {
-        setBuckets([])
-        setBucketName('')
+        if (cancelled) return
+        setHasConnections(false)
+        setAvailableLayers([])
+        setIsLoadingSources(false)
       })
-  }, [connectionId])
-
-  // Discover .pmtiles objects in the selected bucket and render them.
-  useEffect(() => {
-    const mapInstance = map.current
-    if (!mapReady || !mapInstance || !connectionId || !bucketName) {
-      setLayers([])
-      return
-    }
-
-    let cancelled = false
-    activeLayerIdsRef.current = []
-    setIsLoadingSources(true)
-
-    async function run(mapInstance: maplibregl.Map) {
-      const [pmtilesObjects, cogObjects] = await Promise.all([
-        listPmtilesObjects(connectionId, bucketName).catch(() => []),
-        listCogObjects(connectionId, bucketName).catch(() => []),
-      ])
-      if (cancelled) return
-
-      const initialLayers: MapLayerState[] = [
-        ...pmtilesObjects.map((obj, i) => ({
-          id: `pmtiles-${i}-${obj.key.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          key: obj.key,
-          name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
-          format: 'pmtiles' as const,
-          color: LAYER_COLORS[i % LAYER_COLORS.length],
-          opacity: 80,
-          status: 'loading' as const,
-        })),
-        ...cogObjects.map((obj, i) => ({
-          id: `cog-${i}-${obj.key.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          key: obj.key,
-          name: obj.key.split('/').pop()?.replace(/\.tiff?$/i, '') ?? obj.key,
-          format: 'cog' as const,
-          color: LAYER_COLORS[(pmtilesObjects.length + i) % LAYER_COLORS.length],
-          opacity: 80,
-          status: 'loading' as const,
-        })),
-      ]
-      setLayers(initialLayers)
-      setIsLoadingSources(false)
-
-      const bounds: [number, number, number, number][] = []
-
-      for (const layer of initialLayers) {
-        if (cancelled) break
-        try {
-          const url = await getS3PresignedUrl(connectionId, bucketName, layer.key)
-
-          if (layer.format === 'cog') {
-            const layerBounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
-            if (cancelled) break
-            activeLayerIdsRef.current.push(layer.id)
-            bounds.push(layerBounds)
-            setLayers((prev) =>
-              prev.map((l) => (l.id === layer.id ? { ...l, status: 'ready', bounds: layerBounds } : l))
-            )
-            continue
-          }
-
-          const pmtiles = new PMTiles(url)
-          protocolRef.current?.add(pmtiles)
-          const header = await pmtiles.getHeader()
-          if (cancelled) break
-
-          const sourceUrl = `pmtiles://${url}`
-          const isRaster = header.tileType >= 2
-
-          if (isRaster) {
-            mapInstance.addSource(layer.id, { type: 'raster', url: sourceUrl, tileSize: 256 })
-            mapInstance.addLayer({
-              id: layer.id,
-              type: 'raster',
-              source: layer.id,
-              paint: { 'raster-opacity': layer.opacity / 100 },
-            })
-          } else {
-            const metadata = (await pmtiles.getMetadata()) as { vector_layers?: { id: string }[] }
-            const sourceLayerName = metadata?.vector_layers?.[0]?.id ?? 'default'
-            mapInstance.addSource(layer.id, { type: 'vector', url: sourceUrl })
-            mapInstance.addLayer({
-              id: `${layer.id}-fill`,
-              type: 'fill',
-              source: layer.id,
-              'source-layer': sourceLayerName,
-              paint: { 'fill-color': layer.color, 'fill-opacity': layer.opacity / 100 },
-            })
-            mapInstance.addLayer({
-              id: `${layer.id}-line`,
-              type: 'line',
-              source: layer.id,
-              'source-layer': sourceLayerName,
-              paint: { 'line-color': layer.color, 'line-width': 1 },
-            })
-          }
-
-          activeLayerIdsRef.current.push(layer.id)
-          const pmtilesBounds: [number, number, number, number] = [
-            header.minLon,
-            header.minLat,
-            header.maxLon,
-            header.maxLat,
-          ]
-          bounds.push(pmtilesBounds)
-          setLayers((prev) =>
-            prev.map((l) => (l.id === layer.id ? { ...l, status: 'ready', bounds: pmtilesBounds } : l))
-          )
-        } catch {
-          if (!cancelled) {
-            setLayers((prev) => prev.map((l) => (l.id === layer.id ? { ...l, status: 'error' } : l)))
-          }
-        }
-      }
-
-      if (!cancelled && bounds.length > 0) {
-        const minLon = Math.min(...bounds.map((b) => b[0]))
-        const minLat = Math.min(...bounds.map((b) => b[1]))
-        const maxLon = Math.max(...bounds.map((b) => b[2]))
-        const maxLat = Math.max(...bounds.map((b) => b[3]))
-        mapInstance.fitBounds(
-          [
-            [minLon, minLat],
-            [maxLon, maxLat],
-          ],
-          { padding: 60, maxZoom: 16 }
-        )
-      }
-    }
-
-    run(mapInstance)
 
     return () => {
       cancelled = true
-      try {
-        for (const id of activeLayerIdsRef.current) {
-          if (mapInstance.getLayer(`${id}-fill`)) mapInstance.removeLayer(`${id}-fill`)
-          if (mapInstance.getLayer(`${id}-line`)) mapInstance.removeLayer(`${id}-line`)
-          if (mapInstance.getLayer(id)) mapInstance.removeLayer(id)
-          if (mapInstance.getSource(id)) mapInstance.removeSource(id)
-        }
-      } catch {
-      }
-      activeLayerIdsRef.current = []
     }
-  }, [mapReady, connectionId, bucketName])
+  }, [mapReady])
+
+  // Keep the added layers persisted in the URL so a refresh/shared link restores them.
+  useEffect(() => {
+    if (layers.length === 0 && pendingLayerRefsRef.current.length > 0) return // restore still pending
+    setMapExplorerLayersUrlParam(
+      layers.map((l) => ({ connectionId: l.connectionId, bucketName: l.bucketName, key: l.key }))
+    )
+  }, [layers])
 
   const handleZoomToExtent = useCallback((bounds: [number, number, number, number]) => {
     const mapInstance = map.current
@@ -310,15 +310,14 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     }
   }, [])
 
-  const openOnMap = useCallback((target: MapTarget) => {
-    if (target.connectionId === connectionId) {
-      setBucketName(target.bucketName)
-    } else {
-      pendingBucketRef.current = target.bucketName
-      setConnectionId(target.connectionId)
-    }
-    setView('map')
-  }, [connectionId, setView])
+  // The catalogue no longer names a single connection/bucket to switch the map
+  // into — Map Explorer already searches everything — so this just switches tabs.
+  const openOnMap = useCallback(
+    (_target: MapTarget) => {
+      setView('map')
+    },
+    [setView]
+  )
 
   useEffect(() => {
     if (view === 'map') map.current?.resize()
@@ -332,7 +331,6 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId)
       if (mapInstance.getSource(layerId)) mapInstance.removeSource(layerId)
     }
-    activeLayerIdsRef.current = activeLayerIdsRef.current.filter((id) => id !== layerId)
     setLayers((prev) => prev.filter((l) => l.id !== layerId))
   }, [])
 
@@ -393,7 +391,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         <Box ref={overlayContainer} position="absolute" inset={0} display={view === 'catalogue' ? 'none' : 'block'}>
             <Box ref={mapContainer} position="absolute" inset={0} />
 
-            {connections.length === 0 ? (
+            {!hasConnections ? (
               <Flex position="absolute" inset={0} align="center" justify="center" pointerEvents="none">
                 <Box bg="white" rounded="lg" shadow="md" p={4} pointerEvents="auto">
                   <Text color="gray.600" fontSize="sm">
@@ -450,54 +448,14 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
                 <LayersPanel
                   layers={layers}
+                  availableLayers={searchableLayers}
                   isLoadingSources={isLoadingSources}
+                  onAddLayer={addLayer}
                   onZoomToExtent={handleZoomToExtent}
                   onOpacityChange={handleOpacityChange}
                   onRemoveLayer={handleRemoveLayer}
                   dragConstraintsRef={overlayContainer}
                 />
-
-                {/* Bucket/connection source picker (bottom-left) */}
-                <HStack
-                  position="absolute"
-                  bottom={4}
-                  left={4}
-                  bg="white"
-                  borderRadius="full"
-                  shadow="md"
-                  px={4}
-                  py={1}
-                  spacing={2}
-                >
-                  <Select
-                    value={connectionId}
-                    onChange={(e) => setConnectionId(e.target.value)}
-                    variant="unstyled"
-                    size="sm"
-                    w="auto"
-                  >
-                    {connections.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <Text color="gray.300">/</Text>
-                  <Select
-                    value={bucketName}
-                    onChange={(e) => setBucketName(e.target.value)}
-                    variant="unstyled"
-                    size="sm"
-                    w="auto"
-                    placeholder={buckets.length === 0 ? 'No buckets' : undefined}
-                  >
-                    {buckets.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </Select>
-                </HStack>
 
                 {/* Failed-sources banner */}
                 {failedCount > 0 && (

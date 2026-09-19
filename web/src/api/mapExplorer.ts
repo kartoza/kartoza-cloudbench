@@ -7,6 +7,7 @@
  */
 
 import { API_BASE, handleResponse } from './common'
+import { getS3Connections, getS3Buckets } from './s3'
 
 export interface S3PmtilesObject {
   key: string
@@ -78,6 +79,64 @@ export async function listCogObjects(
   bucketName: string
 ): Promise<S3PmtilesObject[]> {
   return listObjectsByExtensions(connectionId, bucketName, ['.tif', '.tiff'])
+}
+
+export interface S3LayerCatalogEntry {
+  connectionId: string
+  connectionName: string
+  bucketName: string
+  key: string
+  format: 'pmtiles' | 'cog'
+}
+
+export interface S3LayerCatalog {
+  /** Whether any S3 connection is configured at all (independent of whether any hold layers). */
+  hasConnections: boolean
+  entries: S3LayerCatalogEntry[]
+}
+
+// Walks every configured S3 connection and every bucket within it, collecting
+// PMTiles/COG objects into one flat catalog for Map Explorer's layer search.
+// There's no batch/cross-bucket listing endpoint, so this is connection by
+// connection, bucket by bucket — a failing bucket or connection is skipped
+// rather than blocking the rest of the catalog.
+export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
+  const connections = await getS3Connections().catch(() => [])
+  const entries: S3LayerCatalogEntry[] = []
+
+  for (const connection of connections) {
+    const buckets = await getS3Buckets(connection.id).catch(() => [])
+    for (const bucket of buckets) {
+      try {
+        const [pmtilesObjects, cogObjects] = await Promise.all([
+          listPmtilesObjects(connection.id, bucket.name),
+          listCogObjects(connection.id, bucket.name),
+        ])
+        for (const obj of pmtilesObjects) {
+          entries.push({
+            connectionId: connection.id,
+            connectionName: connection.name,
+            bucketName: bucket.name,
+            key: obj.key,
+            format: 'pmtiles',
+          })
+        }
+        for (const obj of cogObjects) {
+          entries.push({
+            connectionId: connection.id,
+            connectionName: connection.name,
+            bucketName: bucket.name,
+            key: obj.key,
+            format: 'cog',
+          })
+        }
+      } catch {
+        // A bucket failing to list shouldn't block the rest of the catalog.
+      }
+    }
+  }
+
+  return { hasConnections: connections.length > 0, entries }
 }
 
 export async function getS3PresignedUrl(
