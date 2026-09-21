@@ -16,7 +16,6 @@ from apps.core.config import (
     PGServiceState,
     QFieldCloudConnection,
     QGISProject,
-    S3Connection,
     SavedQuery,
     SyncConfiguration,
     SyncOptions,
@@ -66,39 +65,6 @@ class TestConnection:
         assert data["id"] == "test-id"
         assert data["name"] == "Test Server"
         assert data["is_active"] is True
-
-
-class TestS3Connection:
-    """Tests for S3 Connection model."""
-
-    def test_s3_connection_creation(self) -> None:
-        """Test creating an S3 connection."""
-        conn = S3Connection(
-            name="MinIO",
-            endpoint="localhost:9000",
-            access_key="minioadmin",
-            secret_key="minioadmin",
-        )
-        assert conn.name == "MinIO"
-        assert conn.endpoint == "localhost:9000"
-        assert conn.use_ssl is False
-        assert conn.path_style is True
-        assert conn.id.startswith("s3_")
-
-    def test_s3_connection_with_ssl(self) -> None:
-        """Test S3 connection with SSL enabled."""
-        conn = S3Connection(
-            name="AWS S3",
-            endpoint="s3.amazonaws.com",
-            access_key="AKIAEXAMPLE",
-            secret_key="secretkey",
-            use_ssl=True,
-            path_style=False,
-            region="us-east-1",
-        )
-        assert conn.use_ssl is True
-        assert conn.path_style is False
-        assert conn.region == "us-east-1"
 
 
 class TestGeoNodeConnection:
@@ -214,7 +180,6 @@ class TestConfig:
         """Test Config model default values."""
         config = Config()
         assert config.connections == []
-        assert config.s3_connections == []
         assert config.geonode_connections == []
         assert config.active_connection == ""
         assert config.theme == "default"
@@ -291,13 +256,6 @@ class TestConfigManager:
         config_manager.add_connection(sample_connection)
         config_manager.set_active_connection(sample_connection.id)
         assert config_manager.config.active_connection == sample_connection.id
-
-    def test_add_s3_connection(
-        self, config_manager: ConfigManager, sample_s3_connection: S3Connection
-    ) -> None:
-        """Test adding an S3 connection."""
-        config_manager.add_s3_connection(sample_s3_connection)
-        assert len(config_manager.list_s3_connections()) == 1
 
     def test_config_persistence(
         self, config_manager: ConfigManager, sample_connection: Connection

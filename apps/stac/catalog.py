@@ -9,9 +9,12 @@ layers) -> Item (one per PMTiles object / GeoServer layer).
 from typing import Any
 from urllib.parse import urlencode
 
+from django.core.exceptions import ValidationError
+
 from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
 from apps.s3.client import get_s3_client
+from apps.s3.models import S3Connection
 
 STAC_VERSION = "1.0.0"
 
@@ -30,6 +33,14 @@ def parse_collection_id(collection_id: str) -> tuple[str, str, str]:
     if len(parts) != 3 or parts[0] not in ("s3", "gs"):
         raise ValueError(f"Unknown collection id: {collection_id}")
     return parts[0], parts[1], parts[2]
+
+
+def _get_owned_s3_connection(user_id: str, conn_id: str) -> "S3Connection | None":
+    """conn_id is parsed out of a collection id and isn't guaranteed to be a well-formed UUID."""
+    try:
+        return S3Connection.objects.filter(owner_id=user_id, id=conn_id).first()
+    except (ValueError, ValidationError):
+        return None
 
 
 def _link(rel: str, href: str, media_type: str = "application/json", title: str | None = None) -> dict[str, Any]:
@@ -55,9 +66,8 @@ def _list_pmtiles_objects(client, bucket: str) -> list[dict[str, Any]]:
 
 
 def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
-    config = get_config(user_id)
     results = []
-    for conn in config.list_s3_connections():
+    for conn in S3Connection.objects.filter(owner_id=user_id):
         try:
             client = get_s3_client(conn.id, user_id)
             buckets = client.list_buckets()
@@ -280,16 +290,16 @@ def _gs_item(request, collection_id: str, conn, workspace: str, layer: dict[str,
 def list_items(request, user_id: str, collection_id: str) -> list[dict[str, Any]] | None:
     """STAC Items for a collection, or None if the collection doesn't exist."""
     kind, conn_id, name = parse_collection_id(collection_id)
-    config = get_config(user_id)
 
     if kind == "s3":
-        conn = config.get_s3_connection(conn_id)
+        conn = _get_owned_s3_connection(user_id, conn_id)
         if conn is None:
             return None
         client = get_s3_client(conn_id, user_id)
         objects = _list_pmtiles_objects(client, name)
         return [_s3_item(request, collection_id, conn, name, obj) for obj in objects]
 
+    config = get_config(user_id)
     conn = config.get_connection(conn_id)
     if conn is None:
         return None
@@ -302,16 +312,16 @@ def list_items(request, user_id: str, collection_id: str) -> list[dict[str, Any]
 
 def get_item(request, user_id: str, collection_id: str, item_id: str) -> dict[str, Any] | None:
     kind, conn_id, name = parse_collection_id(collection_id)
-    config = get_config(user_id)
 
     if kind == "s3":
-        conn = config.get_s3_connection(conn_id)
+        conn = _get_owned_s3_connection(user_id, conn_id)
         if conn is None:
             return None
         client = get_s3_client(conn_id, user_id)
         obj = next((o for o in _list_pmtiles_objects(client, name) if o["key"] == item_id), None)
         return _s3_item(request, collection_id, conn, name, obj) if obj else None
 
+    config = get_config(user_id)
     conn = config.get_connection(conn_id)
     if conn is None:
         return None

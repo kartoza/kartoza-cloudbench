@@ -9,6 +9,7 @@ from typing import Any
 
 from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
+from apps.s3.models import S3Connection
 
 
 @dataclass
@@ -109,7 +110,7 @@ class SearchService:
                     )
                 )
 
-        for conn in config.list_s3_connections():
+        for conn in S3Connection.objects.filter(owner_id=self._user_id):
             if query in conn.name.lower() or query in conn.endpoint.lower():
                 results.append(
                     SearchResult(
@@ -118,7 +119,7 @@ class SearchService:
                         title=conn.name,
                         description=f"S3 at {conn.endpoint}",
                         source="s3",
-                        source_id=conn.id,
+                        source_id=str(conn.id),
                         path=f"/s3/{conn.id}",
                     )
                 )
@@ -221,9 +222,8 @@ class SearchService:
     def _search_buckets(self, query: str) -> list[SearchResult]:
         """Search S3 buckets."""
         results = []
-        config = get_config(self._user_id)
 
-        for conn in config.list_s3_connections():
+        for conn in S3Connection.objects.filter(owner_id=self._user_id):
             try:
                 from apps.s3.client import get_s3_client
 
@@ -239,7 +239,7 @@ class SearchService:
                                 title=bucket.name,
                                 description=f"S3 bucket on {conn.name}",
                                 source="s3",
-                                source_id=conn.id,
+                                source_id=str(conn.id),
                                 path=f"/s3/{conn.id}/{bucket.name}",
                                 metadata={
                                     "connection": conn.name,

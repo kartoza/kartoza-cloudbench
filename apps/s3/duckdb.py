@@ -9,8 +9,9 @@ import threading
 from typing import Any
 
 import duckdb
+from django.core.exceptions import ValidationError
 
-from apps.core.config import get_config
+from .models import S3Connection
 
 
 class DuckDBQueryEngine:
@@ -55,8 +56,10 @@ class DuckDBQueryEngine:
             connection_id: S3 connection ID
             user_id: User ID the connection is scoped to
         """
-        config = get_config(user_id)
-        conn = config.get_s3_connection(connection_id)
+        try:
+            conn = S3Connection.objects.filter(owner_id=user_id, id=connection_id).first()
+        except (ValueError, ValidationError):
+            conn = None
         if not conn:
             raise ValueError(f"S3 connection not found: {connection_id}")
 
