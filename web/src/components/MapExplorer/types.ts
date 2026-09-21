@@ -9,6 +9,10 @@ export interface MapLayerState {
   opacity: number
   status: 'loading' | 'ready' | 'error'
   bounds?: [number, number, number, number]
+  isVector?: boolean
+  sourceLayer?: string
+  hasCustomStyle?: boolean
+  styleMode?: 'default' | 'custom'
 }
 
 /** A layer discovered across any connected S3 bucket that can be searched for and added to the map. */
