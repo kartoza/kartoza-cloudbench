@@ -1,8 +1,39 @@
-"""Persistent status for CloudNativeGIS-to-S3 conversions."""
+"""S3 connections and persistent status for CloudNativeGIS-to-S3 conversions."""
 
 import uuid
 
+from django.conf import settings
 from django.db import models
+
+from apps.core.fields import EncryptedCharField
+
+
+class S3Connection(models.Model):
+    """A user's saved S3-compatible storage connection.
+
+    access_key/secret_key are encrypted at rest (see apps.core.fields.
+    EncryptedCharField) — this replaces the old plaintext-JSON-file storage
+    that used to live in apps.core.config.ConfigManager.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="s3_connections")
+    name = models.CharField(max_length=255)
+    endpoint = models.CharField(max_length=500)
+    access_key = EncryptedCharField()
+    secret_key = EncryptedCharField()
+    region = models.CharField(max_length=100, blank=True, default="")
+    use_ssl = models.BooleanField(default=True)
+    path_style = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 # Source/target labels per job kind, used only for API responses.
 CONVERSION_FORMATS = {

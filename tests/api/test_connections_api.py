@@ -4,6 +4,7 @@ Note: URL patterns in this project do NOT use trailing slashes.
 """
 
 import pytest
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -128,6 +129,15 @@ class TestGeoServerConnectionsAPI:
 class TestS3ConnectionsAPI:
     """Tests for S3 connections endpoints."""
 
+    @pytest.fixture
+    def api_client(self, api_client: APIClient) -> APIClient:
+        """S3 connection endpoints require IsAuthenticated and scope
+        connections to a real owner FK, so a saved user is needed.
+        """
+        user = get_user_model().objects.create_user(username="s3-api-tester", password="x")
+        api_client.force_authenticate(user=user)
+        return api_client
+
     def test_list_s3_connections_empty(self, api_client: APIClient) -> None:
         """Test listing S3 connections when empty."""
         response = api_client.get("/api/s3/connections")
@@ -140,10 +150,10 @@ class TestS3ConnectionsAPI:
             {
                 "name": "Test MinIO",
                 "endpoint": "localhost:9000",
-                "access_key": "minioadmin",
-                "secret_key": "minioadmin",
-                "use_ssl": False,
-                "path_style": True,
+                "accessKey": "minioadmin",
+                "secretKey": "minioadmin",
+                "useSsl": False,
+                "pathStyle": True,
             },
             format="json",
         )
@@ -160,8 +170,8 @@ class TestS3ConnectionsAPI:
             {
                 "name": "Test MinIO",
                 "endpoint": "localhost:9000",
-                "access_key": "minioadmin",
-                "secret_key": "minioadmin",
+                "accessKey": "minioadmin",
+                "secretKey": "minioadmin",
             },
             format="json",
         )

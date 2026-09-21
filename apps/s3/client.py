@@ -11,8 +11,9 @@ from typing import Any, BinaryIO
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from django.core.exceptions import ValidationError
 
-from apps.core.config import get_config
+from .models import S3Connection
 
 
 @dataclass
@@ -406,8 +407,10 @@ class S3ClientManager:
                 return self._clients[cache_key]
 
             # Get connection config
-            config = get_config(user_id)
-            conn = config.get_s3_connection(connection_id)
+            try:
+                conn = S3Connection.objects.filter(owner_id=user_id, id=connection_id).first()
+            except (ValueError, ValidationError):
+                conn = None
             if not conn:
                 raise ValueError(f"S3 connection not found: {connection_id}")
 

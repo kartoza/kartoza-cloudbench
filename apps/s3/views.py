@@ -22,18 +22,17 @@ from pathlib import PurePosixPath
 
 import httpx
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.config import S3Connection, get_config
-
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import expire_stalled_job
 from .cog import start_conversion as start_cog_conversion
 from .duckdb import get_duckdb_engine
-from .models import CngLiteJob
+from .models import CngLiteJob, S3Connection
 from .pmtiles import prepare_shapefile, start_conversion as start_pmtiles_conversion
 
 # ============================================================================
@@ -41,17 +40,25 @@ from .pmtiles import prepare_shapefile, start_conversion as start_pmtiles_conver
 # ============================================================================
 
 
+def _get_owned_connection(request, conn_id):
+    """Looks up a connection owned by the requesting user, or None.
+    """
+    try:
+        return S3Connection.objects.filter(owner=request.user, id=conn_id).first()
+    except (ValueError, ValidationError):
+        return None
+
+
 class S3ConnectionListView(APIView):
     """List and create S3 connections."""
 
     def get(self, request):
         """List all S3 connections."""
-        config = get_config(request.user.id)
-        connections = config.list_s3_connections()
+        connections = S3Connection.objects.filter(owner=request.user)
         return Response(
             [
                 {
-                    "id": c.id,
+                    "id": str(c.id),
                     "name": c.name,
                     "endpoint": c.endpoint,
                     "region": c.region,
@@ -65,8 +72,8 @@ class S3ConnectionListView(APIView):
     def post(self, request):
         """Create a new S3 connection."""
         data = request.data
-        conn = S3Connection(
-            id=str(uuid.uuid4()),
+        conn = S3Connection.objects.create(
+            owner=request.user,
             name=data.get("name", ""),
             endpoint=data.get("endpoint", ""),
             access_key=data.get("accessKey", ""),
@@ -76,12 +83,9 @@ class S3ConnectionListView(APIView):
             path_style=data.get("pathStyle", True),
         )
 
-        config = get_config(request.user.id)
-        config.add_s3_connection(conn)
-
         return Response(
             {
-                "id": conn.id,
+                "id": str(conn.id),
                 "name": conn.name,
                 "endpoint": conn.endpoint,
             },
@@ -121,8 +125,7 @@ class S3ConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config(request.user.id)
-        conn = config.get_s3_connection(conn_id)
+        conn = _get_owned_connection(request, conn_id)
         if not conn:
             return Response(
                 {"error": "Connection not found"},
@@ -132,7 +135,7 @@ class S3ConnectionDetailView(APIView):
         return Response(
             {
                 "connection": {
-                    "id": conn.id,
+                    "id": str(conn.id),
                     "name": conn.name,
                     "endpoint": conn.endpoint,
                     "region": conn.region,
@@ -144,8 +147,7 @@ class S3ConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config(request.user.id)
-        conn = config.get_s3_connection(conn_id)
+        conn = _get_owned_connection(request, conn_id)
         if not conn:
             return Response(
                 {"error": "Connection not found"},
@@ -165,8 +167,7 @@ class S3ConnectionDetailView(APIView):
         conn.region = data.get("region", conn.region)
         conn.use_ssl = data.get("useSsl", conn.use_ssl)
         conn.path_style = data.get("pathStyle", conn.path_style)
-
-        config.update_s3_connection(conn)
+        conn.save()
 
         # Clear cached client
         S3ClientManager().remove_client(conn_id, str(request.user.id))
@@ -175,12 +176,13 @@ class S3ConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config(request.user.id)
-        if not config.delete_s3_connection(conn_id):
+        conn = _get_owned_connection(request, conn_id)
+        if not conn:
             return Response(
                 {"error": "Connection not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        conn.delete()
 
         # Clear cached client
         S3ClientManager().remove_client(conn_id, str(request.user.id))

@@ -155,23 +155,6 @@ def sample_connection() -> Any:
 
 
 @pytest.fixture
-def sample_s3_connection() -> Any:
-    """Create a sample S3 connection for testing."""
-    from apps.core.config import S3Connection
-
-    return S3Connection(
-        id="test-s3-001",
-        name="Test MinIO",
-        endpoint="localhost:9000",
-        access_key="minioadmin",
-        secret_key="minioadmin",
-        use_ssl=False,
-        path_style=True,
-        is_active=False,
-    )
-
-
-@pytest.fixture
 def sample_geonode_connection() -> Any:
     """Create a sample GeoNode connection for testing."""
     from apps.core.config import GeoNodeConnection

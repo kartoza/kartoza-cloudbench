@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
+from apps.s3.models import S3Connection
 
 
 class DashboardView(APIView):
@@ -174,10 +175,10 @@ class DashboardConnectionsView(APIView):
                 )
 
         # S3 connections
-        for conn in config.list_s3_connections():
+        for conn in S3Connection.objects.filter(owner=request.user):
             connections.append(
                 {
-                    "id": conn.id,
+                    "id": str(conn.id),
                     "name": conn.name,
                     "type": "s3",
                     "endpoint": conn.endpoint,
