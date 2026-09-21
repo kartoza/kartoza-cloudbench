@@ -5,7 +5,14 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
 import { cogProtocol, getCogMetadata } from '@geomatico/maplibre-cog-protocol'
-import { getPmtilesStyle, getS3PresignedUrl, listAllLayerObjects } from '../../api/mapExplorer'
+import {
+  getLayerCollection,
+  getLayerCollections,
+  getPmtilesStyle,
+  getS3PresignedUrl,
+  listAllLayerObjects,
+  type LayerCollectionSummary,
+} from '../../api/mapExplorer'
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
 import LayersPanel from './LayersPanel'
@@ -245,6 +252,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const [mapReady, setMapReady] = useState(false)
   const [hasConnections, setHasConnections] = useState(true)
   const [availableLayers, setAvailableLayers] = useState<LayerSearchOption[]>([])
+  const [collections, setCollections] = useState<LayerCollectionSummary[]>([])
   const [layers, setLayers] = useState<MapLayerState[]>([])
   const [isLoadingSources, setIsLoadingSources] = useState(false)
 
@@ -415,6 +423,42 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
       cancelled = true
     }
   }, [mapReady])
+
+  useEffect(() => {
+    if (!mapReady) return
+    let cancelled = false
+    getLayerCollections()
+      .then((data) => {
+        if (!cancelled) setCollections(data)
+      })
+      .catch(() => {
+        if (!cancelled) setCollections([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mapReady])
+
+  // Adds every layer in a collection (e.g. everything produced from one
+  // GeoPackage upload) to the map in one go.
+  const handleAddCollection = useCallback((collectionId: string) => {
+    getLayerCollection(collectionId)
+      .then((collection) => {
+        for (const item of collection.items) {
+          addLayerRef.current({
+            connectionId: collection.connectionId,
+            connectionName: collection.name,
+            bucketName: collection.bucket,
+            key: item.key,
+            name: item.name,
+            format: item.format,
+          })
+        }
+      })
+      .catch(() => {
+        // Best-effort — individual layer failures already surface via layer status.
+      })
+  }, [])
 
   // Keep the added layers persisted in the URL so a refresh/shared link restores them.
   useEffect(() => {
@@ -613,8 +657,10 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                 <LayersPanel
                   layers={layers}
                   availableLayers={searchableLayers}
+                  collections={collections}
                   isLoadingSources={isLoadingSources}
                   onAddLayer={addLayer}
+                  onAddCollection={handleAddCollection}
                   onZoomToExtent={handleZoomToExtent}
                   onOpacityChange={handleOpacityChange}
                   onRemoveLayer={handleRemoveLayer}

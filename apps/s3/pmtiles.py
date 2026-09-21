@@ -5,10 +5,18 @@ import threading
 import zipfile
 from pathlib import PurePosixPath
 
+import httpx
 from django.conf import settings
 
 from .client import get_s3_client
-from .cng_lite import job_directory, run_conversion as run_cng_lite_conversion, source_object_key, sources_directory_key
+from .cng_lite import (
+    job_directory,
+    request_json,
+    run_conversion as run_cng_lite_conversion,
+    source_object_key,
+    sources_directory_key,
+)
+from .geopackage import is_geopackage, prepare_geopackage
 from .models import CngLiteJob
 
 KIND = "pmtiles"
@@ -112,6 +120,9 @@ def upload_raw_components(s3_client, bucket, output_key_value, job_id, uploaded_
 def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, companion_files=()):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
+    geopackage = is_geopackage(uploaded_file.name)
+    if geopackage and companion_files:
+        raise ValueError("GeoPackage conversion accepts a single file.")
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
@@ -127,11 +138,17 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
     try:
-        source_path = directory / "source.zip"
-        prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
-        job.source_key = source_object_key(
-            job.output_key, job.id, f"{PurePosixPath(uploaded_file.name).stem}.zip"
-        )
+        if geopackage:
+            source_path = directory / "source.gpkg"
+            prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
+            source_filename = PurePosixPath(uploaded_file.name).name
+            content_type = "application/geopackage+sqlite3"
+        else:
+            source_path = directory / "source.zip"
+            prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
+            source_filename = f"{PurePosixPath(uploaded_file.name).stem}.zip"
+            content_type = "application/zip"
+        job.source_key = source_object_key(job.output_key, job.id, source_filename)
         s3_client = get_s3_client(connection_id, owner_id)
         if companion_files:
             upload_raw_components(s3_client, bucket, job.output_key, job.id, uploaded_file, companion_files)
@@ -140,7 +157,7 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
                 source_file,
                 bucket,
                 job.source_key,
-                ExtraArgs={"ContentType": "application/zip"},
+                ExtraArgs={"ContentType": content_type},
             )
         job.save()
         threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
@@ -149,6 +166,72 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
         if job.pk:
             CngLiteJob.objects.filter(pk=job.pk).delete()
         raise
+    return job
+
+
+def inspect_geopackage(uploaded_file, key, connection_id, bucket, owner_id):
+    """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite for its layers.
+
+    Creates the CngLiteJob now (so the eventual conversion reuses the same
+    already-uploaded source), but leaves it "pending" — the caller is
+    expected to let the user pick layers, then call start_geopackage_conversion.
+    """
+    if not settings.CLOUDNATIVEGIS_URL:
+        raise ValueError("CloudNativeGIS URL is not configured.")
+    if not is_geopackage(uploaded_file.name):
+        raise ValueError("Select a GeoPackage (.gpkg) file.")
+    if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
+        raise ValueError("The GeoPackage exceeds the upload size limit.")
+
+    job = CngLiteJob(
+        kind=KIND,
+        owner_id=owner_id,
+        connection_id=connection_id,
+        bucket=bucket,
+        source_name=uploaded_file.name,
+        output_key=output_key(key),
+        input_size=uploaded_file.size,
+        message="Waiting for layer selection",
+    )
+    directory = job_directory(KIND, job.id)
+    directory.mkdir(parents=True, mode=0o700)
+    try:
+        source_path = directory / "source.gpkg"
+        prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
+        job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
+        s3_client = get_s3_client(connection_id, owner_id)
+        with source_path.open("rb") as source_file:
+            s3_client.client.upload_fileobj(
+                source_file,
+                bucket,
+                job.source_key,
+                ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
+            )
+        job.save()
+        presigned_url = s3_client.generate_presigned_url(bucket, job.source_key, expiration=300)
+        with httpx.Client(base_url=f"{settings.CLOUDNATIVEGIS_URL}/", timeout=httpx.Timeout(30, connect=10)) as client:
+            layers = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})["layers"]
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        if job.pk:
+            CngLiteJob.objects.filter(pk=job.pk).delete()
+        raise
+    # Keep `directory` around: run_conversion (started once layers are
+    # confirmed) reuses it to write the downloaded result, and cleans it
+    # up itself in its `finally` once the job finishes either way.
+    return job, layers
+
+
+def start_geopackage_conversion(job_id, owner_id, layers):
+    """Confirm which layers to include and start a previously-inspected GeoPackage's conversion."""
+    if not layers:
+        raise ValueError("Select at least one layer.")
+    job = CngLiteJob.objects.filter(pk=job_id, owner_id=owner_id, kind=KIND, status="pending").first()
+    if not job:
+        raise ValueError("Job not found, or conversion was already started.")
+    job.layers = layers
+    job.save(update_fields=["layers", "updated_at"])
+    threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
     return job
 
 
@@ -164,4 +247,6 @@ def run_conversion(job_id):
         validate_result=validate_pmtiles,
         invalid_result_message="CloudNativeGIS did not return a valid PMTiles file.",
         output_content_type=CONTENT_TYPE,
+        build_extra_payload=lambda job: {"layers": job.layers} if job.layers else None,
+        use_folder=lambda job: job.layers is not None,
     )

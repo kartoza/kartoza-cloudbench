@@ -296,6 +296,43 @@ export async function uploadToS3(
   })
 }
 
+export interface GeoPackageLayer {
+  name: string
+  geometryType: string
+  featureCount: number
+}
+
+// Stage a GeoPackage upload and get back its layers (name/geometry/feature count),
+// before any conversion starts.
+export async function inspectGeoPackage(
+  connectionId: string,
+  bucketName: string,
+  file: File,
+  key?: string
+): Promise<{ jobId: string; layers: GeoPackageLayer[]; key: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (key) formData.append('key', key)
+  const response = await fetch(
+    `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}/${encodeURIComponent(bucketName)}`,
+    { method: 'POST', body: formData }
+  )
+  return handleResponse(response)
+}
+
+// Confirm which layers to convert for a previously-inspected GeoPackage job.
+export async function convertGeoPackageLayers(
+  jobId: string,
+  layers: string[]
+): Promise<S3UploadResult> {
+  const response = await fetch(`${API_BASE}/s3/gpkg/convert/${encodeURIComponent(jobId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layers }),
+  })
+  return handleResponse<S3UploadResult>(response)
+}
+
 // Get a presigned URL for an S3 object
 export async function getS3PresignedURL(
   connectionId: string,
