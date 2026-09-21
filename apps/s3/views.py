@@ -32,8 +32,13 @@ from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import expire_stalled_job
 from .cog import start_conversion as start_cog_conversion
 from .duckdb import get_duckdb_engine
-from .models import CngLiteJob, S3Connection
-from .pmtiles import prepare_shapefile, start_conversion as start_pmtiles_conversion
+from .models import CngLiteJob, LayerCollection, S3Connection
+from .pmtiles import (
+    inspect_geopackage,
+    prepare_shapefile,
+    start_conversion as start_pmtiles_conversion,
+    start_geopackage_conversion,
+)
 
 # ============================================================================
 # S3 Connection Views
@@ -825,15 +830,15 @@ class S3UploadView(APIView):
                         job = start_pmtiles_conversion(
                             uploaded_file, key, conn_id, bucket, str(request.user.id), companion_files
                         )
-                        message = "Shapefile accepted for CloudNativeGIS conversion"
+                        message = "File accepted for CloudNativeGIS conversion"
                     else:
                         if companion_files:
                             return Response(
-                                {"error": "COG conversion accepts a single TIFF file."},
+                                {"error": "COG conversion accepts a single file."},
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
                         job = start_cog_conversion(uploaded_file, key, conn_id, bucket, str(request.user.id))
-                        message = "TIFF accepted for CloudNativeGIS conversion"
+                        message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
                 return Response(
@@ -890,6 +895,72 @@ class S3UploadView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class S3GeoPackageInspectView(APIView):
+    """Stage a GeoPackage upload and report its layers, before conversion starts."""
+
+    def post(self, request, conn_id, bucket):
+        if "file" not in request.FILES:
+            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+        uploaded_file = request.FILES["file"]
+        key = request.data.get("key", uploaded_file.name)
+        try:
+            job, layers = inspect_geopackage(uploaded_file, key, conn_id, bucket, str(request.user.id))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except httpx.HTTPError as exc:
+            return Response(
+                {"error": f"Could not inspect the GeoPackage: {exc}"}, status=status.HTTP_502_BAD_GATEWAY
+            )
+        return Response({"jobId": str(job.id), "layers": layers, "key": job.output_key})
+
+
+class S3GeoPackageConvertView(APIView):
+    """Confirm which layers to convert for a previously-inspected GeoPackage job."""
+
+    def post(self, request, job_id):
+        layers = request.data.get("layers")
+        try:
+            job = start_geopackage_conversion(job_id, str(request.user.id), layers)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "success": True,
+                "message": "File accepted for CloudNativeGIS conversion",
+                "key": job.output_key,
+                "size": job.input_size,
+                "conversionJobId": str(job.id),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class S3LayerCollectionListView(APIView):
+    """List the current user's layer collections (one per GeoPackage upload)."""
+
+    def get(self, request):
+        connection_id = request.query_params.get("connectionId")
+        bucket = request.query_params.get("bucket")
+        collections = LayerCollection.objects.filter(owner_id=str(request.user.id))
+        if connection_id:
+            collections = collections.filter(connection_id=connection_id)
+        if bucket:
+            collections = collections.filter(bucket=bucket)
+        return Response([collection.to_dict() for collection in collections])
+
+
+class S3LayerCollectionDetailView(APIView):
+    """A single layer collection with its full layer list."""
+
+    def get(self, request, collection_id):
+        collection = LayerCollection.objects.filter(
+            pk=collection_id, owner_id=str(request.user.id)
+        ).first()
+        if not collection:
+            return Response({"error": "Collection not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(collection.to_dict(include_items=True))
 
 
 class S3PresignedURLView(APIView):

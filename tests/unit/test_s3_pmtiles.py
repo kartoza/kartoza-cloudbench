@@ -227,10 +227,13 @@ def test_conversion_pipeline(conversion_job, settings, outcome):
                 200,
                 json={
                     "status": "done",
-                    "result_url": "/api/v1/jobs/cng-job-1/result",
+                    "results": [
+                        {"name": "output.pmtiles", "result_url": "/api/v1/jobs/cng-job-1/result/output.pmtiles"}
+                    ],
+                    "errors": [],
                 },
             )
-        if request.url.path == "/api/v1/jobs/cng-job-1/result":
+        if request.url.path == "/api/v1/jobs/cng-job-1/result/output.pmtiles":
             content = b"NOT-PMTILES" if outcome == "bad-magic" else b"PMTiles\x03fixture"
             return httpx.Response(200, content=content)
         return httpx.Response(404)

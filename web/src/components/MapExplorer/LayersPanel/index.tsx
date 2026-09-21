@@ -13,10 +13,16 @@ import {
   Select,
   Tooltip,
   chakra,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  Button,
 } from '@chakra-ui/react'
 import { motion, useDragControls } from 'framer-motion'
-import { FiX, FiAlertTriangle, FiMaximize2, FiMove } from 'react-icons/fi'
+import { FiX, FiAlertTriangle, FiMaximize2, FiMove, FiChevronDown, FiLayers } from 'react-icons/fi'
 
+import type { LayerCollectionSummary } from '../../../api/mapExplorer'
 import type { LayerSearchOption, MapLayerState } from '../types'
 import LayerSearch from './LayerSearch'
 import './styles.css'
@@ -28,8 +34,10 @@ const MotionBox = chakra(motion.div)
 interface LayersPanelProps {
   layers: MapLayerState[]
   availableLayers: LayerSearchOption[]
+  collections: LayerCollectionSummary[]
   isLoadingSources: boolean
   onAddLayer: (option: LayerSearchOption) => void
+  onAddCollection: (collectionId: string) => void
   onZoomToExtent: (bounds: [number, number, number, number]) => void
   onOpacityChange: (layerId: string, value: number) => void
   onRemoveLayer: (layerId: string) => void
@@ -41,8 +49,10 @@ interface LayersPanelProps {
 export default function LayersPanel({
   layers,
   availableLayers,
+  collections,
   isLoadingSources,
   onAddLayer,
+  onAddCollection,
   onZoomToExtent,
   onOpacityChange,
   onRemoveLayer,
@@ -94,6 +104,35 @@ export default function LayersPanel({
         </HStack>
 
         <LayerSearch options={availableLayers} onSelect={onAddLayer} isDisabled={isLoadingSources} />
+
+        {collections.length > 0 && (
+          <Menu>
+            <MenuButton
+              as={Button}
+              size="xs"
+              variant="outline"
+              leftIcon={<FiLayers size={12} />}
+              rightIcon={<FiChevronDown size={12} />}
+              mt={2}
+              w="100%"
+              fontWeight="500"
+            >
+              Add from collection
+            </MenuButton>
+            <MenuList maxH="220px" overflowY="auto" fontSize="sm">
+              {collections.map((collection) => (
+                <MenuItem key={collection.id} onClick={() => onAddCollection(collection.id)}>
+                  <VStack align="start" spacing={0}>
+                    <Text fontSize="sm" noOfLines={1}>{collection.name}</Text>
+                    <Text fontSize="xs" color="gray.500">
+                      {collection.itemCount} layer{collection.itemCount === 1 ? '' : 's'}
+                    </Text>
+                  </VStack>
+                </MenuItem>
+              ))}
+            </MenuList>
+          </Menu>
+        )}
 
         {layers.length === 0 && (
           <Text fontSize="sm" color="gray.500">

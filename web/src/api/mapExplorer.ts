@@ -96,6 +96,38 @@ export interface S3LayerCatalog {
   entries: S3LayerCatalogEntry[]
 }
 
+export interface LayerCollectionSummary {
+  id: string
+  connectionId: string
+  bucket: string
+  name: string
+  sourceName: string
+  itemCount: number
+  createdAt: string
+}
+
+export interface LayerCollectionItem {
+  name: string
+  key: string
+  format: 'pmtiles' | 'cog'
+}
+
+export interface LayerCollectionDetail extends LayerCollectionSummary {
+  items: LayerCollectionItem[]
+}
+
+// Lists the current user's layer collections — one is created automatically
+// per GeoPackage upload, grouping every layer/table it produced.
+export async function getLayerCollections(): Promise<LayerCollectionSummary[]> {
+  const response = await fetch(`${API_BASE}/s3/collections`)
+  return handleResponse(response)
+}
+
+export async function getLayerCollection(id: string): Promise<LayerCollectionDetail> {
+  const response = await fetch(`${API_BASE}/s3/collections/${encodeURIComponent(id)}`)
+  return handleResponse(response)
+}
+
 // Walks every configured S3 connection and every bucket within it
 export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
   const connections = await getS3Connections().catch(() => [])

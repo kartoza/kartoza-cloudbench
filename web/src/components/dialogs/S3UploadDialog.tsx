@@ -24,11 +24,19 @@ import {
   Alert,
   AlertIcon,
   useColorModeValue,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  Checkbox,
 } from '@chakra-ui/react'
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw } from 'react-icons/fi'
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle } from 'react-icons/fi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
+import type { ConversionJob } from '../../types'
 
 // Helper to format file size
 function formatFileSize(bytes: number): string {
@@ -37,6 +45,29 @@ function formatFileSize(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+interface LayerProgressStatus {
+  name: string
+  status: 'done' | 'active' | 'pending'
+}
+
+// Derives a per-layer done/active/pending breakdown from the job's coarse
+// 20-80% "converting" progress window and cng-lite's processing order
+// (job.layers), so the picked GeoPackage layers show individual progress
+// instead of one opaque bar.
+function layerConversionStatuses(job: ConversionJob): LayerProgressStatus[] | null {
+  const layers = job.layers
+  if (!layers || layers.length === 0) return null
+
+  const fraction = Math.min(1, Math.max(0, (job.progress - 20) / 60))
+  const activeIndex = Math.floor(fraction * layers.length)
+  const allDone = job.status === 'completed' || activeIndex >= layers.length
+
+  return layers.map((name, index) => ({
+    name,
+    status: allDone || index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
+  }))
 }
 
 // Helper to detect recommended conversion
@@ -86,9 +117,18 @@ export default function S3UploadDialog() {
   const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string; conversionJobId?: string } | null>(null)
   const [conversionJobId, setConversionJobId] = useState<string | null>(null)
 
+  // GeoPackage -> PMTiles layer picker (QGIS-style "select items to add")
+  const [isInspecting, setIsInspecting] = useState(false)
+  const [gpkgJobId, setGpkgJobId] = useState<string | null>(null)
+  const [gpkgLayers, setGpkgLayers] = useState<api.GeoPackageLayer[] | null>(null)
+  const [selectedLayerNames, setSelectedLayerNames] = useState<Set<string>>(new Set())
+
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
   const isTiff = !!selectedFile && /\.(tif|tiff)$/i.test(selectedFile.name)
+  // A GeoPackage can hold vector layers (-> PMTiles) or raster tiles (-> COG);
+  // CloudNativeGIS Lite figures out which, so offer both.
+  const isGpkgFile = !!selectedFile && /\.gpkg$/i.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
 
@@ -105,8 +145,8 @@ export default function S3UploadDialog() {
     queryFn: () => api.getConversionToolStatus(),
     enabled: isOpen,
   })
-  const showPMTiles = isShapefile && !!toolStatus?.cloudnativegis?.available
-  const showCOG = isTiff && !!toolStatus?.cloudnativegis?.available
+  const showPMTiles = (isShapefile || isGpkgFile) && !!toolStatus?.cloudnativegis?.available
+  const showCOG = (isTiff || isGpkgFile) && !!toolStatus?.cloudnativegis?.available
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -142,6 +182,10 @@ export default function S3UploadDialog() {
       setConversionJobId(null)
       setCreateSubfolder(true)
       setIsGeoPackage(false)
+      setIsInspecting(false)
+      setGpkgJobId(null)
+      setGpkgLayers(null)
+      setSelectedLayerNames(new Set())
     }
   }, [isOpen, bucketName])
 
@@ -172,6 +216,9 @@ export default function S3UploadDialog() {
     setSelectedFile(file)
     setCompanionFiles(files.filter((component) => component !== file))
     setUploadResult(null)
+    setGpkgJobId(null)
+    setGpkgLayers(null)
+    setSelectedLayerNames(new Set())
     // Set custom key to filename by default
     setCustomKey(file.name)
   }, [isUploading, isConverting, toast])
@@ -186,7 +233,7 @@ export default function S3UploadDialog() {
   }, [])
 
   const handleUpload = async () => {
-    if (isUploading || isConverting) return
+    if (isUploading || isConverting || isInspecting) return
     if (!selectedFile || !connectionId || !selectedBucket) {
       toast({
         title: 'Missing required fields',
@@ -194,6 +241,31 @@ export default function S3UploadDialog() {
         status: 'warning',
         duration: 3000,
       })
+      return
+    }
+
+    // A GeoPackage converting to PMTiles goes through the layer picker
+    // instead of converting immediately — stage it and ask what it contains.
+    if (isGpkgFile && convertToCloudNative && targetFormat === 'pmtiles') {
+      setIsInspecting(true)
+      setUploadResult(null)
+      try {
+        const { jobId, layers } = await api.inspectGeoPackage(
+          connectionId, selectedBucket, selectedFile, customKey || undefined
+        )
+        setGpkgJobId(jobId)
+        setGpkgLayers(layers)
+        setSelectedLayerNames(new Set(layers.map((layer) => layer.name)))
+      } catch (err) {
+        toast({
+          title: 'Could not read GeoPackage',
+          description: (err as Error).message,
+          status: 'error',
+          duration: 5000,
+        })
+      } finally {
+        setIsInspecting(false)
+      }
       return
     }
 
@@ -241,6 +313,58 @@ export default function S3UploadDialog() {
       })
       toast({
         title: 'Upload failed',
+        description: (err as Error).message,
+        status: 'error',
+        duration: 5000,
+      })
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const toggleLayer = (name: string) => {
+    setSelectedLayerNames((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handleConfirmLayers = async () => {
+    if (!gpkgJobId || selectedLayerNames.size === 0 || isUploading || isConverting) return
+
+    setIsUploading(true)
+    setUploadResult(null)
+
+    try {
+      const result = await api.convertGeoPackageLayers(gpkgJobId, Array.from(selectedLayerNames))
+
+      setUploadResult({
+        success: result.success,
+        message: result.message,
+        conversionJobId: result.conversionJobId,
+      })
+
+      if (result.conversionJobId) {
+        setConversionJobId(result.conversionJobId)
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
+
+      toast({
+        title: 'Conversion started',
+        description: result.message,
+        status: 'success',
+        duration: 3000,
+      })
+    } catch (err) {
+      setUploadResult({
+        success: false,
+        message: (err as Error).message,
+      })
+      toast({
+        title: 'Conversion failed',
         description: (err as Error).message,
         status: 'error',
         duration: 5000,
@@ -376,10 +500,12 @@ export default function S3UploadDialog() {
                     </VStack>
                   )}
                 </Box>
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Select .shp, .shx and .dbf together (plus .prj if available).
-                  Cloudbench will ZIP them automatically.
-                </Text>
+                {isShapefile && (
+                  <Text fontSize="xs" color="gray.500" mt={1}>
+                    Select .shp, .shx and .dbf together (plus .prj if available).
+                    Cloudbench will ZIP them automatically.
+                  </Text>
+                )}
               </FormControl>
 
               {/* Object Key (path) */}
@@ -483,6 +609,56 @@ export default function S3UploadDialog() {
             </VStack>
           </HStack>
 
+          {/* GeoPackage layer picker (QGIS-style "Select Items to Add") */}
+          {gpkgLayers && !conversionJobId && (
+            <Box mt={4} p={3} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
+              <HStack justify="space-between" mb={2}>
+                <Text fontWeight="600" color="gray.700" fontSize="sm">
+                  Select layers to convert ({selectedLayerNames.size}/{gpkgLayers.length})
+                </Text>
+                <HStack spacing={1}>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setSelectedLayerNames(new Set(gpkgLayers.map((layer) => layer.name)))}
+                  >
+                    Select All
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => setSelectedLayerNames(new Set())}>
+                    Deselect All
+                  </Button>
+                </HStack>
+              </HStack>
+              <Box maxH="180px" overflowY="auto" borderRadius="md" border="1px solid" borderColor="gray.200" bg="white">
+                <Table size="sm">
+                  <Thead position="sticky" top={0} bg="gray.50">
+                    <Tr>
+                      <Th width="1%" />
+                      <Th>Layer</Th>
+                      <Th>Geometry</Th>
+                      <Th isNumeric>Features</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {gpkgLayers.map((layer) => (
+                      <Tr key={layer.name} cursor="pointer" onClick={() => toggleLayer(layer.name)}>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            isChecked={selectedLayerNames.has(layer.name)}
+                            onChange={() => toggleLayer(layer.name)}
+                          />
+                        </Td>
+                        <Td fontSize="xs" fontWeight="500">{layer.name}</Td>
+                        <Td fontSize="xs" color="gray.500">{layer.geometryType}</Td>
+                        <Td fontSize="xs" color="gray.500" isNumeric>{layer.featureCount.toLocaleString()}</Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </Box>
+            </Box>
+          )}
+
           {/* Status section - below the two columns */}
           <VStack spacing={2} mt={4} align="stretch">
             {/* Upload Progress */}
@@ -521,6 +697,30 @@ export default function S3UploadDialog() {
                 <Text fontSize="xs" color="gray.600" mt={1}>
                   {conversionJob.message}
                 </Text>
+                {(() => {
+                  const layerStatuses = layerConversionStatuses(conversionJob)
+                  if (!layerStatuses) return null
+                  return (
+                    <VStack align="stretch" spacing={0.5} mt={2} pt={2} borderTop="1px solid" borderColor="blue.100">
+                      {layerStatuses.map((layer) => (
+                        <HStack key={layer.name} spacing={2}>
+                          {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={3} />}
+                          {layer.status === 'active' && (
+                            <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
+                          )}
+                          {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={3} />}
+                          <Text
+                            fontSize="xs"
+                            color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
+                            fontWeight={layer.status === 'active' ? '600' : '400'}
+                          >
+                            {layer.name}
+                          </Text>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  )
+                })()}
               </Box>
             )}
 
@@ -561,11 +761,37 @@ export default function S3UploadDialog() {
                     <AlertIcon as={FiCheckCircle} boxSize={4} />
                     <Box>
                       <Text fontSize="xs" fontWeight="500">Conversion Complete</Text>
-                      <Text fontSize="xs" color="gray.600">
-                        Output: {conversionJob.outputPath}
-                      </Text>
+                      {conversionJob.outputPath ? (
+                        <Text fontSize="xs" color="gray.600">
+                          Output: {conversionJob.outputPath}
+                        </Text>
+                      ) : (
+                        <>
+                          <Text fontSize="xs" color="gray.600">
+                            {conversionJob.outputPaths?.length ?? 0} files created:
+                          </Text>
+                          {conversionJob.outputPaths?.map((path) => (
+                            <Text key={path} fontSize="xs" color="gray.600" noOfLines={1}>
+                              {path}
+                            </Text>
+                          ))}
+                        </>
+                      )}
                     </Box>
                   </Alert>
+                  {conversionJob.error && (
+                    <Alert status="warning" borderRadius="lg" variant="subtle" py={2} mt={2}>
+                      <AlertIcon boxSize={4} />
+                      <Box>
+                        <Text fontSize="xs" fontWeight="500">Some layers were skipped</Text>
+                        {conversionJob.error.split('; ').map((line) => (
+                          <Text key={line} fontSize="xs" color="gray.600">
+                            {line}
+                          </Text>
+                        ))}
+                      </Box>
+                    </Alert>
+                  )}
                 </motion.div>
               )}
 
@@ -600,22 +826,37 @@ export default function S3UploadDialog() {
             {uploadResult?.success ? 'Close' : 'Cancel'}
           </Button>
           <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            <Button
-              colorScheme="orange"
-              onClick={handleUpload}
-              isLoading={isUploading || isConverting}
-              loadingText={isConverting ? 'Converting...' : 'Uploading...'}
-              isDisabled={
-                !selectedFile ||
-                !selectedBucket ||
-                (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
-              }
-              borderRadius="lg"
-              px={6}
-              leftIcon={<FiUpload />}
-            >
-              Upload
-            </Button>
+            {gpkgLayers && !conversionJobId ? (
+              <Button
+                colorScheme="orange"
+                onClick={handleConfirmLayers}
+                isLoading={isUploading || isConverting}
+                loadingText="Converting..."
+                isDisabled={selectedLayerNames.size === 0}
+                borderRadius="lg"
+                px={6}
+                leftIcon={<FiUpload />}
+              >
+                Convert {selectedLayerNames.size} Layer{selectedLayerNames.size === 1 ? '' : 's'}
+              </Button>
+            ) : (
+              <Button
+                colorScheme="orange"
+                onClick={handleUpload}
+                isLoading={isUploading || isConverting || isInspecting}
+                loadingText={isConverting ? 'Converting...' : isInspecting ? 'Reading GeoPackage...' : 'Uploading...'}
+                isDisabled={
+                  !selectedFile ||
+                  !selectedBucket ||
+                  (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
+                }
+                borderRadius="lg"
+                px={6}
+                leftIcon={<FiUpload />}
+              >
+                Upload
+              </Button>
+            )}
           </motion.div>
         </ModalFooter>
       </ModalContent>

@@ -98,4 +98,26 @@ urlpatterns = [
         views.S3PresignedURLView.as_view(),
         name="s3-presigned-url",
     ),
+    # GeoPackage layer inspection + confirmation (pmtiles only)
+    path(
+        "s3/gpkg/inspect/<str:conn_id>/<str:bucket>",
+        views.S3GeoPackageInspectView.as_view(),
+        name="s3-gpkg-inspect",
+    ),
+    path(
+        "s3/gpkg/convert/<str:job_id>",
+        views.S3GeoPackageConvertView.as_view(),
+        name="s3-gpkg-convert",
+    ),
+    # Layer collections (grouped layers from one GeoPackage upload)
+    path(
+        "s3/collections",
+        views.S3LayerCollectionListView.as_view(),
+        name="s3-collection-list",
+    ),
+    path(
+        "s3/collections/<str:collection_id>",
+        views.S3LayerCollectionDetailView.as_view(),
+        name="s3-collection-detail",
+    ),
 ]

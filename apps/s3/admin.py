@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import CngLiteJob, S3Connection
+from .models import CngLiteJob, LayerCollection, LayerCollectionItem, S3Connection
 
 
 def _mask(value: str) -> str:
@@ -56,3 +56,19 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "updated_at",
         "completed_at",
     ]
+
+
+class LayerCollectionItemInline(admin.TabularInline):
+    model = LayerCollectionItem
+    extra = 0
+    readonly_fields = ["name", "key", "format"]
+    can_delete = False
+
+
+@admin.register(LayerCollection)
+class LayerCollectionAdmin(admin.ModelAdmin):
+    verbose_name = "Layer Collection"
+    list_display = ["name", "owner_id", "bucket", "source_name", "created_at"]
+    search_fields = ["name", "owner_id", "connection_id", "bucket", "source_name"]
+    readonly_fields = ["id", "owner_id", "connection_id", "bucket", "name", "source_name", "created_at"]
+    inlines = [LayerCollectionItemInline]

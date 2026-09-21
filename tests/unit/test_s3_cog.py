@@ -124,9 +124,16 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
             if outcome == "failed":
                 return httpx.Response(200, json={"status": "failed", "detail": "gdal_translate failed"})
             return httpx.Response(
-                200, json={"status": "done", "result_url": "/api/v1/jobs/cng-job-1/result"}
+                200,
+                json={
+                    "status": "done",
+                    "results": [
+                        {"name": "output_cog.tif", "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif"}
+                    ],
+                    "errors": [],
+                },
             )
-        if request.url.path == "/api/v1/jobs/cng-job-1/result":
+        if request.url.path == "/api/v1/jobs/cng-job-1/result/output_cog.tif":
             content = b"not-a-tiff" if outcome == "bad-magic" else b"II*\x00cog-fixture"
             return httpx.Response(200, content=content)
         return httpx.Response(404)
