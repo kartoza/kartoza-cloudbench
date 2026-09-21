@@ -107,7 +107,7 @@ class S3ConnectionTestView(APIView):
             region=data.get("region", "us-east-1"),
             use_ssl=data.get("useSsl", True),
             path_style=data.get("pathStyle", True),
-            user_id=str(request.user.username),
+            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
