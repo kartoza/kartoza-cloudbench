@@ -31,6 +31,8 @@ import { useUIStore } from '../../stores/uiStore'
 import { useConnectionStore } from '../../stores/connectionStore'
 import { createPGService, testPGServiceDirect, testConnectionDirect, type PGServiceCreate } from '../../api'
 import { springs } from '../../utils/animations'
+import { getCreateGeoServerUrl, getCreatePostGISUrl } from '../../config/env'
+import { BuyExternallyOption } from './BuyExternallyOption'
 
 type ConnectionType = 'geoserver' | 'postgresql'
 
@@ -63,6 +65,7 @@ export default function ConnectionDialog() {
   const testConnection = useConnectionStore((state) => state.testConnection)
   const connections = useConnectionStore((state) => state.connections)
   const refreshPGServices = useConnectionStore((state) => state.refreshPGServices)
+  const fetchConnections = useConnectionStore((state) => state.fetchConnections)
 
   // Connection type selector
   const [connectionType, setConnectionType] = useState<ConnectionType>('geoserver')
@@ -92,6 +95,17 @@ export default function ConnectionDialog() {
   const isOpen = activeDialog === 'connection'
   const isEditMode = dialogData?.mode === 'edit'
   const connectionId = dialogData?.data?.connectionId as string | undefined
+  const createGeoServerUrl = getCreateGeoServerUrl()
+  const createPostGISUrl = getCreatePostGISUrl()
+
+  const handleBoughtExternally = () => {
+    if (connectionType === 'postgresql') {
+      queryClient.invalidateQueries({ queryKey: ['pgservices'] })
+    } else {
+      void fetchConnections()
+    }
+    closeDialog()
+  }
 
   // Load existing data in edit mode
   useEffect(() => {
@@ -345,6 +359,15 @@ export default function ConnectionDialog() {
 
         <ModalBody py={6}>
           <VStack spacing={4}>
+            {/* Buy in GeoHosting - only for new connections when configured */}
+            {!isEditMode && (
+              <BuyExternallyOption
+                url={connectionType === 'geoserver' ? createGeoServerUrl : createPostGISUrl}
+                label="Buy in GeoHosting"
+                onSuccess={handleBoughtExternally}
+              />
+            )}
+
             {/* Connection Type Selector - only show for new connections */}
             {!isEditMode && (
               <FormControl>

@@ -35,6 +35,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import { springs } from '../../utils/animations'
+import { getCreateGeoNodeUrl } from '../../config/env'
+import { BuyExternallyOption } from './BuyExternallyOption'
 
 export default function GeoNodeConnectionDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
@@ -60,6 +62,7 @@ export default function GeoNodeConnectionDialog() {
   const isOpen = activeDialog === 'geonode'
   const isEditMode = dialogData?.mode === 'edit'
   const connectionId = dialogData?.data?.connectionId as string | undefined
+  const createGeoNodeUrl = getCreateGeoNodeUrl()
 
   // Load existing data in edit mode
   useEffect(() => {
@@ -206,6 +209,17 @@ export default function GeoNodeConnectionDialog() {
 
         <ModalBody py={6}>
           <VStack spacing={4}>
+            {!isEditMode && (
+              <BuyExternallyOption
+                url={createGeoNodeUrl}
+                label="Buy in GeoHosting"
+                onSuccess={() => {
+                  queryClient.invalidateQueries({ queryKey: ['geonodeconnections'] })
+                  closeDialog()
+                }}
+              />
+            )}
+
             <FormControl isRequired>
               <FormLabel fontWeight="500" color="gray.700">Connection Name</FormLabel>
               <Input
