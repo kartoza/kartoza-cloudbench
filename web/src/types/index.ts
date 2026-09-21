@@ -583,7 +583,13 @@ export type ConversionJobStatus = 'pending' | 'running' | 'completed' | 'failed'
 export interface ConversionJob {
   id: string
   sourcePath: string
-  outputPath: string
+  // Null when the job produced multiple files (e.g. one PMTiles per
+  // GeoPackage vector layer) — see outputPaths for the full list.
+  outputPath: string | null
+  outputPaths?: string[]
+  // GeoPackage -> pmtiles jobs only: the vector layers being converted, in
+  // the order cng-lite processes them.
+  layers?: string[] | null
   sourceFormat: string
   targetFormat: string
   status: ConversionJobStatus

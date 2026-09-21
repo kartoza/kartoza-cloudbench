@@ -52,6 +52,15 @@ class CngLiteJob(models.Model):
     source_key = models.TextField(blank=True)
     output_key = models.TextField()
     input_size = models.BigIntegerField()
+    # GeoPackage -> pmtiles only: which layers to include, chosen after
+    # inspecting the file (see apps.s3.pmtiles.inspect_geopackage). Null for
+    # jobs that don't go through the inspect/pick flow (shapefiles, TIFFs).
+    layers = models.JSONField(null=True, blank=True)
+    # Set when a job produces more than one output file (every GeoPackage
+    # job does: one PMTiles per vector layer, or one COG per raster table).
+    # `output_key` then becomes the folder they were all stored under,
+    # rather than a single object key — see apps.s3.cng_lite.run_conversion.
+    output_keys = models.JSONField(null=True, blank=True)
     output_size = models.BigIntegerField(default=0)
     status = models.CharField(max_length=20, default="pending")
     progress = models.PositiveSmallIntegerField(default=0)
@@ -63,6 +72,11 @@ class CngLiteJob(models.Model):
 
     def to_dict(self):
         formats = CONVERSION_FORMATS[self.kind]
+        output_paths = (
+            [f"s3://{self.bucket}/{item['key']}" for item in self.output_keys]
+            if self.output_keys
+            else [f"s3://{self.bucket}/{self.output_key}"]
+        )
         return {
             "id": str(self.id),
             "status": self.status,
@@ -71,11 +85,57 @@ class CngLiteJob(models.Model):
             "error": self.error,
             "sourcePath": self.source_name,
             "sourceStoredPath": f"s3://{self.bucket}/{self.source_key}" if self.source_key else None,
-            "outputPath": f"s3://{self.bucket}/{self.output_key}",
+            "outputPath": output_paths[0] if len(output_paths) == 1 else None,
+            "outputPaths": output_paths,
             "sourceFormat": formats["sourceFormat"],
             "targetFormat": formats["targetFormat"],
             "inputSize": self.input_size,
             "outputSize": self.output_size,
+            "layers": self.layers,
             "startedAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+
+class LayerCollection(models.Model):
+    """A group of layers produced together from one GeoPackage upload.
+
+    Created automatically once a multi-output CngLiteJob (pmtiles per
+    vector layer, or COG per raster table) completes — see
+    apps.s3.cng_lite.run_conversion.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner_id = models.CharField(max_length=255)
+    connection_id = models.CharField(max_length=255)
+    bucket = models.CharField(max_length=255)
+    name = models.CharField(max_length=255)
+    source_name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def to_dict(self, include_items=False):
+        data = {
+            "id": str(self.id),
+            "connectionId": self.connection_id,
+            "bucket": self.bucket,
+            "name": self.name,
+            "sourceName": self.source_name,
+            "itemCount": self.items.count(),
+            "createdAt": self.created_at.isoformat(),
+        }
+        if include_items:
+            data["items"] = [item.to_dict() for item in self.items.all()]
+        return data
+
+
+class LayerCollectionItem(models.Model):
+    collection = models.ForeignKey(LayerCollection, on_delete=models.CASCADE, related_name="items")
+    name = models.CharField(max_length=255)
+    key = models.TextField()
+    format = models.CharField(max_length=10)  # "pmtiles" | "cog"
+
+    def to_dict(self):
+        return {"name": self.name, "key": self.key, "format": self.format}

@@ -8,6 +8,7 @@ from django.conf import settings
 
 from .client import get_s3_client
 from .cng_lite import job_directory, run_conversion as run_cng_lite_conversion, source_object_key
+from .geopackage import is_geopackage, prepare_geopackage
 from .models import CngLiteJob
 
 KIND = "cog"
@@ -22,7 +23,7 @@ def output_key(key):
     key = key.rstrip("/")
     if key.lower().endswith((".tif", ".tiff")):
         return key
-    return f"{key}.tif"
+    return f"{PurePosixPath(key).with_suffix('')}.tif"
 
 
 def prepare_tiff(uploaded_file, destination):
@@ -45,6 +46,7 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id):
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
+    geopackage = is_geopackage(uploaded_file.name)
     job = CngLiteJob(
         kind=KIND,
         owner_id=owner_id,
@@ -57,8 +59,14 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id):
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
     try:
-        source_path = directory / "source.tif"
-        prepare_tiff(uploaded_file, source_path)
+        if geopackage:
+            source_path = directory / "source.gpkg"
+            prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
+            content_type = "application/geopackage+sqlite3"
+        else:
+            source_path = directory / "source.tif"
+            prepare_tiff(uploaded_file, source_path)
+            content_type = "image/tiff"
         job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
         s3_client = get_s3_client(connection_id, owner_id)
         with source_path.open("rb") as source_file:
@@ -66,7 +74,7 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id):
                 source_file,
                 bucket,
                 job.source_key,
-                ExtraArgs={"ContentType": "image/tiff"},
+                ExtraArgs={"ContentType": content_type},
             )
         job.save()
         threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
@@ -90,4 +98,8 @@ def run_conversion(job_id):
         validate_result=validate_cog,
         invalid_result_message="CloudNativeGIS did not return a valid COG file.",
         output_content_type=CONTENT_TYPE,
+        # A raster GeoPackage converts to one COG per raster table (never
+        # merged), stored under a folder named after the upload — even
+        # when it only has one, for predictability.
+        use_folder=lambda job: is_geopackage(job.source_name),
     )
