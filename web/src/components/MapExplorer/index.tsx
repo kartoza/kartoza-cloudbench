@@ -21,6 +21,8 @@ import './styles.css'
 
 const LAYER_COLORS = ['#2d7d9b', '#E8A331', '#7c5cbf', '#3f9142', '#c2434f', '#3a8fa6']
 
+const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+
 async function addCogLayer(
   mapInstance: maplibregl.Map,
   layerId: string,
@@ -43,6 +45,54 @@ async function addCogLayer(
   })
 
   return metadata.bbox
+}
+
+function buildFeaturePopupContent(layerName: string, feature: maplibregl.MapGeoJSONFeature): HTMLElement {
+  const container = document.createElement('div')
+  container.className = 'mx-popup'
+
+  const header = document.createElement('div')
+  header.className = 'mx-popup-header'
+  const title = document.createElement('div')
+  title.className = 'mx-popup-header-title'
+  title.textContent = layerName
+  const subtitle = document.createElement('div')
+  subtitle.className = 'mx-popup-header-subtitle'
+  subtitle.textContent = 'Feature attributes'
+  header.appendChild(title)
+  header.appendChild(subtitle)
+  container.appendChild(header)
+
+  const body = document.createElement('div')
+  body.className = 'mx-popup-body'
+  container.appendChild(body)
+
+  const entries = Object.entries(feature.properties ?? {})
+  if (entries.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'mx-popup-empty'
+    empty.textContent = 'No attributes on this feature'
+    body.appendChild(empty)
+    return container
+  }
+
+  const table = document.createElement('table')
+  table.className = 'mx-popup-table'
+  for (const [key, value] of entries) {
+    const row = table.insertRow()
+    const keyCell = row.insertCell()
+    keyCell.className = 'mx-popup-key'
+    keyCell.textContent = key
+    const valueCell = row.insertCell()
+    valueCell.className = 'mx-popup-value'
+    valueCell.textContent = String(value)
+  }
+  body.appendChild(table)
+  return container
+}
+
+function isRenderedIdFor(renderedId: string, layerId: string): boolean {
+  return renderedId === `${layerId}-fill` || renderedId === `${layerId}-line` || renderedId.startsWith(`${layerId}-custom-`)
 }
 
 interface LoadedLayerInfo {
@@ -215,23 +265,36 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          basemap: {
-            type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors © CARTO',
-          },
-        },
-        layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
-      },
+      style: BASEMAP_STYLE_URL,
       center: [10, 45],
       zoom: 3,
     })
     mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right')
     mapInstance.on('load', () => setMapReady(true))
+    mapInstance.on('click', (e) => {
+      const inspectableIds = (mapInstance.getStyle()?.layers ?? [])
+        .map((l) => l.id)
+        .filter((id) => layersRef.current.some((layer) => isRenderedIdFor(id, layer.id)))
+      if (inspectableIds.length === 0) return
+
+      const features = mapInstance.queryRenderedFeatures(e.point, { layers: inspectableIds })
+      if (features.length === 0) return
+
+      const feature = features[0]
+      const parentLayer = layersRef.current.find((layer) => isRenderedIdFor(feature.layer.id, layer.id))
+      new maplibregl.Popup({ maxWidth: '300px', className: 'mx-feature-popup' })
+        .setLngLat(e.lngLat)
+        .setDOMContent(buildFeaturePopupContent(parentLayer?.name ?? feature.layer.id, feature))
+        .addTo(mapInstance)
+    })
+    mapInstance.on('mousemove', (e) => {
+      const inspectableIds = (mapInstance.getStyle()?.layers ?? [])
+        .map((l) => l.id)
+        .filter((id) => layersRef.current.some((layer) => isRenderedIdFor(id, layer.id)))
+      const hovering = inspectableIds.length > 0 && mapInstance.queryRenderedFeatures(e.point, { layers: inspectableIds }).length > 0
+      mapInstance.getCanvas().style.cursor = hovering ? 'pointer' : ''
+    })
+
     map.current = mapInstance
 
     return () => {
@@ -377,11 +440,35 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, opacity: value } : l)))
     const mapInstance = map.current
     if (!mapInstance) return
-    if (mapInstance.getLayer(`${layerId}-fill`)) {
-      mapInstance.setPaintProperty(`${layerId}-fill`, 'fill-opacity', value / 100)
-    }
-    if (mapInstance.getLayer(layerId)) {
-      mapInstance.setPaintProperty(layerId, 'raster-opacity', value / 100)
+
+    // Covers every rendered layer for this id: the default `-fill`/`-line`
+    // pair, a raster/cog layer (bare id), or a saved custom style's
+    // `-custom-N` layers — same id-matching `removeRenderedLayers` uses.
+    const renderedIds = (mapInstance.getStyle()?.layers ?? [])
+      .map((l) => l.id)
+      .filter((id) => id === layerId || id.startsWith(`${layerId}-`))
+
+    for (const id of renderedIds) {
+      const renderedLayer = mapInstance.getLayer(id)
+      if (!renderedLayer) continue
+      switch (renderedLayer.type) {
+        case 'fill':
+          mapInstance.setPaintProperty(id, 'fill-opacity', value / 100)
+          break
+        case 'line':
+          mapInstance.setPaintProperty(id, 'line-opacity', value / 100)
+          break
+        case 'raster':
+          mapInstance.setPaintProperty(id, 'raster-opacity', value / 100)
+          break
+        case 'circle':
+          mapInstance.setPaintProperty(id, 'circle-opacity', value / 100)
+          break
+        case 'symbol':
+          mapInstance.setPaintProperty(id, 'icon-opacity', value / 100)
+          mapInstance.setPaintProperty(id, 'text-opacity', value / 100)
+          break
+      }
     }
   }, [])
 
@@ -434,12 +521,9 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
           onClick={onClose}
         />
         <Text fontWeight="700" fontSize="lg" color="gray.800">
-          CAS Data Explorer
+          Data Explorer
         </Text>
         <Box flex={1} textAlign="center">
-          <Text fontSize="sm" color="gray.400" fontWeight="500">
-            EN | NL
-          </Text>
         </Box>
         <HStack spacing={0} bg="gray.100" borderRadius="full" p={1}>
           <Button
@@ -482,6 +566,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
               <>
                 {/* Scenario card — coming soon, not wired to real data yet */}
                 <Box
+                  display="none"
                   position="absolute"
                   top={4}
                   left={4}

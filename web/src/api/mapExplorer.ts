@@ -214,6 +214,18 @@ export async function openStyleEditor(
     style.zoom = zoom
   }
 
+  // A saved style embeds a presigned pmtiles:// URL from whenever it was
+  // last saved, which expires — always refresh it to the current one so a
+  // previously-saved style doesn't silently fail to load its tileset.
+  const sources = style.sources as Record<string, { url?: string }> | undefined
+  if (sources) {
+    for (const source of Object.values(sources)) {
+      if (typeof source?.url === 'string' && source.url.startsWith('pmtiles://')) {
+        source.url = `pmtiles://${tilesUrl}`
+      }
+    }
+  }
+
   const layers = Array.isArray(style.layers) ? (style.layers as Record<string, unknown>[]) : []
   const dataLayerIndex = layers.findIndex((l) => l.type !== 'background')
 

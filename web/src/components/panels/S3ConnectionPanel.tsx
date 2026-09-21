@@ -381,7 +381,7 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
       </Card>
 
       {/* Conversion Tools Status */}
-      <Card bg={cardBg}>
+      <Card bg={cardBg} display="none">
         <CardBody>
           <HStack mb={4}>
             <Icon as={FiRefreshCw} color="green.500" />
