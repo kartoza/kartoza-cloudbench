@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from '@chakra-ui/react'
 import { getS3Connections, getS3Buckets } from '../../api/s3'
-import { listPmtilesObjects, getS3PresignedUrl } from '../../api/mapExplorer'
+import { listPmtilesObjects, getS3PresignedUrl, openStyleEditor } from '../../api/mapExplorer'
 import { getConnections } from '../../api/connection'
 import { getWorkspaces } from '../../api/workspace'
 import { getLayers } from '../../api/layer'
@@ -23,11 +23,19 @@ export interface MapTarget {
   bucketName: string
 }
 
+interface StyleTarget {
+  connectionId: string
+  bucketName: string
+  key: string
+  name: string
+}
+
 interface CatalogueItem {
   id: string
   title: string
   description?: string
   mapTarget?: MapTarget
+  styleTarget?: StyleTarget
   downloadHref?: string
   downloadOnClick?: () => void
 }
@@ -72,6 +80,12 @@ async function buildS3Sections(): Promise<CatalogueSection[]> {
             title: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
             description: `${formatBytes(obj.size)} · Updated ${new Date(obj.lastModified).toLocaleDateString()}`,
             mapTarget: { connectionId: connection.id, bucketName: bucket.name },
+            styleTarget: {
+              connectionId: connection.id,
+              bucketName: bucket.name,
+              key: obj.key,
+              name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
+            },
             downloadOnClick: async () => {
               const url = await getS3PresignedUrl(connection.id, bucket.name, obj.key)
               window.open(url, '_blank')
@@ -209,17 +223,31 @@ export default function StacCataloguePage({ onOpenOnMap }: StacCataloguePageProp
                             </Button>
                           </Tooltip>
                         )}
-                        {item.downloadOnClick ? (
-                          <ChakraLink fontSize="sm" color="gray.500" onClick={item.downloadOnClick}>
-                            Download
-                          </ChakraLink>
-                        ) : item.downloadHref ? (
-                          <ChakraLink href={item.downloadHref} isExternal fontSize="sm" color="gray.500">
-                            Download
-                          </ChakraLink>
-                        ) : (
-                          <Text fontSize="sm" color="gray.300">Download</Text>
-                        )}
+                        <HStack spacing={3}>
+                          {item.styleTarget && (
+                            <ChakraLink
+                              fontSize="sm"
+                              color="gray.500"
+                              onClick={() => {
+                                const target = item.styleTarget!
+                                openStyleEditor(target.connectionId, target.bucketName, target.key, target.name)
+                              }}
+                            >
+                              Edit style
+                            </ChakraLink>
+                          )}
+                          {item.downloadOnClick ? (
+                            <ChakraLink fontSize="sm" color="gray.500" onClick={item.downloadOnClick}>
+                              Download
+                            </ChakraLink>
+                          ) : item.downloadHref ? (
+                            <ChakraLink href={item.downloadHref} isExternal fontSize="sm" color="gray.500">
+                              Download
+                            </ChakraLink>
+                          ) : (
+                            <Text fontSize="sm" color="gray.300">Download</Text>
+                          )}
+                        </HStack>
                       </HStack>
                     </VStack>
                   )

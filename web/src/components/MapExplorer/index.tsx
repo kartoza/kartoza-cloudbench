@@ -5,7 +5,7 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { PMTiles, Protocol } from 'pmtiles'
 import { cogProtocol, getCogMetadata } from '@geomatico/maplibre-cog-protocol'
-import { getS3PresignedUrl, listAllLayerObjects } from '../../api/mapExplorer'
+import { getPmtilesStyle, getS3PresignedUrl, listAllLayerObjects } from '../../api/mapExplorer'
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
 import LayersPanel from './LayersPanel'
@@ -45,18 +45,78 @@ async function addCogLayer(
   return metadata.bbox
 }
 
-/** Fetches and renders a single layer's source/layer(s) onto the map, returning its bounds. */
+interface LoadedLayerInfo {
+  bounds: [number, number, number, number]
+  /** Vector PMTiles layers can switch between the default coloring and a saved style; raster/COG can't. */
+  isVector: boolean
+  sourceLayer?: string
+}
+
+/** Removes any rendered layer(s) previously added for this id (default fill/line, or a custom style's layers). */
+function removeRenderedLayers(mapInstance: maplibregl.Map, layerId: string): void {
+  const ids = (mapInstance.getStyle()?.layers ?? [])
+    .map((l) => l.id)
+    .filter((id) => id === layerId || id.startsWith(`${layerId}-`))
+  for (const id of ids) {
+    if (mapInstance.getLayer(id)) mapInstance.removeLayer(id)
+  }
+}
+
+/** Renders a vector PMTiles source either with the default fill/line paint, or a saved custom style's own layers. */
+function applyPmtilesVectorStyle(
+  mapInstance: maplibregl.Map,
+  layerId: string,
+  sourceLayerName: string,
+  color: string,
+  opacity: number,
+  customStyle: Record<string, unknown> | null
+): void {
+  removeRenderedLayers(mapInstance, layerId)
+
+  const customLayers = Array.isArray(customStyle?.layers) ? (customStyle.layers as Record<string, unknown>[]) : null
+  if (customLayers) {
+    customLayers
+      .filter((layerDef) => layerDef.type !== 'background')
+      .forEach((layerDef, i) => {
+        mapInstance.addLayer({
+          ...layerDef,
+          id: `${layerId}-custom-${i}`,
+          source: layerId,
+          'source-layer': (layerDef['source-layer'] as string | undefined) || sourceLayerName,
+        } as maplibregl.LayerSpecification)
+      })
+    return
+  }
+
+  mapInstance.addLayer({
+    id: `${layerId}-fill`,
+    type: 'fill',
+    source: layerId,
+    'source-layer': sourceLayerName,
+    paint: { 'fill-color': color, 'fill-opacity': opacity / 100 },
+  })
+  mapInstance.addLayer({
+    id: `${layerId}-line`,
+    type: 'line',
+    source: layerId,
+    'source-layer': sourceLayerName,
+    paint: { 'line-color': color, 'line-width': 1 },
+  })
+}
+
+/** Fetches and renders a single layer's source/layer(s) onto the map. */
 async function loadLayerOntoMap(
   mapInstance: maplibregl.Map,
   protocol: Protocol,
   connectionId: string,
   bucketName: string,
   layer: { id: string; key: string; format: 'pmtiles' | 'cog'; color: string; opacity: number }
-): Promise<[number, number, number, number]> {
+): Promise<LoadedLayerInfo> {
   const url = await getS3PresignedUrl(connectionId, bucketName, layer.key)
 
   if (layer.format === 'cog') {
-    return addCogLayer(mapInstance, layer.id, url, layer.opacity)
+    const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
+    return { bounds, isVector: false }
   }
 
   const pmtiles = new PMTiles(url)
@@ -64,6 +124,7 @@ async function loadLayerOntoMap(
   const header = await pmtiles.getHeader()
   const sourceUrl = `pmtiles://${url}`
   const isRaster = header.tileType >= 2
+  const bounds: [number, number, number, number] = [header.minLon, header.minLat, header.maxLon, header.maxLat]
 
   if (isRaster) {
     mapInstance.addSource(layer.id, { type: 'raster', url: sourceUrl, tileSize: 256 })
@@ -73,27 +134,15 @@ async function loadLayerOntoMap(
       source: layer.id,
       paint: { 'raster-opacity': layer.opacity / 100 },
     })
-  } else {
-    const metadata = (await pmtiles.getMetadata()) as { vector_layers?: { id: string }[] }
-    const sourceLayerName = metadata?.vector_layers?.[0]?.id ?? 'default'
-    mapInstance.addSource(layer.id, { type: 'vector', url: sourceUrl })
-    mapInstance.addLayer({
-      id: `${layer.id}-fill`,
-      type: 'fill',
-      source: layer.id,
-      'source-layer': sourceLayerName,
-      paint: { 'fill-color': layer.color, 'fill-opacity': layer.opacity / 100 },
-    })
-    mapInstance.addLayer({
-      id: `${layer.id}-line`,
-      type: 'line',
-      source: layer.id,
-      'source-layer': sourceLayerName,
-      paint: { 'line-color': layer.color, 'line-width': 1 },
-    })
+    return { bounds, isVector: false }
   }
 
-  return [header.minLon, header.minLat, header.maxLon, header.maxLat]
+  const metadata = (await pmtiles.getMetadata()) as { vector_layers?: { id: string }[] }
+  const sourceLayerName = metadata?.vector_layers?.[0]?.id ?? 'default'
+  mapInstance.addSource(layer.id, { type: 'vector', url: sourceUrl })
+  applyPmtilesVectorStyle(mapInstance, layer.id, sourceLayerName, layer.color, layer.opacity, null)
+
+  return { bounds, isVector: true, sourceLayer: sourceLayerName }
 }
 
 function layerNameFromKey(key: string, format: 'pmtiles' | 'cog'): string {
@@ -124,6 +173,13 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   // Synchronous add-guard, independent of React's (batched/deferred) state
   // updates — addLayer needs to know immediately whether an id is new.
   const addedLayerIdsRef = useRef<Set<string>>(new Set())
+  // Saved style JSON per layer id, once fetched — kept out of React state
+  // since it's only needed imperatively (re-rendering the map layers), not
+  // for any UI beyond the default/custom toggle.
+  const customStylesRef = useRef<Map<string, Record<string, unknown>>>(new Map())
+  // Mirror of `layers` state, readable synchronously from stable callbacks
+  // (e.g. the style-mode toggle) without making them depend on `layers`.
+  const layersRef = useRef<MapLayerState[]>([])
 
   // A stale tree-sidebar selection (e.g. `?node=s3connection:...`) has no
   // bearing here now that Map Explorer searches across every connection —
@@ -210,8 +266,10 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setLayers((prev) => [...prev, newLayer])
 
     loadLayerOntoMap(mapInstance, protocol, option.connectionId, option.bucketName, newLayer)
-      .then((bounds) => {
-        setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds } : l)))
+      .then(({ bounds, isVector, sourceLayer }) => {
+        setLayers((cur) =>
+          cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds, isVector, sourceLayer } : l))
+        )
         mapInstance.fitBounds(
           [
             [bounds[0], bounds[1]],
@@ -219,6 +277,14 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
           ],
           { padding: 60, maxZoom: 16 }
         )
+
+        if (!isVector || option.format !== 'pmtiles') return
+        getPmtilesStyle(option.connectionId, option.bucketName, option.key).then((style) => {
+          if (!style) return
+          customStylesRef.current.set(id, style)
+          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'custom' } : l)))
+          applyPmtilesVectorStyle(mapInstance, id, sourceLayer ?? 'default', newLayer.color, newLayer.opacity, style)
+        })
       })
       .catch(() => {
         setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, status: 'error' } : l)))
@@ -228,6 +294,19 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   // Always-current addLayer, callable from effects without becoming a dependency.
   const addLayerRef = useRef(addLayer)
   addLayerRef.current = addLayer
+
+  useEffect(() => {
+    layersRef.current = layers
+  }, [layers])
+
+  const handleStyleModeChange = useCallback((layerId: string, mode: 'default' | 'custom') => {
+    const mapInstance = map.current
+    const layer = layersRef.current.find((l) => l.id === layerId)
+    if (!mapInstance || !layer) return
+    const customStyle = mode === 'custom' ? (customStylesRef.current.get(layerId) ?? null) : null
+    applyPmtilesVectorStyle(mapInstance, layerId, layer.sourceLayer ?? 'default', layer.color, layer.opacity, customStyle)
+    setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, styleMode: mode } : l)))
+  }, [])
 
   useEffect(() => {
     if (!mapReady) return
@@ -322,9 +401,12 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const handleRemoveLayer = useCallback((layerId: string) => {
     const mapInstance = map.current
     if (mapInstance) {
-      if (mapInstance.getLayer(`${layerId}-fill`)) mapInstance.removeLayer(`${layerId}-fill`)
-      if (mapInstance.getLayer(`${layerId}-line`)) mapInstance.removeLayer(`${layerId}-line`)
-      if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId)
+      // Covers the raster case (plain `layerId`), the default fill/line
+      // rendering, and a custom style's own layers (`${layerId}-custom-0`,
+      // `-1`, ...) — removeSource below fails silently while any layer
+      // still references the source, which otherwise left it (and the
+      // layer) stuck on the map.
+      removeRenderedLayers(mapInstance, layerId)
       if (mapInstance.getSource(layerId)) mapInstance.removeSource(layerId)
     }
     addedLayerIdsRef.current.delete(layerId)
@@ -451,6 +533,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                   onZoomToExtent={handleZoomToExtent}
                   onOpacityChange={handleOpacityChange}
                   onRemoveLayer={handleRemoveLayer}
+                  onStyleModeChange={handleStyleModeChange}
                   dragConstraintsRef={overlayContainer}
                 />
 

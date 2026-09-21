@@ -10,6 +10,7 @@ import {
   SliderTrack,
   SliderFilledTrack,
   SliderThumb,
+  Select,
   Tooltip,
   chakra,
 } from '@chakra-ui/react'
@@ -32,6 +33,7 @@ interface LayersPanelProps {
   onZoomToExtent: (bounds: [number, number, number, number]) => void
   onOpacityChange: (layerId: string, value: number) => void
   onRemoveLayer: (layerId: string) => void
+  onStyleModeChange: (layerId: string, mode: 'default' | 'custom') => void
   /** Element the panel can't be dragged outside of (defaults to the viewport). */
   dragConstraintsRef?: React.RefObject<HTMLElement>
 }
@@ -44,6 +46,7 @@ export default function LayersPanel({
   onZoomToExtent,
   onOpacityChange,
   onRemoveLayer,
+  onStyleModeChange,
   dragConstraintsRef,
 }: LayersPanelProps) {
   const dragControls = useDragControls()
@@ -58,10 +61,10 @@ export default function LayersPanel({
       bg="white"
       rounded="xl"
       shadow="lg"
-      p={4}
       w="300px"
       maxH="75vh"
-      overflowY="auto"
+      display="flex"
+      flexDirection="column"
       drag
       dragControls={dragControls}
       dragListener={false}
@@ -70,34 +73,36 @@ export default function LayersPanel({
       dragConstraints={dragConstraintsRef}
       style={{ touchAction: 'none' }}
     >
-      <HStack
-        mb={3}
-        justify="space-between"
-        cursor="grab"
-        userSelect="none"
-        onPointerDown={(e) => dragControls.start(e)}
-        sx={{ '&:active': { cursor: 'grabbing' } }}
-      >
-        <HStack spacing={2}>
-          <Box color="gray.400">
-            <FiMove size={12} />
-          </Box>
-          <Text fontWeight="600" color="gray.800">
-            Layers
-          </Text>
+      <Box p={4} flexShrink={0}>
+        <HStack
+          mb={3}
+          justify="space-between"
+          cursor="grab"
+          userSelect="none"
+          onPointerDown={(e) => dragControls.start(e)}
+          sx={{ '&:active': { cursor: 'grabbing' } }}
+        >
+          <HStack spacing={2}>
+            <Box color="gray.400">
+              <FiMove size={12} />
+            </Box>
+            <Text fontWeight="600" color="gray.800">
+              Layers
+            </Text>
+          </HStack>
+          {isLoadingSources && <Spinner size="xs" color="gray.400" />}
         </HStack>
-        {isLoadingSources && <Spinner size="xs" color="gray.400" />}
-      </HStack>
 
-      <LayerSearch options={availableLayers} onSelect={onAddLayer} isDisabled={isLoadingSources} />
+        <LayerSearch options={availableLayers} onSelect={onAddLayer} isDisabled={isLoadingSources} />
 
-      {layers.length === 0 && (
-        <Text fontSize="sm" color="gray.500">
-          {isLoadingSources ? 'Looking for layers across your S3 connections…' : 'Search above to add a layer to the map.'}
-        </Text>
-      )}
+        {layers.length === 0 && (
+          <Text fontSize="sm" color="gray.500">
+            {isLoadingSources ? 'Looking for layers across your S3 connections…' : 'Search above to add a layer to the map.'}
+          </Text>
+        )}
+      </Box>
 
-      <VStack spacing={4} align="stretch">
+      <VStack spacing={4} align="stretch" overflowY="auto" px={4} pb={4} flex={1} minH={0}>
         {layers.map((layer) => (
           <Box key={layer.id}>
             <HStack justify="space-between" mb={1}>
@@ -135,6 +140,17 @@ export default function LayersPanel({
                 />
               </HStack>
             </HStack>
+            {layer.hasCustomStyle && (
+              <Select
+                size="xs"
+                mb={2}
+                value={layer.styleMode ?? 'custom'}
+                onChange={(e) => onStyleModeChange(layer.id, e.target.value as 'default' | 'custom')}
+              >
+                <option value="custom">Custom style</option>
+                <option value="default">Default style</option>
+              </Select>
+            )}
             <Box h="8px" borderRadius="full" bgGradient={LEGEND_GRADIENT} mb={1} />
             <HStack justify="space-between" mb={1}>
               <Text fontSize="xs" color="gray.400">
