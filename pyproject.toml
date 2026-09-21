@@ -32,6 +32,7 @@ dependencies = [
     "httpx>=0.27",
     # Database
     "psycopg[binary]>=3.1",
+    "psycopg2-binary>=2.9",  # Used by apps.postgres (client, schema, tasks)
     # S3 client
     "boto3>=1.34",
     # Parquet/GeoParquet queries

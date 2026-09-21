@@ -111,13 +111,13 @@ class TestDefaultProviders:
 
 
 class TestProvidersManager:
-    """Tests for ProvidersManager singleton."""
+    """Tests for the per-user ProvidersManager."""
 
-    def test_singleton_pattern(self, providers_manager: ProvidersManager) -> None:
-        """Test that ProvidersManager is a singleton."""
-        manager1 = ProvidersManager()
-        manager2 = ProvidersManager()
-        assert manager1 is manager2
+    def test_users_are_isolated(self, providers_manager: ProvidersManager) -> None:
+        """Test that each user gets their own providers config."""
+        providers_manager.set_provider_enabled("s3", True)
+        assert ProvidersManager("test-user").is_provider_enabled("s3") is True
+        assert ProvidersManager("other-user").is_provider_enabled("s3") is False
 
     def test_list_providers(self, providers_manager: ProvidersManager) -> None:
         """Test listing all providers."""
@@ -193,9 +193,8 @@ class TestProvidersManager:
         # Modify and save
         providers_manager.set_provider_enabled("s3", True)
 
-        # Reset singleton and reload
-        ProvidersManager._instance = None
-        new_manager = ProvidersManager()
+        # A new manager for the same user loads what was saved to disk
+        new_manager = ProvidersManager("test-user")
         assert new_manager.is_provider_enabled("s3") is True
 
     def test_new_providers_merged(self, providers_manager: ProvidersManager) -> None:
@@ -219,9 +218,7 @@ class TestProvidersManager:
         with open(config_path, "w") as f:
             json.dump(truncated_config, f)
 
-        # Reset and reload
-        ProvidersManager._instance = None
-        new_manager = ProvidersManager()
+        new_manager = ProvidersManager("test-user")
 
         # Should have all default providers merged in
         providers = new_manager.list_providers()
@@ -233,14 +230,11 @@ class TestProvidersManager:
 class TestProviderHelperFunctions:
     """Tests for provider helper functions."""
 
-    def test_get_providers_manager(self, temp_config_dir: str) -> None:
-        """Test get_providers_manager helper."""
-        # Reset singleton first
-        ProvidersManager._instance = None
-        manager1 = get_providers_manager()
-        manager2 = get_providers_manager()
-        # Should return the same singleton instance
-        assert manager1 is manager2
+    def test_get_providers_manager(self, providers_manager: ProvidersManager) -> None:
+        """Test get_providers_manager returns a manager for the requested user."""
+        manager = get_providers_manager("test-user")
+        assert isinstance(manager, ProvidersManager)
+        assert manager._user_id == "test-user"
 
     def test_is_provider_enabled_helper(self, providers_manager: ProvidersManager) -> None:
         """Test is_provider_enabled helper."""

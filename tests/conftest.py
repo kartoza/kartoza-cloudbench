@@ -8,6 +8,7 @@ This module provides comprehensive fixtures for:
 """
 
 import os
+import re
 import tempfile
 from collections.abc import Generator
 from typing import Any
@@ -30,6 +31,7 @@ def setup_test_environment() -> Generator[None, None, None]:
         os.environ["XDG_CONFIG_HOME"] = tmpdir
         os.environ["XDG_DATA_HOME"] = tmpdir
         os.environ["XDG_CACHE_HOME"] = tmpdir
+        os.environ["CLOUDBENCH_DATA_FOLDER"] = tmpdir
         os.environ["DJANGO_SETTINGS_MODULE"] = "cloudbench.settings.testing"
         yield
 
@@ -63,6 +65,22 @@ def api_client() -> APIClient:
 
 
 @pytest.fixture
+def authenticated_api_client(db: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> APIClient:
+    """Return a DRF client logged in as a user with an isolated data folder.
+
+    Views resolve per-user config from ``request.user.username`` under
+    CLOUDBENCH_DATA_FOLDER, so each test gets its own empty folder.
+    """
+    from django.contrib.auth import get_user_model
+
+    monkeypatch.setenv("CLOUDBENCH_DATA_FOLDER", str(tmp_path))
+    user = get_user_model().objects.create_user(username="test-user", password="test-pass")
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@pytest.fixture
 def api_client_json(api_client: APIClient) -> APIClient:
     """Return an API client configured for JSON requests."""
     api_client.default_format = "json"
@@ -76,34 +94,18 @@ def api_client_json(api_client: APIClient) -> APIClient:
 
 @pytest.fixture
 def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
-    """Get a fresh ConfigManager for testing with isolated config directory."""
+    """Get a fresh per-user ConfigManager backed by an isolated data folder."""
     from unittest.mock import patch
 
     from apps.core.config import Config, ConfigManager
 
-    # Use patch.dict for reliable environment isolation
-    with patch.dict(
-        os.environ,
-        {
-            "XDG_CONFIG_HOME": str(tmp_path),
-            "XDG_DATA_HOME": str(tmp_path),
-            "XDG_CACHE_HOME": str(tmp_path),
-        },
-        clear=False,  # Don't clear other env vars
-    ):
-        # Reset the singleton AFTER setting env vars
-        ConfigManager._instance = None
+    with patch.dict(os.environ, {"CLOUDBENCH_DATA_FOLDER": str(tmp_path)}):
+        manager = ConfigManager("test-user")
 
-        # Create new manager - it will use the tmp_path
-        manager = ConfigManager()
-
-        # Force a fresh config (in case it loaded from wrong path)
+        # Start from an empty config regardless of what is on disk
         manager._config = Config()
 
         yield manager
-
-        # Clean up singleton
-        ConfigManager._instance = None
 
 
 @pytest.fixture
@@ -113,25 +115,8 @@ def providers_manager(tmp_path: Any) -> Generator[Any, None, None]:
 
     from apps.core.providers import ProvidersManager
 
-    # Use patch.dict for reliable environment isolation
-    with patch.dict(
-        os.environ,
-        {
-            "XDG_CONFIG_HOME": str(tmp_path),
-            "XDG_DATA_HOME": str(tmp_path),
-            "XDG_CACHE_HOME": str(tmp_path),
-        },
-    ):
-        # Reset the singleton AFTER setting env vars
-        ProvidersManager._instance = None
-
-        # Create new manager - it will use the tmp_path
-        manager = ProvidersManager()
-
-        yield manager
-
-        # Clean up singleton
-        ProvidersManager._instance = None
+    with patch.dict(os.environ, {"CLOUDBENCH_DATA_FOLDER": str(tmp_path)}):
+        yield ProvidersManager("test-user")
 
 
 # ============================================================================
@@ -296,6 +281,203 @@ def mock_httpx_client() -> Generator[MagicMock, None, None]:
         client = MagicMock()
         mock.return_value.__aenter__.return_value = client
         yield client
+
+
+# ============================================================================
+# HTTP mocking (httpx transport level)
+# ============================================================================
+
+
+class HttpMock:
+    """Route table that answers every httpx request made during a test.
+
+    Patches the httpx transports, so it works for code that builds its own
+    ``httpx.Client`` / ``httpx.AsyncClient`` as well as ``make_client``.
+    Routes added later win over earlier ones. Unmatched requests raise
+    ``httpx.ConnectError`` and are still recorded in ``calls``.
+    """
+
+    def __init__(self) -> None:
+        self.routes: list[dict[str, Any]] = []
+        self.calls: list[Any] = []
+
+    def add(
+        self,
+        method: str,
+        pattern: str,
+        *,
+        json: Any = None,
+        text: str | None = None,
+        content: bytes | None = None,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        """Register a response for requests whose URL matches ``pattern`` (regex)."""
+        self.routes.append(
+            {
+                "method": method.upper(),
+                "pattern": re.compile(pattern),
+                "json": json,
+                "text": text,
+                "content": content,
+                "status": status,
+                "headers": headers or {},
+                "exc": exc,
+            }
+        )
+
+    def requests(self, method: str | None = None) -> list[Any]:
+        """Return recorded requests, optionally filtered by method."""
+        return [c for c in self.calls if method is None or c.method == method.upper()]
+
+    def handle(self, request: Any) -> Any:
+        import httpx
+
+        self.calls.append(request)
+        for route in reversed(self.routes):
+            if route["method"] not in ("*", request.method):
+                continue
+            if not route["pattern"].search(str(request.url)):
+                continue
+            if route["exc"] is not None:
+                raise route["exc"]
+            kwargs: dict[str, Any] = {"headers": route["headers"], "request": request}
+            if route["json"] is not None:
+                kwargs["json"] = route["json"]
+            elif route["text"] is not None:
+                kwargs["text"] = route["text"]
+            else:
+                kwargs["content"] = route["content"] or b""
+            return httpx.Response(route["status"], **kwargs)
+        raise httpx.ConnectError(f"No mock route for {request.method} {request.url}")
+
+
+@pytest.fixture
+def http_mock() -> Generator[HttpMock, None, None]:
+    """Intercept all httpx traffic and answer from a per-test route table."""
+    import httpx
+
+    mock = HttpMock()
+
+    def sync_handler(_self: Any, request: Any) -> Any:
+        request.read()  # make streamed/multipart bodies inspectable via .content
+        return mock.handle(request)
+
+    async def async_handler(_self: Any, request: Any) -> Any:
+        await request.aread()
+        return mock.handle(request)
+
+    with (
+        patch.object(httpx.HTTPTransport, "handle_request", sync_handler),
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", async_handler),
+    ):
+        yield mock
+
+
+class FakePG:
+    """Scriptable stand-in for ``psycopg2.connect``.
+
+    Register result sets with ``add(sql_substring, rows, columns=None)``; the
+    first registered substring found in an executed statement (case
+    insensitive) supplies the rows. Unmatched statements return no rows.
+    Pass an ``Exception`` as ``rows`` to make the statement raise.
+    """
+
+    def __init__(self) -> None:
+        self.rules: list[tuple[str, Any, list[str] | None]] = []
+        self.queries: list[tuple[str, Any]] = []
+        self.connect_kwargs: list[dict[str, Any]] = []
+        self.commits = 0
+
+    def add(self, fragment: str, rows: Any, columns: list[str] | None = None) -> None:
+        self.rules.append((fragment.lower(), rows, columns))
+
+    def connect(self, **kwargs: Any) -> "FakePGConnection":
+        self.connect_kwargs.append(kwargs)
+        return FakePGConnection(self)
+
+
+class FakePGConnection:
+    def __init__(self, fake: FakePG) -> None:
+        self.fake = fake
+
+    def __enter__(self) -> "FakePGConnection":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+    def cursor(self, *_: Any, **__: Any) -> "FakePGCursor":
+        return FakePGCursor(self.fake)
+
+    def commit(self) -> None:
+        self.fake.commits += 1
+
+    def rollback(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    autocommit = False
+
+
+class FakePGCursor:
+    def __init__(self, fake: FakePG) -> None:
+        self.fake = fake
+        self.rows: list[Any] = []
+        self.description: list[tuple[str]] | None = None
+        self.rowcount = 0
+
+    def __enter__(self) -> "FakePGCursor":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+    def execute(self, sql: Any, params: Any = None) -> None:
+        text = str(sql)
+        self.fake.queries.append((text, params))
+        self.rows, self.description = [], None
+        lowered = text.lower()
+        for fragment, rows, columns in self.fake.rules:
+            if fragment in lowered:
+                if isinstance(rows, Exception):
+                    raise rows
+                self.rows = list(rows)
+                self.rowcount = len(self.rows)
+                if columns:
+                    self.description = [(c,) for c in columns]
+                return
+
+    def fetchall(self) -> list[Any]:
+        rows, self.rows = self.rows, []
+        return rows
+
+    def fetchone(self) -> Any:
+        return self.rows.pop(0) if self.rows else None
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def fake_pg() -> Generator[FakePG, None, None]:
+    """Replace ``psycopg2.connect`` everywhere with a scriptable fake."""
+    import psycopg2
+
+    fake = FakePG()
+    with patch.object(psycopg2, "connect", fake.connect):
+        yield fake
+
+
+@pytest.fixture
+def user_config(authenticated_api_client: APIClient) -> Any:
+    """ConfigManager for the user behind ``authenticated_api_client``."""
+    from apps.core.config import get_config
+
+    return get_config("test-user")
 
 
 # ============================================================================

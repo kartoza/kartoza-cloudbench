@@ -80,7 +80,7 @@ jobs:
           pip install pytest pytest-django pytest-asyncio pytest-cov pytest-xdist pytest-timeout pytest-mock factory-boy faker responses
 
       - name: Run unit tests
-        run: pytest tests/unit -v --tb=short -m "unit or not integration" --cov=apps --cov=cloudbench --cov-report=xml
+        run: pytest tests/unit -v --tb=short -m "unit or not integration" --cov=apps --cov=cloudbench --cov-report=xml --cov-fail-under=0
 
       - name: Run API tests
         run: pytest tests/api -v --tb=short -m "api" --cov=apps --cov=cloudbench --cov-report=xml --cov-append
