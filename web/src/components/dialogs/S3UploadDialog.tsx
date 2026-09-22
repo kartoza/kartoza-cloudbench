@@ -98,6 +98,9 @@ export default function S3UploadDialog() {
 
   // Dialog data
   const connectionId = dialogData?.data?.connectionId as string | undefined
+  // The folder the user was browsing when they clicked Upload, if any —
+  // used to default the object key so the file lands where they were looking.
+  const folderPrefix = (dialogData?.data?.prefix as string | undefined) || ''
 
   // Form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -209,9 +212,8 @@ export default function S3UploadDialog() {
     setGpkgJobId(null)
     setGpkgLayers(null)
     setSelectedLayerNames(new Set())
-    // Set custom key to filename by default
-    setCustomKey(file.name)
-  }, [isUploading, isConverting, toast])
+    setCustomKey(folderPrefix + file.name)
+  }, [isUploading, isConverting, toast, folderPrefix])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -490,7 +492,9 @@ export default function S3UploadDialog() {
                   borderRadius="lg"
                 />
                 <Text fontSize="xs" color="gray.500" mt={1}>
-                  Leave empty to use original filename
+                  {folderPrefix
+                    ? `Defaults to the current folder: ${folderPrefix}`
+                    : 'Leave empty to use original filename'}
                 </Text>
               </FormControl>
             </VStack>

@@ -70,7 +70,11 @@ export async function listPmtilesObjects(connectionId: string): Promise<S3Pmtile
 }
 
 export async function listCogObjects(connectionId: string): Promise<S3PmtilesObject[]> {
-  return listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
+  const objects = await listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
+  // maplibre-cog-protocol only renders Web Mercator COGs. cng-lite's COG
+  // conversion always produces one of these ("_3857") alongside the
+  // original-CRS file (see apps/s3/cog.py) — only offer that one here.
+  return objects.filter((obj) => /_3857\.[^./]+$/i.test(obj.key))
 }
 
 export interface S3LayerCatalogEntry {

@@ -8,8 +8,8 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3.cog import output_key, prepare_tiff, run_conversion, start_conversion
-from apps.s3.models import CngLiteJob
+from apps.s3.cog import cog_dest_key, output_key, prepare_tiff, run_conversion, start_conversion
+from apps.s3.models import CngLiteJob, LayerCollection
 
 
 def tiff_file(name="raster.tif", header=b"II*\x00"):
@@ -26,6 +26,24 @@ def tiff_file(name="raster.tif", header=b"II*\x00"):
 )
 def test_output_key(key, expected):
     assert output_key(key) == expected
+
+
+def test_cog_dest_key_folder_mode_uses_item_name():
+    job = Mock(output_key="folder/raster.tif")
+    item = {"name": "table_cog_3857.tif"}
+    assert cog_dest_key(job, item, True, "sources/job-1") == "sources/job-1/table_cog_3857.tif"
+
+
+def test_cog_dest_key_non_folder_original_uses_output_key():
+    job = Mock(output_key="folder/raster.tif")
+    item = {"name": "output_cog.tif"}
+    assert cog_dest_key(job, item, False, None) == "folder/raster.tif"
+
+
+def test_cog_dest_key_non_folder_3857_variant_gets_suffixed():
+    job = Mock(output_key="folder/raster.tif")
+    item = {"name": "output_cog_3857.tif"}
+    assert cog_dest_key(job, item, False, None) == "folder/raster_3857.tif"
 
 
 def test_prepare_tiff_rejects_non_tiff_extension(tmp_path):
@@ -130,12 +148,19 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
                 json={
                     "status": "done",
                     "results": [
-                        {"name": "output_cog.tif", "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif"}
+                        {"name": "output_cog.tif", "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif"},
+                        {
+                            "name": "output_cog_3857.tif",
+                            "result_url": "/api/v1/jobs/cng-job-1/result/output_cog_3857.tif",
+                        },
                     ],
                     "errors": [],
                 },
             )
-        if request.url.path == "/api/v1/jobs/cng-job-1/result/output_cog.tif":
+        if request.url.path in (
+            "/api/v1/jobs/cng-job-1/result/output_cog.tif",
+            "/api/v1/jobs/cng-job-1/result/output_cog_3857.tif",
+        ):
             content = b"not-a-tiff" if outcome == "bad-magic" else b"II*\x00cog-fixture"
             return httpx.Response(200, content=content)
         return httpx.Response(404)
@@ -154,7 +179,15 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
     if outcome == "success":
         assert cog_job.status == "completed"
         assert cog_job.progress == 100
-        assert uploaded[0][:3] == (b"II*\x00cog-fixture", "bucket", "folder/raster.tif")
+        # Distinct keys — the two files must not overwrite each other.
+        uploaded_keys = {entry[2] for entry in uploaded}
+        assert uploaded_keys == {"folder/raster.tif", "folder/raster_3857.tif"}
+        assert cog_job.output_keys and len(cog_job.output_keys) == 2
+        assert set(cog_job.to_dict()["outputPaths"]) == {
+            "s3://bucket/folder/raster.tif",
+            "s3://bucket/folder/raster_3857.tif",
+        }
+        assert not LayerCollection.objects.exists()
     else:
         assert cog_job.status == "failed"
         assert cog_job.error

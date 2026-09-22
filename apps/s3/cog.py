@@ -90,6 +90,24 @@ def validate_cog(output):
     return output.read(4) in TIFF_MAGIC
 
 
+def cog_dest_key(job, item, folder, folder_key):
+    """Where a converted COG file lands.
+
+    Every raster now converts to two files — the original-CRS COG and an
+    EPSG:3857 ("_3857") one, since maplibre-cog-protocol (Map Explorer's
+    renderer) only supports Web Mercator COGs. In folder mode (GeoPackage)
+    each keeps its cng-lite-assigned name; otherwise (a plain TIFF) the
+    "_3857" file is placed next to `job.output_key` with that suffix
+    inserted before the extension, so the two files don't collide.
+    """
+    if folder:
+        return f"{folder_key}/{item['name']}"
+    if item["name"].endswith("_3857.tif"):
+        base = PurePosixPath(job.output_key)
+        return str(base.with_name(f"{base.stem}_3857{base.suffix}"))
+    return job.output_key
+
+
 def run_conversion(job_id):
     run_cng_lite_conversion(
         job_id,
@@ -98,8 +116,9 @@ def run_conversion(job_id):
         validate_result=validate_cog,
         invalid_result_message="CloudNativeGIS did not return a valid COG file.",
         output_content_type=CONTENT_TYPE,
-        # A raster GeoPackage converts to one COG per raster table (never
+        # A raster GeoPackage converts to COGs per raster table (never
         # merged), stored under a folder named after the upload — even
         # when it only has one, for predictability.
         use_folder=lambda job: is_geopackage(job.source_name),
+        resolve_dest_key=cog_dest_key,
     )
