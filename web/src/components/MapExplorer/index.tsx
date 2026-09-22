@@ -166,10 +166,9 @@ async function loadLayerOntoMap(
   mapInstance: maplibregl.Map,
   protocol: Protocol,
   connectionId: string,
-  bucketName: string,
   layer: { id: string; key: string; format: 'pmtiles' | 'cog'; color: string; opacity: number }
 ): Promise<LoadedLayerInfo> {
-  const url = await getS3PresignedUrl(connectionId, bucketName, layer.key)
+  const url = await getS3PresignedUrl(connectionId, layer.key)
 
   if (layer.format === 'cog') {
     const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
@@ -336,7 +335,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     }
     setLayers((prev) => [...prev, newLayer])
 
-    loadLayerOntoMap(mapInstance, protocol, option.connectionId, option.bucketName, newLayer)
+    loadLayerOntoMap(mapInstance, protocol, option.connectionId, newLayer)
       .then(({ bounds, isVector, sourceLayer }) => {
         setLayers((cur) =>
           cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds, isVector, sourceLayer } : l))
@@ -350,7 +349,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         )
 
         if (!isVector || option.format !== 'pmtiles') return
-        getPmtilesStyle(option.connectionId, option.bucketName, option.key).then((style) => {
+        getPmtilesStyle(option.connectionId, option.key).then((style) => {
           if (!style) return
           customStylesRef.current.set(id, style)
           setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'custom' } : l)))

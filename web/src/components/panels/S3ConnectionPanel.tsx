@@ -6,6 +6,7 @@ import {
   HStack,
   Box,
   Icon,
+  IconButton,
   Heading,
   Text,
   Spacer,
@@ -15,24 +16,31 @@ import {
   Center,
   Spinner,
   Flex,
+  Tooltip,
   useColorModeValue,
   useToast,
-  Input,
-  FormControl,
 } from '@chakra-ui/react'
 import {
   FiHardDrive,
   FiUpload,
-  FiPlus,
   FiCheckCircle,
   FiAlertCircle,
   FiArchive,
   FiRefreshCw,
+  FiFolder,
+  FiFile,
+  FiDownload,
+  FiTrash2,
+  FiMap,
+  FiChevronRight,
+  FiArrowLeft,
 } from 'react-icons/fi'
 import { SiAmazons3 } from 'react-icons/si'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
+import type { S3Object } from '../../types'
+import { formatFileSize, isMapExplorerFormat } from '../../utils/s3ObjectFormat'
 
 interface S3StatCardProps {
   label: string
@@ -87,14 +95,14 @@ interface S3ConnectionPanelProps {
 }
 
 export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelProps) {
-  const [newBucketName, setNewBucketName] = useState('')
-  const [isCreatingBucket, setIsCreatingBucket] = useState(false)
   const cardBg = useColorModeValue('white', 'gray.800')
-  const bucketBg = useColorModeValue('gray.50', 'gray.700')
-  const bucketHoverBg = useColorModeValue('orange.50', 'gray.600')
+  const objectBg = useColorModeValue('gray.50', 'gray.700')
+  const objectHoverBg = useColorModeValue('orange.50', 'gray.600')
   const openDialog = useUIStore((state) => state.openDialog)
-  const toast = useToast()
+  const requestOpenMapExplorer = useUIStore((state) => state.requestOpenMapExplorer)
   const queryClient = useQueryClient()
+  const toast = useToast()
+  const [prefix, setPrefix] = useState('')
 
   // Fetch connection details
   const { data: connection, isLoading: loadingConnection } = useQuery({
@@ -102,54 +110,71 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
     queryFn: () => api.getS3Connection(connectionId),
   })
 
-  // Fetch buckets
-  const { data: buckets, isLoading: loadingBuckets } = useQuery({
-    queryKey: ['s3buckets', connectionId],
-    queryFn: () => api.getS3Buckets(connectionId),
+  // Fetch objects for the current folder (prefix) within the connection's bucket
+  const { data: objects, isLoading: loadingObjects } = useQuery({
+    queryKey: ['s3objects', connectionId, prefix],
+    queryFn: () => api.getS3Objects(connectionId, prefix),
     enabled: !!connection,
   })
 
-  // Fetch conversion tools status
-  const { data: toolStatus } = useQuery({
-    queryKey: ['conversionTools'],
-    queryFn: () => api.getConversionToolStatus(),
-  })
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['s3connection', connectionId] })
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) &&
+        query.queryKey[0] === 's3objects' &&
+        query.queryKey[1] === connectionId,
+    })
+  }
 
-  const handleCreateBucket = async () => {
-    if (!newBucketName.trim()) {
-      toast({
-        title: 'Bucket name required',
-        status: 'warning',
-        duration: 3000,
-      })
-      return
-    }
+  const breadcrumbSegments = prefix.split('/').filter(Boolean)
 
-    setIsCreatingBucket(true)
+  const handleBreadcrumbClick = (index: number) => {
+    setPrefix(breadcrumbSegments.slice(0, index + 1).join('/') + '/')
+  }
+
+  const handleUp = () => {
+    setPrefix(breadcrumbSegments.slice(0, -1).join('/') + (breadcrumbSegments.length > 1 ? '/' : ''))
+  }
+
+  const handleOpenFolder = (object: S3Object) => {
+    setPrefix(object.key)
+  }
+
+  const handleDownload = async (object: S3Object) => {
     try {
-      await api.createS3Bucket(connectionId, newBucketName.trim())
-      toast({
-        title: 'Bucket created',
-        description: `Successfully created bucket "${newBucketName}"`,
-        status: 'success',
-        duration: 3000,
-      })
-      setNewBucketName('')
-      queryClient.invalidateQueries({ queryKey: ['s3buckets', connectionId] })
+      const result = await api.getS3PresignedURL(connectionId, object.key, 60 * 60)
+      const link = document.createElement('a')
+      link.href = result.url
+      link.download = object.key.split('/').filter(Boolean).pop() || object.key
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
     } catch (err) {
       toast({
-        title: 'Failed to create bucket',
+        title: 'Download failed',
         description: (err as Error).message,
         status: 'error',
         duration: 5000,
       })
-    } finally {
-      setIsCreatingBucket(false)
     }
   }
 
-  const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['s3buckets', connectionId] })
+  const handleDelete = (object: S3Object) => {
+    const displayName = object.key.split('/').filter(Boolean).pop() || object.key
+    openDialog('confirm', {
+      mode: 'delete',
+      title: object.isFolder ? 'Delete Folder' : 'Delete Object',
+      message: object.isFolder
+        ? `Are you sure you want to delete folder "${displayName}" and all its contents?`
+        : `Are you sure you want to delete "${displayName}"?`,
+      data: { s3ConnectionId: connectionId, s3ObjectKey: object.key },
+    })
+  }
+
+  const handleOpenInMap = (object: S3Object) => {
+    if (!connection) return
+    requestOpenMapExplorer({ connectionId, bucketName: connection.bucket, key: object.key })
   }
 
   if (loadingConnection) {
@@ -173,13 +198,6 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
       </Center>
     )
   }
-
-  // Count available tools
-  const availableTools = [
-    toolStatus?.gdal?.available && 'GDAL',
-    toolStatus?.pdal?.available && 'PDAL',
-    toolStatus?.ogr2ogr?.available && 'ogr2ogr',
-  ].filter(Boolean)
 
   return (
     <VStack spacing={6} align="stretch">
@@ -213,6 +231,11 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
                 </HStack>
                 <HStack spacing={3} opacity={0.9}>
                   <Text fontSize="sm">{connection.endpoint}</Text>
+                  <Text fontSize="sm">|</Text>
+                  <HStack spacing={1}>
+                    <Icon as={FiArchive} boxSize={3} />
+                    <Text fontSize="sm">{connection.bucket}</Text>
+                  </HStack>
                   {connection.useSSL && (
                     <>
                       <Text fontSize="sm">|</Text>
@@ -237,7 +260,7 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
                 _hover={{ bg: 'whiteAlpha.300' }}
                 leftIcon={<FiRefreshCw />}
                 onClick={handleRefresh}
-                isLoading={loadingBuckets}
+                isLoading={loadingConnection}
               >
                 Refresh
               </Button>
@@ -260,10 +283,10 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
       </Card>
 
       {/* Stats */}
-      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+      <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
         <S3StatCard
-          label="Buckets"
-          value={buckets?.length || 0}
+          label="Bucket"
+          value={connection.bucket}
           icon={FiArchive}
           colorScheme="orange"
         />
@@ -274,13 +297,6 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
           colorScheme="blue"
         />
         <S3StatCard
-          label="Conversion Tools"
-          value={availableTools.length}
-          helpText={availableTools.join(', ') || 'None available'}
-          icon={FiRefreshCw}
-          colorScheme={availableTools.length > 0 ? 'green' : 'red'}
-        />
-        <S3StatCard
           label="SSL"
           value={connection.useSSL ? 'Enabled' : 'Disabled'}
           icon={FiCheckCircle}
@@ -288,172 +304,145 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
         />
       </SimpleGrid>
 
-      {/* Create Bucket */}
+      {/* Objects */}
       <Card bg={cardBg}>
         <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiPlus} color="orange.500" />
-            <Text fontWeight="semibold" fontSize="lg">Create New Bucket</Text>
+          <HStack mb={4} justify="space-between">
+            <HStack spacing={2}>
+              {prefix && (
+                <Tooltip label="Up one level" fontSize="xs">
+                  <IconButton
+                    aria-label="Up one level"
+                    icon={<FiArrowLeft size={14} />}
+                    size="xs"
+                    variant="ghost"
+                    onClick={handleUp}
+                  />
+                </Tooltip>
+              )}
+              <Icon as={FiArchive} color="yellow.600" />
+              <HStack spacing={1} fontSize="sm">
+                <Text
+                  fontWeight={breadcrumbSegments.length === 0 ? '600' : '400'}
+                  color={breadcrumbSegments.length === 0 ? 'gray.800' : 'kartoza.600'}
+                  cursor="pointer"
+                  onClick={() => setPrefix('')}
+                >
+                  {connection.bucket}
+                </Text>
+                {breadcrumbSegments.map((segment, index) => (
+                  <HStack key={index} spacing={1}>
+                    <Icon as={FiChevronRight} boxSize={3} color="gray.400" />
+                    <Text
+                      fontWeight={index === breadcrumbSegments.length - 1 ? '600' : '400'}
+                      color={index === breadcrumbSegments.length - 1 ? 'gray.800' : 'kartoza.600'}
+                      cursor="pointer"
+                      onClick={() => handleBreadcrumbClick(index)}
+                    >
+                      {segment}
+                    </Text>
+                  </HStack>
+                ))}
+              </HStack>
+            </HStack>
+            <Badge colorScheme="orange">{objects?.length || 0}</Badge>
           </HStack>
-          <HStack>
-            <FormControl>
-              <Input
-                value={newBucketName}
-                onChange={(e) => setNewBucketName(e.target.value)}
-                placeholder="my-new-bucket"
-                size="lg"
-                borderRadius="lg"
-              />
-            </FormControl>
-            <Button
-              colorScheme="orange"
-              onClick={handleCreateBucket}
-              isLoading={isCreatingBucket}
-              size="lg"
-              px={8}
-            >
-              Create
-            </Button>
-          </HStack>
-          <Text fontSize="xs" color="gray.500" mt={2}>
-            Bucket names must be lowercase, 3-63 characters, and can contain letters, numbers, and hyphens.
-          </Text>
-        </CardBody>
-      </Card>
 
-      {/* Buckets List */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiArchive} color="yellow.600" />
-            <Text fontWeight="semibold" fontSize="lg">Buckets</Text>
-            <Badge colorScheme="orange">{buckets?.length || 0}</Badge>
-          </HStack>
-          {loadingBuckets ? (
+          {loadingObjects ? (
             <Center py={8}>
               <Spinner color="orange.500" />
             </Center>
-          ) : !buckets || buckets.length === 0 ? (
+          ) : !objects || objects.length === 0 ? (
             <Center py={8}>
               <VStack spacing={2}>
                 <Icon as={FiArchive} boxSize={10} color="gray.300" />
-                <Text color="gray.500">No buckets found</Text>
-                <Text fontSize="sm" color="gray.400">Create a bucket to get started</Text>
+                <Text color="gray.500">Empty folder</Text>
+                <Text fontSize="sm" color="gray.400">Upload files to get started</Text>
               </VStack>
             </Center>
           ) : (
-            <VStack spacing={3} align="stretch">
-              {buckets.map((bucket) => (
-                <Box
-                  key={bucket.name}
-                  p={4}
-                  borderRadius="lg"
-                  bg={bucketBg}
-                  _hover={{ bg: bucketHoverBg }}
-                  transition="all 0.2s"
-                >
-                  <HStack>
-                    <Icon as={FiArchive} color="yellow.600" />
-                    <VStack align="start" spacing={0} flex={1}>
-                      <Text fontWeight="medium">{bucket.name}</Text>
-                      <Text fontSize="xs" color="gray.500">
-                        Created: {new Date(bucket.creationDate).toLocaleDateString()}
-                      </Text>
-                    </VStack>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="orange"
-                      leftIcon={<FiUpload />}
-                      onClick={() => openDialog('s3upload', {
-                        mode: 'create',
-                        data: { connectionId, bucketName: bucket.name },
-                      })}
-                    >
-                      Upload
-                    </Button>
-                  </HStack>
-                </Box>
-              ))}
+            <VStack spacing={2} align="stretch">
+              {objects.map((object) => {
+                const displayName = object.key.split('/').filter(Boolean).pop() || object.key
+                const validDate = object.lastModified && !Number.isNaN(new Date(object.lastModified).getTime())
+                return (
+                  <Box
+                    key={object.key}
+                    p={3}
+                    borderRadius="lg"
+                    bg={objectBg}
+                    _hover={{ bg: objectHoverBg }}
+                    transition="all 0.2s"
+                    cursor={object.isFolder ? 'pointer' : 'default'}
+                    onClick={object.isFolder ? () => handleOpenFolder(object) : undefined}
+                  >
+                    <HStack>
+                      <Icon as={object.isFolder ? FiFolder : FiFile} color={object.isFolder ? 'yellow.600' : 'gray.500'} />
+                      <VStack align="start" spacing={0} flex={1} minW={0}>
+                        <Text fontWeight="medium" noOfLines={1}>{displayName}</Text>
+                        <Text fontSize="xs" color="gray.500">
+                          {object.isFolder
+                            ? 'Folder'
+                            : `${formatFileSize(object.size)}${validDate ? ` · Updated ${new Date(object.lastModified).toLocaleDateString()}` : ''}`}
+                        </Text>
+                      </VStack>
+                      {!object.isFolder && (
+                        <HStack spacing={1} onClick={(e) => e.stopPropagation()}>
+                          {isMapExplorerFormat(object.key) && (
+                            <Tooltip label="Open in Map" fontSize="xs">
+                              <IconButton
+                                aria-label="Open in Map"
+                                icon={<FiMap size={14} />}
+                                size="xs"
+                                variant="ghost"
+                                colorScheme="teal"
+                                onClick={() => handleOpenInMap(object)}
+                              />
+                            </Tooltip>
+                          )}
+                          <Tooltip label="Download" fontSize="xs">
+                            <IconButton
+                              aria-label="Download"
+                              icon={<FiDownload size={14} />}
+                              size="xs"
+                              variant="ghost"
+                              colorScheme="kartoza"
+                              onClick={() => handleDownload(object)}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Delete" fontSize="xs">
+                            <IconButton
+                              aria-label="Delete"
+                              icon={<FiTrash2 size={14} />}
+                              size="xs"
+                              variant="ghost"
+                              colorScheme="red"
+                              onClick={() => handleDelete(object)}
+                            />
+                          </Tooltip>
+                        </HStack>
+                      )}
+                      {object.isFolder && (
+                        <Tooltip label="Delete" fontSize="xs">
+                          <IconButton
+                            aria-label="Delete"
+                            icon={<FiTrash2 size={14} />}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDelete(object)
+                            }}
+                          />
+                        </Tooltip>
+                      )}
+                    </HStack>
+                  </Box>
+                )
+              })}
             </VStack>
           )}
-        </CardBody>
-      </Card>
-
-      {/* Conversion Tools Status */}
-      <Card bg={cardBg} display="none">
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiRefreshCw} color="green.500" />
-            <Text fontWeight="semibold" fontSize="lg">Cloud-Native Conversion Tools</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-            {/* GDAL */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.gdal?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.gdal?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.gdal?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.gdal?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">GDAL</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.gdal?.available
-                  ? `COG conversion (${toolStatus.gdal.version?.split(' ')[0]})`
-                  : 'Not available'}
-              </Text>
-            </Box>
-
-            {/* PDAL */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.pdal?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.pdal?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.pdal?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.pdal?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">PDAL</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.pdal?.available
-                  ? `COPC conversion (${toolStatus.pdal.version?.split(' ')[0]})`
-                  : 'Not available'}
-              </Text>
-            </Box>
-
-            {/* ogr2ogr */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.ogr2ogr?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.ogr2ogr?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.ogr2ogr?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.ogr2ogr?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">ogr2ogr</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.ogr2ogr?.available
-                  ? 'GeoParquet conversion'
-                  : 'Not available'}
-              </Text>
-            </Box>
-          </SimpleGrid>
         </CardBody>
       </Card>
     </VStack>

@@ -96,7 +96,7 @@ export default function S3LayerPreview({
     setIsLoading(true)
     setError(null)
 
-    api.getS3PreviewMetadata(connectionId, bucketName, objectKey)
+    api.getS3PreviewMetadata(connectionId, objectKey)
       .then((data) => {
         setMetadata(data)
         setIsLoading(false)
@@ -696,7 +696,7 @@ export default function S3LayerPreview({
     const loadTableData = async () => {
       setTableLoading(true)
       try {
-        const data = await api.getS3Attributes(connectionId, bucketName, objectKey, tableLimit, tableOffset)
+        const data = await api.getS3Attributes(connectionId, objectKey, tableLimit, tableOffset)
         setTableData(data)
       } catch (err) {
         console.error('Failed to load table data:', err)
@@ -958,7 +958,7 @@ export default function S3LayerPreview({
     setIsLoading(true)
     setError(null)
 
-    api.getS3PreviewMetadata(connectionId, bucketName, objectKey)
+    api.getS3PreviewMetadata(connectionId, objectKey)
       .then((data) => {
         setMetadata(data)
         setIsLoading(false)

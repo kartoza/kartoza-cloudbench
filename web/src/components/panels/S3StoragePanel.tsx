@@ -19,9 +19,9 @@ import {
 import {
   FiPlus,
   FiCheckCircle,
-  FiAlertCircle,
   FiHardDrive,
   FiRefreshCw,
+  FiArchive,
 } from 'react-icons/fi'
 import { SiAmazons3 } from 'react-icons/si'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -90,6 +90,19 @@ function S3ConnectionCard({ connection, onSelect }: S3ConnectionCardProps) {
             </VStack>
           </HStack>
 
+          {/* Bucket */}
+          <HStack
+            spacing={2}
+            p={2}
+            borderRadius="md"
+            bg="orange.50"
+          >
+            <Icon as={FiArchive} color="orange.500" boxSize={4} />
+            <Text fontSize="sm" fontWeight="medium" color="orange.700">
+              {connection.bucket}
+            </Text>
+          </HStack>
+
           {/* Details */}
           <SimpleGrid columns={2} spacing={3}>
             <Box>
@@ -109,12 +122,6 @@ function S3ConnectionCard({ connection, onSelect }: S3ConnectionCardProps) {
               <Badge colorScheme={connection.pathStyle ? 'blue' : 'gray'} size="sm">
                 {connection.pathStyle ? 'Yes' : 'No'}
               </Badge>
-            </Box>
-            <Box>
-              <Text fontSize="xs" color="gray.500" mb={1}>Access Key</Text>
-              <Text fontSize="sm" fontWeight="medium" fontFamily="mono">
-                {connection.accessKey.slice(0, 8)}...
-              </Text>
             </Box>
           </SimpleGrid>
 
@@ -138,7 +145,7 @@ function S3ConnectionCard({ connection, onSelect }: S3ConnectionCardProps) {
                 onSelect()
               }}
             >
-              View Buckets
+              View Details
             </Button>
           </HStack>
         </VStack>
@@ -159,12 +166,6 @@ export default function S3StoragePanel() {
     queryFn: () => api.getS3Connections(),
   })
 
-  // Fetch conversion tools status
-  const { data: toolStatus } = useQuery({
-    queryKey: ['conversionTools'],
-    queryFn: () => api.getConversionToolStatus(),
-  })
-
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ['s3connections'] })
   }
@@ -177,13 +178,6 @@ export default function S3StoragePanel() {
       s3ConnectionId: connection.id,
     })
   }
-
-  // Count available tools
-  const availableTools = [
-    toolStatus?.gdal?.available && 'GDAL',
-    toolStatus?.pdal?.available && 'PDAL',
-    toolStatus?.ogr2ogr?.available && 'ogr2ogr',
-  ].filter(Boolean)
 
   if (isLoading) {
     return (
@@ -244,7 +238,7 @@ export default function S3StoragePanel() {
       </Card>
 
       {/* Stats */}
-      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
         <Box
           bg={cardBg}
           p={4}
@@ -263,56 +257,6 @@ export default function S3StoragePanel() {
           </HStack>
           <Text fontSize="2xl" fontWeight="bold">
             {connections?.length || 0}
-          </Text>
-        </Box>
-
-        <Box
-          bg={cardBg}
-          p={4}
-          borderRadius="xl"
-          borderWidth={1}
-          borderColor="gray.200"
-          shadow="sm"
-        >
-          <HStack spacing={3} mb={2}>
-            <Box p={2} borderRadius="lg" bg="green.50" color="green.500">
-              <Icon as={FiCheckCircle} boxSize={5} />
-            </Box>
-            <Text fontSize="sm" fontWeight="medium" color="gray.500">
-              Active
-            </Text>
-          </HStack>
-          <Text fontSize="2xl" fontWeight="bold">
-            {connections?.filter(c => c.isActive !== false).length || 0}
-          </Text>
-        </Box>
-
-        <Box
-          bg={cardBg}
-          p={4}
-          borderRadius="xl"
-          borderWidth={1}
-          borderColor="gray.200"
-          shadow="sm"
-        >
-          <HStack spacing={3} mb={2}>
-            <Box
-              p={2}
-              borderRadius="lg"
-              bg={availableTools.length > 0 ? 'green.50' : 'red.50'}
-              color={availableTools.length > 0 ? 'green.500' : 'red.500'}
-            >
-              <Icon as={FiRefreshCw} boxSize={5} />
-            </Box>
-            <Text fontSize="sm" fontWeight="medium" color="gray.500">
-              Conversion Tools
-            </Text>
-          </HStack>
-          <Text fontSize="2xl" fontWeight="bold">
-            {availableTools.length}
-          </Text>
-          <Text fontSize="xs" color="gray.400">
-            {availableTools.join(', ') || 'None'}
           </Text>
         </Box>
 
@@ -390,83 +334,6 @@ export default function S3StoragePanel() {
               ))}
             </SimpleGrid>
           )}
-        </CardBody>
-      </Card>
-
-      {/* Conversion Tools Status */}
-      <Card bg={cardBg}>
-        <CardBody>
-          <HStack mb={4}>
-            <Icon as={FiRefreshCw} color="green.500" />
-            <Text fontWeight="semibold" fontSize="lg">Cloud-Native Conversion Tools</Text>
-          </HStack>
-          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-            {/* GDAL */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.gdal?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.gdal?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.gdal?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.gdal?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">GDAL</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.gdal?.available
-                  ? `COG conversion (${toolStatus.gdal.version?.split(' ')[0]})`
-                  : 'Not available'}
-              </Text>
-            </Box>
-
-            {/* PDAL */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.pdal?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.pdal?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.pdal?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.pdal?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">PDAL</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.pdal?.available
-                  ? `COPC conversion (${toolStatus.pdal.version?.split(' ')[0]})`
-                  : 'Not available'}
-              </Text>
-            </Box>
-
-            {/* ogr2ogr */}
-            <Box
-              p={4}
-              borderRadius="lg"
-              bg={toolStatus?.ogr2ogr?.available ? 'green.50' : 'red.50'}
-              borderWidth={1}
-              borderColor={toolStatus?.ogr2ogr?.available ? 'green.200' : 'red.200'}
-            >
-              <HStack mb={2}>
-                <Icon
-                  as={toolStatus?.ogr2ogr?.available ? FiCheckCircle : FiAlertCircle}
-                  color={toolStatus?.ogr2ogr?.available ? 'green.500' : 'red.500'}
-                />
-                <Text fontWeight="medium">ogr2ogr</Text>
-              </HStack>
-              <Text fontSize="sm" color="gray.600">
-                {toolStatus?.ogr2ogr?.available
-                  ? 'GeoParquet conversion'
-                  : 'Not available'}
-              </Text>
-            </Box>
-          </SimpleGrid>
         </CardBody>
       </Card>
     </VStack>

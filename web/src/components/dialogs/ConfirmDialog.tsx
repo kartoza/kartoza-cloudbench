@@ -42,36 +42,21 @@ export default function ConfirmDialog() {
 
     try {
       // Handle different delete types based on data
-      if (data?.s3ConnectionId && data?.s3BucketName && data?.s3ObjectKey) {
+      if (data?.s3ConnectionId && data?.s3ObjectKey) {
         // Delete S3 object or folder
         await api.deleteS3Object(
           data.s3ConnectionId as string,
-          data.s3BucketName as string,
           data.s3ObjectKey as string
         )
-        // Invalidate all S3 object queries for this bucket to refresh the tree
-        // Use predicate to match any query starting with ['s3objects', connectionId, bucketName, ...]
+        // Invalidate all S3 object queries for this connection to refresh the tree
         queryClient.invalidateQueries({
           predicate: (query) =>
             Array.isArray(query.queryKey) &&
             query.queryKey[0] === 's3objects' &&
-            query.queryKey[1] === data.s3ConnectionId &&
-            query.queryKey[2] === data.s3BucketName
+            query.queryKey[1] === data.s3ConnectionId
         })
         toast({
           title: 'Deleted successfully',
-          status: 'success',
-          duration: 2000,
-        })
-      } else if (data?.s3ConnectionId && data?.s3BucketName) {
-        // Delete S3 bucket
-        await api.deleteS3Bucket(
-          data.s3ConnectionId as string,
-          data.s3BucketName as string
-        )
-        queryClient.invalidateQueries({ queryKey: ['s3buckets', data.s3ConnectionId] })
-        toast({
-          title: 'Bucket deleted',
           status: 'success',
           duration: 2000,
         })

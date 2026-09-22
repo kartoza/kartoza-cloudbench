@@ -46,6 +46,7 @@ export function TreeNodeRow({
   onEdit,
   onDelete,
   onPreview,
+  onOpenInMap,
   onTerria,
   onOpenAdmin,
   onQuery,
@@ -196,6 +197,19 @@ export function TreeNodeRow({
               colorScheme="kartoza"
               onClick={onPreview}
               _hover={{ bg: 'kartoza.100' }}
+            />
+          </Tooltip>
+        )}
+        {onOpenInMap && (
+          <Tooltip label="Open in Map" fontSize="xs">
+            <IconButton
+              aria-label="Open in Map"
+              icon={<FiMap size={14} />}
+              size="xs"
+              variant="ghost"
+              colorScheme="teal"
+              onClick={onOpenInMap}
+              _hover={{ bg: 'teal.50' }}
             />
           </Tooltip>
         )}

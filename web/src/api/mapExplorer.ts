@@ -2,13 +2,13 @@
  * Map Explorer API helpers.
  *
  * Talks to the real `/s3/objects/...` and `/s3/presigned/...` routes
- * directly (apps/s3/urls.py) rather than the connections/buckets/objects
- * helpers in ./s3, which target endpoints that don't exist on the backend.
+ * directly (apps/s3/urls.py) rather than the connections/objects helpers
+ * in ./s3, which target endpoints that don't exist on the backend.
  */
 
 import { PMTiles } from 'pmtiles'
 import { API_BASE, handleResponse } from './common'
-import { getS3Connections, getS3Buckets } from './s3'
+import { getS3Connections } from './s3'
 
 export interface S3PmtilesObject {
   key: string
@@ -40,7 +40,6 @@ const SOURCE_ARTIFACT_PATTERN = /\/sources\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 async function listObjectsByExtensions(
   connectionId: string,
-  bucketName: string,
   extensions: string[]
 ): Promise<S3PmtilesObject[]> {
   const found: S3PmtilesObject[] = []
@@ -50,9 +49,7 @@ async function listObjectsByExtensions(
     const params = new URLSearchParams({ delimiter: '', maxKeys: '1000' })
     if (continuationToken) params.set('continuationToken', continuationToken)
 
-    const response = await fetch(
-      `${API_BASE}/s3/objects/${encodeURIComponent(connectionId)}/${encodeURIComponent(bucketName)}?${params}`
-    )
+    const response = await fetch(`${API_BASE}/s3/objects/${encodeURIComponent(connectionId)}?${params}`)
     const data = await handleResponse<ListObjectsResult>(response)
 
     for (const obj of data.objects) {
@@ -68,18 +65,12 @@ async function listObjectsByExtensions(
   return found
 }
 
-export async function listPmtilesObjects(
-  connectionId: string,
-  bucketName: string
-): Promise<S3PmtilesObject[]> {
-  return listObjectsByExtensions(connectionId, bucketName, ['.pmtiles'])
+export async function listPmtilesObjects(connectionId: string): Promise<S3PmtilesObject[]> {
+  return listObjectsByExtensions(connectionId, ['.pmtiles'])
 }
 
-export async function listCogObjects(
-  connectionId: string,
-  bucketName: string
-): Promise<S3PmtilesObject[]> {
-  return listObjectsByExtensions(connectionId, bucketName, ['.tif', '.tiff'])
+export async function listCogObjects(connectionId: string): Promise<S3PmtilesObject[]> {
+  return listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
 }
 
 export interface S3LayerCatalogEntry {
@@ -128,40 +119,37 @@ export async function getLayerCollection(id: string): Promise<LayerCollectionDet
   return handleResponse(response)
 }
 
-// Walks every configured S3 connection and every bucket within it
+// Walks every configured S3 connection (each scoped to one bucket)
 export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
   const connections = await getS3Connections().catch(() => [])
   const entries: S3LayerCatalogEntry[] = []
 
   for (const connection of connections) {
-    const buckets = await getS3Buckets(connection.id).catch(() => [])
-    for (const bucket of buckets) {
-      try {
-        const [pmtilesObjects, cogObjects] = await Promise.all([
-          listPmtilesObjects(connection.id, bucket.name),
-          listCogObjects(connection.id, bucket.name),
-        ])
-        for (const obj of pmtilesObjects) {
-          entries.push({
-            connectionId: connection.id,
-            connectionName: connection.name,
-            bucketName: bucket.name,
-            key: obj.key,
-            format: 'pmtiles',
-          })
-        }
-        for (const obj of cogObjects) {
-          entries.push({
-            connectionId: connection.id,
-            connectionName: connection.name,
-            bucketName: bucket.name,
-            key: obj.key,
-            format: 'cog',
-          })
-        }
-      } catch {
-        // A bucket failing to list shouldn't block the rest of the catalog.
+    try {
+      const [pmtilesObjects, cogObjects] = await Promise.all([
+        listPmtilesObjects(connection.id),
+        listCogObjects(connection.id),
+      ])
+      for (const obj of pmtilesObjects) {
+        entries.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          bucketName: connection.bucket,
+          key: obj.key,
+          format: 'pmtiles',
+        })
       }
+      for (const obj of cogObjects) {
+        entries.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          bucketName: connection.bucket,
+          key: obj.key,
+          format: 'cog',
+        })
+      }
+    } catch {
+      // A connection failing to list shouldn't block the rest of the catalog.
     }
   }
 
@@ -176,11 +164,10 @@ export function styleKeyForPmtiles(pmtilesKey: string): string {
 // Fetches a PMTiles layer's saved style, if one exists.
 export async function getPmtilesStyle(
   connectionId: string,
-  bucketName: string,
   pmtilesKey: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const url = await getS3PresignedUrl(connectionId, bucketName, styleKeyForPmtiles(pmtilesKey))
+    const url = await getS3PresignedUrl(connectionId, styleKeyForPmtiles(pmtilesKey))
     const response = await fetch(url)
     if (!response.ok) return null
     return await response.json()
@@ -191,11 +178,10 @@ export async function getPmtilesStyle(
 
 export async function openStyleEditor(
   connectionId: string,
-  bucketName: string,
   pmtilesKey: string,
   layerName: string
 ): Promise<void> {
-  const tilesUrl = await getS3PresignedUrl(connectionId, bucketName, pmtilesKey)
+  const tilesUrl = await getS3PresignedUrl(connectionId, pmtilesKey)
 
   let sourceLayer = 'default'
   let center: [number, number] | undefined
@@ -213,7 +199,7 @@ export async function openStyleEditor(
     // Raster PMTiles or unreadable metadata/header — Maputnik falls back to its own default view.
   }
 
-  const existing = await getPmtilesStyle(connectionId, bucketName, pmtilesKey)
+  const existing = await getPmtilesStyle(connectionId, pmtilesKey)
   const style =
     existing ??
     {
@@ -265,7 +251,6 @@ export async function openStyleEditor(
   const params = new URLSearchParams({
     style: dataUrl,
     cbConnectionId: connectionId,
-    cbBucket: bucketName,
     cbStyleKey: styleKeyForPmtiles(pmtilesKey),
   })
   if (dataLayerIndex >= 0) params.set('layer', `-~${dataLayerIndex}`)
@@ -275,12 +260,11 @@ export async function openStyleEditor(
 
 export async function getS3PresignedUrl(
   connectionId: string,
-  bucketName: string,
   key: string,
   expirationSeconds = 3600
 ): Promise<string> {
   const response = await fetch(
-    `${API_BASE}/s3/presigned/${encodeURIComponent(connectionId)}/${encodeURIComponent(bucketName)}/${encodeKey(key)}`,
+    `${API_BASE}/s3/presigned/${encodeURIComponent(connectionId)}/${encodeKey(key)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

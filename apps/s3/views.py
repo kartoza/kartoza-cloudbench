@@ -1,8 +1,7 @@
 """Views for S3 storage management.
 
 Provides endpoints for:
-- S3 connection management
-- Bucket listing
+- S3 connection management (each connection is scoped to one bucket)
 - Object browsing
 - File preview and proxy
 - DuckDB queries
@@ -55,7 +54,10 @@ def _get_owned_connection(request, conn_id):
 
 
 class S3ConnectionListView(APIView):
-    """List and create S3 connections."""
+    """List and create S3 connections.
+
+    A connection is scoped to exactly one bucket (see S3Connection).
+    """
 
     def get(self, request):
         """List all S3 connections."""
@@ -66,8 +68,9 @@ class S3ConnectionListView(APIView):
                     "id": str(c.id),
                     "name": c.name,
                     "endpoint": c.endpoint,
+                    "bucket": c.bucket,
                     "region": c.region,
-                    "useSsl": c.use_ssl,
+                    "useSSL": c.use_ssl,
                     "pathStyle": c.path_style,
                 }
                 for c in connections
@@ -77,14 +80,21 @@ class S3ConnectionListView(APIView):
     def post(self, request):
         """Create a new S3 connection."""
         data = request.data
+        bucket = data.get("bucket", "").strip()
+        if not bucket:
+            return Response(
+                {"error": "Bucket is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         conn = S3Connection.objects.create(
             owner=request.user,
             name=data.get("name", ""),
             endpoint=data.get("endpoint", ""),
+            bucket=bucket,
             access_key=data.get("accessKey", ""),
             secret_key=data.get("secretKey", ""),
             region=data.get("region", "us-east-1"),
-            use_ssl=data.get("useSsl", True),
+            use_ssl=data.get("useSSL", True),
             path_style=data.get("pathStyle", True),
         )
 
@@ -93,6 +103,7 @@ class S3ConnectionListView(APIView):
                 "id": str(conn.id),
                 "name": conn.name,
                 "endpoint": conn.endpoint,
+                "bucket": conn.bucket,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -104,15 +115,21 @@ class S3ConnectionTestView(APIView):
     def post(self, request):
         """Test connection parameters."""
         data = request.data
+        bucket = data.get("bucket", "").strip()
+        if not bucket:
+            return Response(
+                {"status": "error", "message": "Bucket is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         client = S3Client(
             endpoint=data.get("endpoint", ""),
+            bucket=bucket,
             access_key=data.get("accessKey", ""),
             secret_key=data.get("secretKey", ""),
             region=data.get("region", "us-east-1"),
-            use_ssl=data.get("useSsl", True),
+            use_ssl=data.get("useSSL", True),
             path_style=data.get("pathStyle", True),
-            user_id=str(request.user.id),
         )
 
         success, message = client.test_connection()
@@ -143,8 +160,9 @@ class S3ConnectionDetailView(APIView):
                     "id": str(conn.id),
                     "name": conn.name,
                     "endpoint": conn.endpoint,
+                    "bucket": conn.bucket,
                     "region": conn.region,
-                    "useSsl": conn.use_ssl,
+                    "useSSL": conn.use_ssl,
                     "pathStyle": conn.path_style,
                 }
             }
@@ -162,15 +180,18 @@ class S3ConnectionDetailView(APIView):
         data = request.data
         conn.name = data.get("name", conn.name)
         conn.endpoint = data.get("endpoint", conn.endpoint)
-        if "accessKey" in data:
+        if data.get("bucket", "").strip():
+            conn.bucket = data["bucket"].strip()
+        # The edit dialog never receives the existing accessKey/secretKey back
+        # from the API, so it always submits them as "" unless the user
+        # retypes them. Treat blank as "leave unchanged" instead of wiping
+        # the credential.
+        if data.get("accessKey"):
             conn.access_key = data["accessKey"]
-        # The edit dialog never receives the existing secret back from the
-        # API, so it always submits secretKey as "" unless the user retypes
-        # it. Treat blank as "leave unchanged" instead of wiping the secret.
         if data.get("secretKey"):
             conn.secret_key = data["secretKey"]
         conn.region = data.get("region", conn.region)
-        conn.use_ssl = data.get("useSsl", conn.use_ssl)
+        conn.use_ssl = data.get("useSSL", conn.use_ssl)
         conn.path_style = data.get("pathStyle", conn.path_style)
         conn.save()
 
@@ -218,80 +239,14 @@ class S3ConnectionTestExistingView(APIView):
 
 
 # ============================================================================
-# Bucket and Object Views
+# Object Views
 # ============================================================================
 
 
-class S3BucketListView(APIView):
-    """List and create buckets for a connection."""
+class S3ObjectListView(APIView):
+    """List objects in a connection's bucket."""
 
     def get(self, request, conn_id):
-        """List all accessible buckets."""
-        try:
-            client = get_s3_client(conn_id, str(request.user.id))
-            buckets = client.list_buckets()
-            return Response([b.to_dict() for b in buckets])
-        except ValueError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-    def post(self, request, conn_id):
-        """Create a new bucket."""
-        name = request.data.get("name", "").strip()
-        if not name:
-            return Response(
-                {"error": "Bucket name is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            client = get_s3_client(conn_id, str(request.user.id))
-            bucket = client.create_bucket(name)
-            return Response(bucket.to_dict(), status=status.HTTP_201_CREATED)
-        except ValueError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-
-class S3BucketDetailView(APIView):
-    """Delete a bucket."""
-
-    def delete(self, request, conn_id, bucket):
-        """Delete an empty bucket."""
-        try:
-            client = get_s3_client(conn_id, str(request.user.id))
-            client.delete_bucket(bucket)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except ValueError as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-
-class S3ObjectListView(APIView):
-    """List objects in a bucket."""
-
-    def get(self, request, conn_id, bucket):
         """List objects with optional prefix."""
         prefix = request.query_params.get("prefix", "")
         delimiter = request.query_params.get("delimiter", "/")
@@ -301,7 +256,6 @@ class S3ObjectListView(APIView):
         try:
             client = get_s3_client(conn_id, str(request.user.id))
             result = client.list_objects(
-                bucket=bucket,
                 prefix=prefix,
                 delimiter=delimiter,
                 max_keys=max_keys,
@@ -323,11 +277,11 @@ class S3ObjectListView(APIView):
 class S3ObjectDetailView(APIView):
     """Get object details or delete object."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, request, conn_id, key):
         """Get object metadata."""
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            info = client.get_object_info(bucket, key)
+            info = client.get_object_info(key)
             return Response(info)
         except ValueError as e:
             return Response(
@@ -340,11 +294,11 @@ class S3ObjectDetailView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-    def delete(self, request, conn_id, bucket, key):
+    def delete(self, request, conn_id, key):
         """Delete an object."""
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            client.delete_object(bucket, key)
+            client.delete_object(key)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ValueError as e:
             return Response(
@@ -366,11 +320,11 @@ class S3ObjectDetailView(APIView):
 class S3PreviewView(APIView):
     """Preview file content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, request, conn_id, key):
         """Preview file content based on type."""
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            info = client.get_object_info(bucket, key)
+            info = client.get_object_info(key)
             content_type = info.get("contentType", "application/octet-stream")
             size = info.get("contentLength", 0)
 
@@ -390,7 +344,7 @@ class S3PreviewView(APIView):
             # For text/json, fetch content
             content = None
             if preview_type in ("text", "json") and size < 1024 * 1024:  # 1MB limit
-                data = client.get_object(bucket, key)
+                data = client.get_object(key)
                 content = data.decode("utf-8", errors="replace")
                 if preview_type == "json":
                     with contextlib.suppress(json.JSONDecodeError):
@@ -400,7 +354,7 @@ class S3PreviewView(APIView):
             schema = None
             if preview_type == "parquet":
                 engine = get_duckdb_engine()
-                s3_path = f"s3://{bucket}/{key}"
+                s3_path = f"s3://{client.bucket}/{key}"
                 schema = engine.get_parquet_schema(s3_path, conn_id, str(request.user.id))
 
             return Response(
@@ -427,15 +381,15 @@ class S3PreviewView(APIView):
 class S3ProxyView(APIView):
     """Proxy S3 object content."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, request, conn_id, key):
         """Stream object content."""
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            info = client.get_object_info(bucket, key)
+            info = client.get_object_info(key)
             content_type = info.get("contentType", "application/octet-stream")
 
             # Stream the content
-            stream = client.get_object_stream(bucket, key)
+            stream = client.get_object_stream(key)
 
             def generate():
                 yield from stream.iter_chunks()
@@ -466,14 +420,14 @@ class S3ProxyView(APIView):
 class S3GeoJSONView(APIView):
     """Get GeoJSON from spatial files."""
 
-    def get(self, request, conn_id, bucket, key):
+    def get(self, request, conn_id, key):
         """Convert spatial file to GeoJSON."""
         bbox = request.query_params.get("bbox")
         limit = int(request.query_params.get("limit", "1000"))
 
         try:
-            get_s3_client(conn_id, str(request.user.id))  # validates conn_id exists, raises ValueError (→ 404) if not
-            s3_path = f"s3://{bucket}/{key}"
+            client = get_s3_client(conn_id, str(request.user.id))
+            s3_path = f"s3://{client.bucket}/{key}"
 
             # Parse bbox if provided
             bbox_tuple = None
@@ -796,7 +750,7 @@ class S3ConversionJobsView(APIView):
 class S3UploadView(APIView):
     """Upload files to S3."""
 
-    def post(self, request, conn_id, bucket):
+    def post(self, request, conn_id):
         """Upload a file to S3.
 
         Expects multipart/form-data with:
@@ -828,7 +782,7 @@ class S3UploadView(APIView):
                 try:
                     if target_format == "pmtiles":
                         job = start_pmtiles_conversion(
-                            uploaded_file, key, conn_id, bucket, str(request.user.id), companion_files
+                            uploaded_file, key, conn_id, str(request.user.id), companion_files
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -837,7 +791,7 @@ class S3UploadView(APIView):
                                 {"error": "COG conversion accepts a single file."},
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
-                        job = start_cog_conversion(uploaded_file, key, conn_id, bucket, str(request.user.id))
+                        job = start_cog_conversion(uploaded_file, key, conn_id, str(request.user.id))
                         message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -864,12 +818,9 @@ class S3UploadView(APIView):
                     upload_size = archive.tell()
                     archive.seek(0)
                     key = str(PurePosixPath(key).with_suffix(".zip"))
-                    result = client.put_object(
-                        bucket=bucket, key=key, body=archive, content_type="application/zip"
-                    )
+                    result = client.put_object(key=key, body=archive, content_type="application/zip")
             else:
                 result = client.put_object(
-                    bucket=bucket,
                     key=key,
                     body=uploaded_file.read(),
                     content_type=content_type,
@@ -878,7 +829,7 @@ class S3UploadView(APIView):
                 {
                     "key": key,
                     "etag": result.get("etag"),
-                    "bucket": bucket,
+                    "bucket": client.bucket,
                     "success": True,
                     "message": "File uploaded to S3",
                     "size": upload_size,
@@ -900,13 +851,13 @@ class S3UploadView(APIView):
 class S3GeoPackageInspectView(APIView):
     """Stage a GeoPackage upload and report its layers, before conversion starts."""
 
-    def post(self, request, conn_id, bucket):
+    def post(self, request, conn_id):
         if "file" not in request.FILES:
             return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
         uploaded_file = request.FILES["file"]
         key = request.data.get("key", uploaded_file.name)
         try:
-            job, layers = inspect_geopackage(uploaded_file, key, conn_id, bucket, str(request.user.id))
+            job, layers = inspect_geopackage(uploaded_file, key, conn_id, str(request.user.id))
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except httpx.HTTPError as exc:
@@ -966,7 +917,7 @@ class S3LayerCollectionDetailView(APIView):
 class S3PresignedURLView(APIView):
     """Generate presigned URLs."""
 
-    def post(self, request, conn_id, bucket, key):
+    def post(self, request, conn_id, key):
         """Generate a presigned URL for an object."""
         expiration = request.data.get("expiration", 3600)
         method = request.data.get("method", "get_object")
@@ -974,7 +925,6 @@ class S3PresignedURLView(APIView):
         try:
             client = get_s3_client(conn_id, str(request.user.id))
             url = client.generate_presigned_url(
-                bucket=bucket,
                 key=key,
                 expiration=expiration,
                 method=method,

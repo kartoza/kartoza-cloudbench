@@ -100,8 +100,9 @@ def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path):
         patch("apps.s3.views.get_s3_client", get_client),
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
+        get_client.return_value.bucket = "bucket"
         response = api.post(
-            "/api/s3/upload/s3-one/bucket",
+            "/api/s3/upload/s3-one",
             {
                 "file": shapefile_zip(),
                 "convert": "true",
@@ -130,8 +131,9 @@ def test_upload_loose_shapefile_components_starts_conversion(settings, tmp_path)
         patch("apps.s3.views.get_s3_client", get_client),
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
+        get_client.return_value.bucket = "bucket"
         response = api.post(
-            "/api/s3/upload/s3-one/bucket",
+            "/api/s3/upload/s3-one",
             {
                 "file": SimpleUploadedFile("roads.shp", b"shape"),
                 "companions": [
@@ -163,9 +165,10 @@ def test_upload_without_convert_zips_loose_components(settings, tmp_path):
         return {"etag": "test"}
 
     with patch("apps.s3.views.get_s3_client") as get_client:
+        get_client.return_value.bucket = "bucket"
         get_client.return_value.put_object.side_effect = capture_archive
         response = api.post(
-            "/api/s3/upload/s3-one/bucket",
+            "/api/s3/upload/s3-one",
             {
                 "file": SimpleUploadedFile("roads.shp", b"shape"),
                 "companions": [
@@ -192,8 +195,9 @@ def conversion_job(settings, tmp_path):
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
+        get_client.return_value.bucket = "bucket"
         get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
-        return start_conversion(shapefile_zip(), "folder/roads.zip", "s3-one", "bucket", "7")
+        return start_conversion(shapefile_zip(), "folder/roads.zip", "s3-one", "7")
 
 
 @pytest.mark.django_db

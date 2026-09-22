@@ -77,10 +77,6 @@ class SearchService:
         if not types or "table" in types:
             results.extend(self._search_tables(query_lower))
 
-        # Search S3 buckets
-        if not types or "bucket" in types:
-            results.extend(self._search_buckets(query_lower))
-
         # Sort by relevance (simple name match priority)
         results.sort(
             key=lambda r: (
@@ -111,13 +107,13 @@ class SearchService:
                 )
 
         for conn in S3Connection.objects.filter(owner_id=self._user_id):
-            if query in conn.name.lower() or query in conn.endpoint.lower():
+            if query in conn.name.lower() or query in conn.endpoint.lower() or query in conn.bucket.lower():
                 results.append(
                     SearchResult(
                         type="connection",
                         name=conn.name,
                         title=conn.name,
-                        description=f"S3 at {conn.endpoint}",
+                        description=f"S3 bucket {conn.bucket!r} on {conn.endpoint}",
                         source="s3",
                         source_id=str(conn.id),
                         path=f"/s3/{conn.id}",
@@ -216,39 +212,6 @@ class SearchService:
                     pass
         except Exception:
             pass
-
-        return results
-
-    def _search_buckets(self, query: str) -> list[SearchResult]:
-        """Search S3 buckets."""
-        results = []
-
-        for conn in S3Connection.objects.filter(owner_id=self._user_id):
-            try:
-                from apps.s3.client import get_s3_client
-
-                client = get_s3_client(conn.id, str(self._user_id))
-                buckets = client.list_buckets()
-
-                for bucket in buckets:
-                    if query in bucket.name.lower():
-                        results.append(
-                            SearchResult(
-                                type="bucket",
-                                name=bucket.name,
-                                title=bucket.name,
-                                description=f"S3 bucket on {conn.name}",
-                                source="s3",
-                                source_id=str(conn.id),
-                                path=f"/s3/{conn.id}/{bucket.name}",
-                                metadata={
-                                    "connection": conn.name,
-                                    "creationDate": bucket.creation_date,
-                                },
-                            )
-                        )
-            except Exception:
-                pass
 
         return results
 

@@ -24,13 +24,26 @@ import {
   useToast,
   Switch,
   FormHelperText,
+  Collapse,
 } from '@chakra-ui/react'
-import { FiEye, FiEyeOff, FiHardDrive, FiCheck } from 'react-icons/fi'
+import { FiEye, FiEyeOff, FiHardDrive, FiCheck, FiChevronDown, FiChevronRight } from 'react-icons/fi'
 import { SiAmazons3 } from 'react-icons/si'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import { springs } from '../../utils/animations'
+
+// Sensible connectivity defaults inferred from the endpoint, so most users
+// never need to touch the advanced settings at all:
+// - Real AWS S3 uses SSL and has deprecated path-style addressing.
+// - Everything else (MinIO, Wasabi, R2, ...) generally needs path-style.
+// - Bare localhost/127.0.0.1 dev instances usually run without TLS.
+function deriveConnectionDefaults(endpoint: string): { useSSL: boolean; pathStyle: boolean } {
+  const host = endpoint.trim().replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase()
+  const isAWS = host.endsWith('amazonaws.com')
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')
+  return { useSSL: !isLocal, pathStyle: !isAWS }
+}
 
 export default function S3ConnectionDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
@@ -42,16 +55,21 @@ export default function S3ConnectionDialog() {
   // Form fields
   const [name, setName] = useState('')
   const [endpoint, setEndpoint] = useState('')
+  const [bucket, setBucket] = useState('')
   const [accessKey, setAccessKey] = useState('')
   const [secretKey, setSecretKey] = useState('')
   const [region, setRegion] = useState('')
   const [useSSL, setUseSSL] = useState(true)
   const [pathStyle, setPathStyle] = useState(true)
   const [showSecretKey, setShowSecretKey] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  // Once the user manually edits a connectivity toggle, stop silently
+  // overwriting it whenever they change the endpoint.
+  const [advancedTouched, setAdvancedTouched] = useState(false)
 
   const [isLoading, setIsLoading] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; buckets?: number } | null>(null)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
   const isOpen = activeDialog === 's3connection'
   const isEditMode = dialogData?.mode === 'edit'
@@ -64,11 +82,16 @@ export default function S3ConnectionDialog() {
       api.getS3Connection(connectionId).then((conn) => {
         setName(conn.name)
         setEndpoint(conn.endpoint)
-        setAccessKey(conn.accessKey)
+        setBucket(conn.bucket)
+        setAccessKey('') // Write-only — the API never returns the existing access key
         setSecretKey('') // Don't show existing secret key
         setRegion(conn.region || '')
         setUseSSL(conn.useSSL)
         setPathStyle(conn.pathStyle)
+        // Flag as "touched" so re-typing the endpoint doesn't clobber this
+        // connection's existing (possibly non-default) settings.
+        setAdvancedTouched(true)
+        setShowAdvanced(false)
       }).catch((err) => {
         toast({
           title: 'Failed to load connection',
@@ -79,17 +102,30 @@ export default function S3ConnectionDialog() {
       })
     } else if (isOpen && !isEditMode) {
       // Reset all fields for new connection
+      const defaultEndpoint = 'localhost:9000'
       setName('')
-      setEndpoint('localhost:9000')
+      setEndpoint(defaultEndpoint)
+      setBucket('')
       setAccessKey('')
       setSecretKey('')
       setRegion('')
-      setUseSSL(false)
-      setPathStyle(true)
+      setUseSSL(deriveConnectionDefaults(defaultEndpoint).useSSL)
+      setPathStyle(deriveConnectionDefaults(defaultEndpoint).pathStyle)
       setShowSecretKey(false)
+      setShowAdvanced(false)
+      setAdvancedTouched(false)
     }
     setTestResult(null)
   }, [isOpen, isEditMode, connectionId, toast])
+
+  const handleEndpointChange = (value: string) => {
+    setEndpoint(value)
+    if (!isEditMode && !advancedTouched) {
+      const defaults = deriveConnectionDefaults(value)
+      setUseSSL(defaults.useSSL)
+      setPathStyle(defaults.pathStyle)
+    }
+  }
 
   const handleTest = async () => {
     setIsTesting(true)
@@ -110,6 +146,7 @@ export default function S3ConnectionDialog() {
       const result = await api.testS3ConnectionDirect({
         name: name || 'Test',
         endpoint,
+        bucket,
         accessKey,
         secretKey,
         region: region || undefined,
@@ -128,10 +165,10 @@ export default function S3ConnectionDialog() {
     setIsLoading(true)
 
     try {
-      if (!name || !endpoint) {
+      if (!name || !endpoint || !bucket) {
         toast({
           title: 'Required fields',
-          description: 'Name and endpoint are required',
+          description: 'Name, endpoint and bucket are required',
           status: 'warning',
           duration: 3000,
         })
@@ -142,6 +179,7 @@ export default function S3ConnectionDialog() {
       const connectionData = {
         name,
         endpoint,
+        bucket,
         accessKey,
         secretKey,
         region: region || undefined,
@@ -183,7 +221,7 @@ export default function S3ConnectionDialog() {
   return (
     <Modal isOpen={isOpen} onClose={closeDialog} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-      <ModalContent borderRadius="xl" overflow="hidden">
+      <ModalContent borderRadius="xl" overflow="hidden" maxH="90vh">
         {/* Gradient Header */}
         <Box
           bg="linear-gradient(135deg, #c06c00 0%, #e08900 50%, #f0a020 100%)"
@@ -205,7 +243,7 @@ export default function S3ConnectionDialog() {
         </Box>
         <ModalCloseButton color="white" />
 
-        <ModalBody py={6}>
+        <ModalBody py={6} overflowY="auto">
           <VStack spacing={4}>
             <FormControl isRequired>
               <FormLabel fontWeight="500" color="gray.700">Connection Name</FormLabel>
@@ -222,7 +260,7 @@ export default function S3ConnectionDialog() {
               <FormLabel fontWeight="500" color="gray.700">Endpoint</FormLabel>
               <Input
                 value={endpoint}
-                onChange={(e) => setEndpoint(e.target.value)}
+                onChange={(e) => handleEndpointChange(e.target.value)}
                 placeholder="localhost:9000 or s3.amazonaws.com"
                 size="lg"
                 borderRadius="lg"
@@ -232,12 +270,26 @@ export default function S3ConnectionDialog() {
               </FormHelperText>
             </FormControl>
 
+            <FormControl isRequired>
+              <FormLabel fontWeight="500" color="gray.700">Bucket</FormLabel>
+              <Input
+                value={bucket}
+                onChange={(e) => setBucket(e.target.value)}
+                placeholder="my-bucket"
+                size="lg"
+                borderRadius="lg"
+              />
+              <FormHelperText>
+                Each connection is scoped to a single bucket.
+              </FormHelperText>
+            </FormControl>
+
             <FormControl>
               <FormLabel fontWeight="500" color="gray.700">Access Key</FormLabel>
               <Input
                 value={accessKey}
                 onChange={(e) => setAccessKey(e.target.value)}
-                placeholder="AKIAIOSFODNN7EXAMPLE"
+                placeholder={isEditMode ? '(unchanged)' : 'AKIAIOSFODNN7EXAMPLE'}
                 size="lg"
                 borderRadius="lg"
               />
@@ -265,46 +317,73 @@ export default function S3ConnectionDialog() {
               </InputGroup>
             </FormControl>
 
-            <FormControl>
-              <FormLabel fontWeight="500" color="gray.700">Region (optional)</FormLabel>
-              <Input
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                placeholder="us-east-1"
-                size="lg"
-                borderRadius="lg"
-              />
-              <FormHelperText>
-                Required for AWS S3, optional for MinIO
-              </FormHelperText>
-            </FormControl>
+            <Box w="100%">
+              <Button
+                variant="link"
+                size="sm"
+                color="gray.600"
+                fontWeight="500"
+                leftIcon={showAdvanced ? <FiChevronDown /> : <FiChevronRight />}
+                onClick={() => setShowAdvanced(!showAdvanced)}
+              >
+                Advanced settings
+              </Button>
+              {!showAdvanced && (
+                <Text fontSize="xs" color="gray.400" mt={1}>
+                  Region, SSL and addressing style — auto-detected from the endpoint, override if needed.
+                </Text>
+              )}
+              <Collapse in={showAdvanced} animateOpacity>
+                <VStack spacing={4} align="stretch" pt={4}>
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700">Region (optional)</FormLabel>
+                    <Input
+                      value={region}
+                      onChange={(e) => setRegion(e.target.value)}
+                      placeholder="us-east-1"
+                      size="lg"
+                      borderRadius="lg"
+                    />
+                    <FormHelperText>
+                      Required for AWS S3, optional for MinIO
+                    </FormHelperText>
+                  </FormControl>
 
-            <HStack w="100%" spacing={6}>
-              <FormControl display="flex" alignItems="center">
-                <FormLabel mb="0" fontWeight="500" color="gray.700">
-                  Use SSL
-                </FormLabel>
-                <Switch
-                  isChecked={useSSL}
-                  onChange={(e) => setUseSSL(e.target.checked)}
-                  colorScheme="orange"
-                />
-              </FormControl>
+                  <HStack w="100%" spacing={6}>
+                    <FormControl display="flex" alignItems="center">
+                      <FormLabel mb="0" fontWeight="500" color="gray.700">
+                        Use SSL
+                      </FormLabel>
+                      <Switch
+                        isChecked={useSSL}
+                        onChange={(e) => {
+                          setAdvancedTouched(true)
+                          setUseSSL(e.target.checked)
+                        }}
+                        colorScheme="orange"
+                      />
+                    </FormControl>
 
-              <FormControl display="flex" alignItems="center">
-                <FormLabel mb="0" fontWeight="500" color="gray.700">
-                  Path Style
-                </FormLabel>
-                <Switch
-                  isChecked={pathStyle}
-                  onChange={(e) => setPathStyle(e.target.checked)}
-                  colorScheme="orange"
-                />
-              </FormControl>
-            </HStack>
-            <Text fontSize="xs" color="gray.500" alignSelf="flex-start">
-              Path Style: Enable for MinIO and most S3-compatible storage. Disable for AWS S3.
-            </Text>
+                    <FormControl display="flex" alignItems="center">
+                      <FormLabel mb="0" fontWeight="500" color="gray.700">
+                        Path Style
+                      </FormLabel>
+                      <Switch
+                        isChecked={pathStyle}
+                        onChange={(e) => {
+                          setAdvancedTouched(true)
+                          setPathStyle(e.target.checked)
+                        }}
+                        colorScheme="orange"
+                      />
+                    </FormControl>
+                  </HStack>
+                  <Text fontSize="xs" color="gray.500">
+                    Path Style: on for MinIO and most S3-compatible storage, off for AWS S3.
+                  </Text>
+                </VStack>
+              </Collapse>
+            </Box>
 
             {/* Test Result */}
             <AnimatePresence>
@@ -324,11 +403,6 @@ export default function S3ConnectionDialog() {
                     <AlertIcon />
                     <Box>
                       <Text fontSize="sm">{testResult.message}</Text>
-                      {testResult.success && testResult.buckets !== undefined && (
-                        <Text fontSize="xs" color="gray.600">
-                          Found {testResult.buckets} bucket{testResult.buckets !== 1 ? 's' : ''}
-                        </Text>
-                      )}
                     </Box>
                   </Alert>
                 </motion.div>

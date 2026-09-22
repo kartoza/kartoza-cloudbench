@@ -15,18 +15,11 @@ from apps.s3.models import S3Connection
 
 @pytest.fixture
 def mock_s3_client():
-    """Mock S3 client for bucket/object operations."""
+    """Mock S3 client (scoped to one bucket) for object operations."""
     with patch("apps.s3.views.get_s3_client") as mock_get:
         client = MagicMock()
+        client.bucket = "test-bucket"
 
-        # Mock bucket class for proper serialization
-        mock_bucket = MagicMock()
-        mock_bucket.to_dict.return_value = {
-            "name": "test-bucket",
-            "creation_date": "2024-01-01T00:00:00Z",
-        }
-
-        client.list_buckets.return_value = [mock_bucket]
         client.test_connection.return_value = (True, "Connection successful")
         client.list_objects.return_value = {
             "objects": [
@@ -107,6 +100,7 @@ class TestS3ConnectionWorkflow:
             {
                 "name": "New MinIO",
                 "endpoint": "newhost:9000",
+                "bucket": "new-bucket",
                 "accessKey": "newkey",
                 "secretKey": "newsecret",
             },
@@ -156,35 +150,12 @@ class TestS3ConnectionWorkflow:
 
 @pytest.mark.integration
 @pytest.mark.django_db
-class TestS3BucketWorkflow:
-    """Test S3 bucket operations workflows."""
-
-    def test_list_buckets(self, api_client: APIClient, mock_s3_client) -> None:
-        """Test listing S3 buckets."""
-        response = api_client.get("/api/s3/connections/test-s3-conn/buckets")
-        assert response.status_code == status.HTTP_200_OK
-        buckets = response.json()
-        assert len(buckets) == 1
-        assert buckets[0]["name"] == "test-bucket"
-
-    def test_create_bucket(self, api_client: APIClient, mock_s3_client) -> None:
-        """Test creating an S3 bucket."""
-        mock_s3_client.create_bucket.return_value.to_dict.return_value = {
-            "name": "new-bucket",
-            "creationDate": None,
-        }
-        response = api_client.post(
-            "/api/s3/connections/test-s3-conn/buckets",
-            {"name": "new-bucket"},
-            format="json",
-        )
-        assert response.status_code == status.HTTP_201_CREATED
-        assert response.json()["name"] == "new-bucket"
-        mock_s3_client.create_bucket.assert_called_once_with("new-bucket")
+class TestS3ObjectWorkflow:
+    """Test S3 object operations workflows."""
 
     def test_list_objects(self, api_client: APIClient, mock_s3_client) -> None:
-        """Test listing objects in a bucket."""
-        response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket")
+        """Test listing objects in a connection's bucket."""
+        response = api_client.get("/api/s3/objects/test-s3-conn")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "objects" in data
@@ -194,31 +165,24 @@ class TestS3BucketWorkflow:
         self, api_client: APIClient, mock_s3_client
     ) -> None:
         """Test listing objects with prefix filter."""
-        response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket?prefix=data/")
+        response = api_client.get("/api/s3/objects/test-s3-conn?prefix=data/")
         assert response.status_code == status.HTTP_200_OK
         mock_s3_client.list_objects.assert_called_with(
-            bucket="test-bucket",
             prefix="data/",
             delimiter="/",
             max_keys=1000,
             continuation_token=None,
         )
 
-
-@pytest.mark.integration
-@pytest.mark.django_db
-class TestS3ObjectWorkflow:
-    """Test S3 object operations workflows."""
-
     def test_get_object_info(self, api_client: APIClient, mock_s3_client) -> None:
         """Test getting object metadata."""
-        response = api_client.get("/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson")
+        response = api_client.get("/api/s3/objects/test-s3-conn/data/file.geojson")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["contentType"] == "application/geo+json"
 
     def test_delete_object(self, api_client: APIClient, mock_s3_client) -> None:
         """Test deleting an object."""
-        response = api_client.delete("/api/s3/objects/test-s3-conn/test-bucket/data/file.geojson")
+        response = api_client.delete("/api/s3/objects/test-s3-conn/data/file.geojson")
         assert response.status_code == status.HTTP_204_NO_CONTENT
         mock_s3_client.delete_object.assert_called_once()
 
@@ -230,7 +194,7 @@ class TestS3PreviewWorkflow:
 
     def test_preview_geojson(self, api_client: APIClient, mock_s3_client) -> None:
         """Test previewing GeoJSON content from S3."""
-        response = api_client.get("/api/s3/preview/test-s3-conn/test-bucket/data/file.geojson")
+        response = api_client.get("/api/s3/preview/test-s3-conn/data/file.geojson")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["type"] == "json"
@@ -246,7 +210,7 @@ class TestS3PreviewWorkflow:
             "contentLength": 2048,
         }
 
-        response = api_client.get("/api/s3/preview/test-s3-conn/test-bucket/data/file.parquet")
+        response = api_client.get("/api/s3/preview/test-s3-conn/data/file.parquet")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["type"] == "parquet"
@@ -303,7 +267,7 @@ class TestS3UploadWorkflow:
     ) -> None:
         """Test upload fails without file."""
         response = api_client.post(
-            "/api/s3/upload/test-s3-conn/test-bucket",
+            "/api/s3/upload/test-s3-conn",
             {},
             format="multipart",
         )

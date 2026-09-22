@@ -98,13 +98,11 @@ export default function S3UploadDialog() {
 
   // Dialog data
   const connectionId = dialogData?.data?.connectionId as string | undefined
-  const bucketName = dialogData?.data?.bucketName as string | undefined
 
   // Form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [companionFiles, setCompanionFiles] = useState<File[]>([])
   const [customKey, setCustomKey] = useState('')
-  const [selectedBucket, setSelectedBucket] = useState(bucketName || '')
   const [convertToCloudNative, setConvertToCloudNative] = useState(true)
   const [targetFormat, setTargetFormat] = useState<string>('')
   const [recommendedFormat, setRecommendedFormat] = useState<string | null>(null)
@@ -132,13 +130,6 @@ export default function S3UploadDialog() {
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
 
-  // Fetch buckets for the connection
-  const { data: buckets } = useQuery({
-    queryKey: ['s3buckets', connectionId],
-    queryFn: () => connectionId ? api.getS3Buckets(connectionId) : Promise.resolve([]),
-    enabled: isOpen && !!connectionId,
-  })
-
   // Fetch conversion tools status
   const { data: toolStatus } = useQuery({
     queryKey: ['conversionTools'],
@@ -163,9 +154,9 @@ export default function S3UploadDialog() {
 
   useEffect(() => {
     if (conversionJob?.status === 'completed') {
-      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
+      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
     }
-  }, [conversionJob?.status, connectionId, selectedBucket, queryClient])
+  }, [conversionJob?.status, connectionId, queryClient])
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -173,7 +164,6 @@ export default function S3UploadDialog() {
       setSelectedFile(null)
       setCompanionFiles([])
       setCustomKey('')
-      setSelectedBucket(bucketName || '')
       setConvertToCloudNative(true)
       setTargetFormat('')
       setRecommendedFormat(null)
@@ -187,7 +177,7 @@ export default function S3UploadDialog() {
       setGpkgLayers(null)
       setSelectedLayerNames(new Set())
     }
-  }, [isOpen, bucketName])
+  }, [isOpen])
 
   // Update recommended format when file changes
   useEffect(() => {
@@ -234,10 +224,10 @@ export default function S3UploadDialog() {
 
   const handleUpload = async () => {
     if (isUploading || isConverting || isInspecting) return
-    if (!selectedFile || !connectionId || !selectedBucket) {
+    if (!selectedFile || !connectionId) {
       toast({
         title: 'Missing required fields',
-        description: 'Please select a file and bucket',
+        description: 'Please select a file',
         status: 'warning',
         duration: 3000,
       })
@@ -251,7 +241,7 @@ export default function S3UploadDialog() {
       setUploadResult(null)
       try {
         const { jobId, layers } = await api.inspectGeoPackage(
-          connectionId, selectedBucket, selectedFile, customKey || undefined
+          connectionId, selectedFile, customKey || undefined
         )
         setGpkgJobId(jobId)
         setGpkgLayers(layers)
@@ -276,7 +266,6 @@ export default function S3UploadDialog() {
     try {
       const result = await api.uploadToS3(
         connectionId,
-        selectedBucket,
         selectedFile,
         customKey || undefined,
         convertToCloudNative && !!targetFormat,
@@ -298,7 +287,7 @@ export default function S3UploadDialog() {
       }
 
       // Refresh object list
-      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
+      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
 
       toast({
         title: result.conversionJobId ? 'Conversion started' : 'Upload successful',
@@ -350,7 +339,7 @@ export default function S3UploadDialog() {
         setConversionJobId(result.conversionJobId)
       }
 
-      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, selectedBucket] })
+      queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
 
       toast({
         title: 'Conversion started',
@@ -420,25 +409,6 @@ export default function S3UploadDialog() {
           <HStack spacing={4} align="stretch">
             {/* Left column: File selection */}
             <VStack spacing={3} flex="1" align="stretch">
-              {/* Bucket Selection */}
-              <FormControl isRequired size="sm">
-                <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Target Bucket</FormLabel>
-                <Select
-                  value={selectedBucket}
-                  isDisabled={isUploading || isConverting}
-                  onChange={(e) => setSelectedBucket(e.target.value)}
-                  placeholder="Select a bucket"
-                  size="sm"
-                  borderRadius="lg"
-                >
-                  {buckets?.map((bucket) => (
-                    <option key={bucket.name} value={bucket.name}>
-                      {bucket.name}
-                    </option>
-                  ))}
-                </Select>
-              </FormControl>
-
               {/* File Drop Zone */}
               <FormControl flex="1">
                 <FormLabel fontWeight="500" color="gray.700" fontSize="sm">File</FormLabel>
@@ -847,7 +817,6 @@ export default function S3UploadDialog() {
                 loadingText={isConverting ? 'Converting...' : isInspecting ? 'Reading GeoPackage...' : 'Uploading...'}
                 isDisabled={
                   !selectedFile ||
-                  !selectedBucket ||
                   (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
                 }
                 borderRadius="lg"

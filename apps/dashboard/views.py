@@ -182,7 +182,8 @@ class DashboardConnectionsView(APIView):
                     "name": conn.name,
                     "type": "s3",
                     "endpoint": conn.endpoint,
-                    "status": "unknown",  # Would need to test each
+                    "bucket": conn.bucket,
+                    "status": "unknown",
                 }
             )
 

@@ -108,14 +108,14 @@ def request_json(client, method, path, **kwargs):
         ) from exc
 
 
-def submit_job(client, s3_client, bucket, source_key, expiration, endpoint, extra_payload=None):
+def submit_job(client, s3_client, source_key, expiration, endpoint, extra_payload=None):
     """Submit the job, handing cng-lite a presigned URL to the source already in S3.
 
     A presigned URL lets cng-lite fetch the file with a plain HTTPS GET,
     using the credentials of whichever S3 connection the user picked,
     without cng-lite ever needing S3 credentials of its own.
     """
-    source_url = s3_client.generate_presigned_url(bucket, source_key, expiration=expiration)
+    source_url = s3_client.generate_presigned_url(source_key, expiration=expiration)
     payload = {"source": source_url, **(extra_payload or {})}
     submission = request_json(client, "POST", endpoint, json=payload)
     return submission["job_id"]
@@ -211,7 +211,6 @@ def run_conversion(
             cng_job_id = submit_job(
                 client,
                 s3_client,
-                job.bucket,
                 job.source_key,
                 settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT,
                 endpoint,

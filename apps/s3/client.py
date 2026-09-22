@@ -1,7 +1,11 @@
 """S3/MinIO client for storage operations.
 
 Provides a unified interface for S3-compatible object storage
-including AWS S3, MinIO, and other compatible services.
+including AWS S3, MinIO, and other compatible services. Each client
+is scoped to exactly one bucket, matching the one-connection-per-bucket
+model (see S3Connection) — most S3-compatible providers issue
+credentials scoped to a single bucket anyway, so this also avoids
+requiring account-wide permissions like ListAllMyBuckets.
 """
 
 import threading
@@ -39,37 +43,24 @@ class S3Object:
         }
 
 
-@dataclass
-class S3Bucket:
-    """S3 bucket information."""
-
-    name: str
-    creation_date: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "name": self.name,
-            "creationDate": self.creation_date,
-        }
-
-
 class S3Client:
-    """Client for S3-compatible object storage."""
+    """Client for a single S3-compatible bucket."""
 
     def __init__(
         self,
         endpoint: str,
+        bucket: str,
         access_key: str,
         secret_key: str,
         region: str = "us-east-1",
         use_ssl: bool = True,
         path_style: bool = True,
     ):
-        """Initialize S3 client.
+        """Initialize the S3 client for one bucket.
 
         Args:
             endpoint: S3 endpoint URL
+            bucket: The bucket this client operates on
             access_key: Access key ID
             secret_key: Secret access key
             region: AWS region (default: us-east-1)
@@ -77,6 +68,7 @@ class S3Client:
             path_style: Use path-style addressing (required for MinIO)
         """
         self.endpoint = endpoint
+        self.bucket = bucket
         self.region = region
 
         # Configure boto3 for S3-compatible storage
@@ -110,74 +102,32 @@ class S3Client:
         )
 
     def test_connection(self) -> tuple[bool, str]:
-        """Test the S3 connection.
+        """Test that this client's bucket is reachable.
+
+        Uses head_bucket rather than list_buckets, since bucket-scoped
+        credentials often can't call the account-wide ListAllMyBuckets.
 
         Returns:
             Tuple of (success, message)
         """
         try:
-            self.client.list_buckets()
+            self.client.head_bucket(Bucket=self.bucket)
             return True, "Connection successful"
         except ClientError as e:
             return False, str(e)
         except Exception as e:
             return False, str(e)
 
-    def list_buckets(self) -> list[S3Bucket]:
-        """List all accessible buckets.
-
-        Returns:
-            List of S3Bucket objects
-        """
-        response = self.client.list_buckets()
-        buckets = []
-        for bucket in response.get("Buckets", []):
-            creation_date = bucket.get("CreationDate")
-            buckets.append(
-                S3Bucket(
-                    name=bucket["Name"],
-                    creation_date=creation_date.isoformat() if creation_date else None,
-                )
-            )
-        return buckets
-
-    def create_bucket(self, bucket: str) -> S3Bucket:
-        """Create a new bucket.
-
-        Args:
-            bucket: Bucket name
-
-        Returns:
-            The created S3Bucket
-        """
-        kwargs: dict[str, Any] = {"Bucket": bucket}
-        # us-east-1 is the default region and must NOT be passed as a
-        # LocationConstraint, or AWS rejects the request.
-        if self.region and self.region != "us-east-1":
-            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.region}
-        self.client.create_bucket(**kwargs)
-        return S3Bucket(name=bucket)
-
-    def delete_bucket(self, bucket: str) -> None:
-        """Delete an empty bucket.
-
-        Args:
-            bucket: Bucket name
-        """
-        self.client.delete_bucket(Bucket=bucket)
-
     def list_objects(
         self,
-        bucket: str,
         prefix: str = "",
         delimiter: str = "/",
         max_keys: int = 1000,
         continuation_token: str | None = None,
     ) -> dict[str, Any]:
-        """List objects in a bucket with optional prefix.
+        """List objects in this client's bucket with optional prefix.
 
         Args:
-            bucket: Bucket name
             prefix: Key prefix to filter
             delimiter: Delimiter for virtual directories
             max_keys: Maximum keys to return
@@ -187,7 +137,7 @@ class S3Client:
             Dictionary with objects, prefixes, and pagination info
         """
         params = {
-            "Bucket": bucket,
+            "Bucket": self.bucket,
             "MaxKeys": max_keys,
         }
         if prefix:
@@ -225,43 +175,40 @@ class S3Client:
             "keyCount": response.get("KeyCount", 0),
         }
 
-    def get_object(self, bucket: str, key: str) -> bytes:
+    def get_object(self, key: str) -> bytes:
         """Get object content.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             Object content as bytes
         """
-        response = self.client.get_object(Bucket=bucket, Key=key)
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
         return response["Body"].read()
 
-    def get_object_stream(self, bucket: str, key: str) -> BinaryIO:
+    def get_object_stream(self, key: str) -> BinaryIO:
         """Get object content as a stream.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             StreamingBody for the object
         """
-        response = self.client.get_object(Bucket=bucket, Key=key)
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
         return response["Body"]
 
-    def get_object_info(self, bucket: str, key: str) -> dict[str, Any]:
+    def get_object_info(self, key: str) -> dict[str, Any]:
         """Get object metadata.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             Object metadata dictionary
         """
-        response = self.client.head_object(Bucket=bucket, Key=key)
+        response = self.client.head_object(Bucket=self.bucket, Key=key)
         last_modified = response.get("LastModified")
         return {
             "contentLength": response.get("ContentLength", 0),
@@ -273,7 +220,6 @@ class S3Client:
 
     def put_object(
         self,
-        bucket: str,
         key: str,
         body: bytes | BinaryIO,
         content_type: str | None = None,
@@ -282,7 +228,6 @@ class S3Client:
         """Upload an object.
 
         Args:
-            bucket: Bucket name
             key: Object key
             body: Object content
             content_type: Content type header
@@ -292,7 +237,7 @@ class S3Client:
             Upload response
         """
         params: dict[str, Any] = {
-            "Bucket": bucket,
+            "Bucket": self.bucket,
             "Key": key,
             "Body": body,
         }
@@ -307,22 +252,20 @@ class S3Client:
             "versionId": response.get("VersionId"),
         }
 
-    def delete_object(self, bucket: str, key: str) -> bool:
+    def delete_object(self, key: str) -> bool:
         """Delete an object.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             True if deleted successfully
         """
-        self.client.delete_object(Bucket=bucket, Key=key)
+        self.client.delete_object(Bucket=self.bucket, Key=key)
         return True
 
     def generate_presigned_url(
         self,
-        bucket: str,
         key: str,
         expiration: int = 3600,
         method: str = "get_object",
@@ -330,7 +273,6 @@ class S3Client:
         """Generate a presigned URL.
 
         Args:
-            bucket: Bucket name
             key: Object key
             expiration: URL expiration in seconds
             method: S3 method (get_object, put_object)
@@ -340,32 +282,24 @@ class S3Client:
         """
         return self.client.generate_presigned_url(
             method,
-            Params={"Bucket": bucket, "Key": key},
+            Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=expiration,
         )
 
-    def copy_object(
-        self,
-        source_bucket: str,
-        source_key: str,
-        dest_bucket: str,
-        dest_key: str,
-    ) -> dict[str, Any]:
-        """Copy an object.
+    def copy_object(self, source_key: str, dest_key: str) -> dict[str, Any]:
+        """Copy an object within this client's bucket.
 
         Args:
-            source_bucket: Source bucket name
             source_key: Source object key
-            dest_bucket: Destination bucket name
             dest_key: Destination object key
 
         Returns:
             Copy response
         """
-        copy_source = {"Bucket": source_bucket, "Key": source_key}
+        copy_source = {"Bucket": self.bucket, "Key": source_key}
         response = self.client.copy_object(
             CopySource=copy_source,
-            Bucket=dest_bucket,
+            Bucket=self.bucket,
             Key=dest_key,
         )
         return {
@@ -417,6 +351,7 @@ class S3ClientManager:
             # Create client
             client = S3Client(
                 endpoint=conn.endpoint,
+                bucket=conn.bucket,
                 access_key=conn.access_key,
                 secret_key=conn.secret_key,
                 region=conn.region or "us-east-1",

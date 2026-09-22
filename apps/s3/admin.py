@@ -17,9 +17,9 @@ def _mask(value: str) -> str:
 @admin.register(S3Connection)
 class S3ConnectionAdmin(admin.ModelAdmin):
     verbose_name = "S3 Connection"
-    list_display = ["name", "owner", "endpoint", "region", "use_ssl", "path_style", "is_active", "created_at"]
+    list_display = ["name", "owner", "endpoint", "bucket", "region", "use_ssl", "path_style", "is_active", "created_at"]
     list_filter = ["use_ssl", "path_style", "is_active"]
-    search_fields = ["name", "endpoint", "owner__username"]
+    search_fields = ["name", "endpoint", "bucket", "owner__username"]
     readonly_fields = ["id", "masked_access_key", "masked_secret_key", "created_at", "updated_at"]
     # access_key/secret_key are encrypted at rest (see apps/core/fields.py) —
     # excluded here so the admin never displays them in plaintext, even to

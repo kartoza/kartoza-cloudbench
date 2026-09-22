@@ -56,8 +56,9 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
         patch("apps.s3.views.get_s3_client", get_client),
         patch("apps.s3.cog.threading.Thread"),
     ):
+        get_client.return_value.bucket = "bucket"
         response = api.post(
-            "/api/s3/upload/s3-one/bucket",
+            "/api/s3/upload/s3-one",
             {
                 "file": tiff_file(),
                 "convert": "true",
@@ -82,7 +83,7 @@ def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
     api.force_authenticate(user=Mock(id=7, is_authenticated=True))
     with patch("apps.s3.views.get_s3_client"):
         response = api.post(
-            "/api/s3/upload/s3-one/bucket",
+            "/api/s3/upload/s3-one",
             {
                 "file": tiff_file(),
                 "companions": [SimpleUploadedFile("raster.tfw", b"world file")],
@@ -101,10 +102,11 @@ def cog_job(settings, tmp_path):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     with (
-        patch("apps.s3.cog.get_s3_client"),
+        patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.cog.threading.Thread"),
     ):
-        return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", "bucket", "7")
+        get_client.return_value.bucket = "bucket"
+        return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", "7")
 
 
 @pytest.mark.django_db

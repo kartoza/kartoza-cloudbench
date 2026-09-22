@@ -528,22 +528,22 @@ export interface DashboardData {
 // S3 Storage Types
 // ============================================================================
 
-// S3 Connection configuration
+// S3 Connection configuration — scoped to exactly one bucket.
+// The API never echoes back accessKey/secretKey (write-only, for security).
 export interface S3Connection {
   id: string
   name: string
   endpoint: string
-  accessKey: string
-  secretKey: string
+  bucket: string
   region?: string
   useSSL: boolean
   pathStyle: boolean
-  isActive: boolean
 }
 
 export interface S3ConnectionCreate {
   name: string
   endpoint: string
+  bucket: string
   accessKey: string
   secretKey: string
   region?: string
@@ -554,13 +554,6 @@ export interface S3ConnectionCreate {
 export interface S3ConnectionTestResult {
   success: boolean
   message: string
-  buckets?: number
-}
-
-// S3 Bucket
-export interface S3Bucket {
-  name: string
-  creationDate: string
 }
 
 // S3 Object

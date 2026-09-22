@@ -2,8 +2,8 @@
 S3 (PMTiles) and GeoServer (layers) connections.
 
 Hierarchy: Catalog (this CloudBench instance) -> Collection (one per S3
-bucket that has .pmtiles objects, or per GeoServer workspace that has
-layers) -> Item (one per PMTiles object / GeoServer layer).
+connection whose bucket has .pmtiles objects, or per GeoServer workspace
+that has layers) -> Item (one per PMTiles object / GeoServer layer).
 """
 
 from typing import Any
@@ -19,20 +19,26 @@ from apps.s3.models import S3Connection
 STAC_VERSION = "1.0.0"
 
 
-def s3_collection_id(conn_id: str, bucket: str) -> str:
-    return f"s3:{conn_id}:{bucket}"
+def s3_collection_id(conn_id: str) -> str:
+    return f"s3:{conn_id}"
 
 
 def gs_collection_id(conn_id: str, workspace: str) -> str:
     return f"gs:{conn_id}:{workspace}"
 
 
-def parse_collection_id(collection_id: str) -> tuple[str, str, str]:
-    """Returns (kind, conn_id, name) where name is a bucket or workspace."""
+def parse_collection_id(collection_id: str) -> tuple[str, str, str | None]:
+    """Returns (kind, conn_id, name).
+
+    name is a GeoServer workspace, or None for S3 — an S3 connection is
+    scoped to exactly one bucket, so there's no separate name to parse out.
+    """
     parts = collection_id.split(":", 2)
-    if len(parts) != 3 or parts[0] not in ("s3", "gs"):
-        raise ValueError(f"Unknown collection id: {collection_id}")
-    return parts[0], parts[1], parts[2]
+    if parts[0] == "s3" and len(parts) == 2:
+        return "s3", parts[1], None
+    if parts[0] == "gs" and len(parts) == 3:
+        return "gs", parts[1], parts[2]
+    raise ValueError(f"Unknown collection id: {collection_id}")
 
 
 def _get_owned_s3_connection(user_id: str, conn_id: str) -> "S3Connection | None":
@@ -50,13 +56,13 @@ def _link(rel: str, href: str, media_type: str = "application/json", title: str 
     return link
 
 
-def _list_pmtiles_objects(client, bucket: str) -> list[dict[str, Any]]:
-    """Walk a whole bucket and return every object whose key ends in .pmtiles."""
+def _list_pmtiles_objects(client) -> list[dict[str, Any]]:
+    """Walk a connection's whole bucket and return every .pmtiles object."""
     found: list[dict[str, Any]] = []
     continuation_token = None
     while True:
         result = client.list_objects(
-            bucket=bucket, prefix="", delimiter="", max_keys=1000, continuation_token=continuation_token
+            prefix="", delimiter="", max_keys=1000, continuation_token=continuation_token
         )
         found.extend(obj for obj in result["objects"] if obj["key"].lower().endswith(".pmtiles"))
         if not result.get("isTruncated"):
@@ -70,23 +76,18 @@ def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
     for conn in S3Connection.objects.filter(owner_id=user_id):
         try:
             client = get_s3_client(conn.id, user_id)
-            buckets = client.list_buckets()
+            objects = _list_pmtiles_objects(client)
         except Exception:
             continue
-        for bucket in buckets:
-            try:
-                objects = _list_pmtiles_objects(client, bucket.name)
-            except Exception:
-                continue
-            if not objects:
-                continue
-            results.append(
-                {
-                    "id": s3_collection_id(conn.id, bucket.name),
-                    "title": f"{conn.name} / {bucket.name}",
-                    "item_count": len(objects),
-                }
-            )
+        if not objects:
+            continue
+        results.append(
+            {
+                "id": s3_collection_id(conn.id),
+                "title": f"{conn.name} / {conn.bucket}",
+                "item_count": len(objects),
+            }
+        )
     return results
 
 
@@ -197,12 +198,12 @@ def _wms_preview_url(base_url: str, workspace: str, layer_name: str) -> str:
     return f"{base_url.rstrip('/')}/wms?{urlencode(params)}"
 
 
-def _s3_item(request, collection_id: str, conn, bucket_name: str, obj: dict[str, Any]) -> dict[str, Any]:
+def _s3_item(request, collection_id: str, conn, obj: dict[str, Any], user_id: str) -> dict[str, Any]:
     key = obj["key"]
     self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items/{key}")
 
     try:
-        asset_href = get_s3_client(conn.id).generate_presigned_url(bucket=bucket_name, key=key, expiration=3600)
+        asset_href = get_s3_client(conn.id, user_id).generate_presigned_url(key=key, expiration=3600)
     except Exception:
         asset_href = None
 
@@ -296,8 +297,8 @@ def list_items(request, user_id: str, collection_id: str) -> list[dict[str, Any]
         if conn is None:
             return None
         client = get_s3_client(conn_id, user_id)
-        objects = _list_pmtiles_objects(client, name)
-        return [_s3_item(request, collection_id, conn, name, obj) for obj in objects]
+        objects = _list_pmtiles_objects(client)
+        return [_s3_item(request, collection_id, conn, obj, user_id) for obj in objects]
 
     config = get_config(user_id)
     conn = config.get_connection(conn_id)
@@ -318,8 +319,8 @@ def get_item(request, user_id: str, collection_id: str, item_id: str) -> dict[st
         if conn is None:
             return None
         client = get_s3_client(conn_id, user_id)
-        obj = next((o for o in _list_pmtiles_objects(client, name) if o["key"] == item_id), None)
-        return _s3_item(request, collection_id, conn, name, obj) if obj else None
+        obj = next((o for o in _list_pmtiles_objects(client) if o["key"] == item_id), None)
+        return _s3_item(request, collection_id, conn, obj, user_id) if obj else None
 
     config = get_config(user_id)
     conn = config.get_connection(conn_id)

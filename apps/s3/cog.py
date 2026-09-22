@@ -41,17 +41,18 @@ def prepare_tiff(uploaded_file, destination):
             output.write(chunk)
 
 
-def start_conversion(uploaded_file, key, connection_id, bucket, owner_id):
+def start_conversion(uploaded_file, key, connection_id, owner_id):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     geopackage = is_geopackage(uploaded_file.name)
+    s3_client = get_s3_client(connection_id, owner_id)
     job = CngLiteJob(
         kind=KIND,
         owner_id=owner_id,
         connection_id=connection_id,
-        bucket=bucket,
+        bucket=s3_client.bucket,
         source_name=uploaded_file.name,
         output_key=output_key(key),
         input_size=uploaded_file.size,
@@ -68,11 +69,10 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id):
             prepare_tiff(uploaded_file, source_path)
             content_type = "image/tiff"
         job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
-        s3_client = get_s3_client(connection_id, owner_id)
         with source_path.open("rb") as source_file:
             s3_client.client.upload_fileobj(
                 source_file,
-                bucket,
+                s3_client.bucket,
                 job.source_key,
                 ExtraArgs={"ContentType": content_type},
             )

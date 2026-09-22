@@ -9,7 +9,12 @@ from apps.core.fields import EncryptedCharField
 
 
 class S3Connection(models.Model):
-    """A user's saved S3-compatible storage connection.
+    """A user's saved connection to one S3-compatible bucket.
+
+    A connection is scoped to exactly one bucket — most S3-compatible
+    providers issue credentials scoped to a single bucket, and this
+    avoids needing account-wide permissions just to browse. Add another
+    connection to reach a different bucket.
 
     access_key/secret_key are encrypted at rest (see apps.core.fields.
     EncryptedCharField) — this replaces the old plaintext-JSON-file storage
@@ -20,6 +25,7 @@ class S3Connection(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="s3_connections")
     name = models.CharField(max_length=255)
     endpoint = models.CharField(max_length=500)
+    bucket = models.CharField(max_length=255, blank=True, default="")
     access_key = EncryptedCharField()
     secret_key = EncryptedCharField()
     region = models.CharField(max_length=100, blank=True, default="")

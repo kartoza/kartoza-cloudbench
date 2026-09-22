@@ -107,17 +107,17 @@ def prepare_shapefile(uploaded_file, destination, identifier, companion_files=()
         raise ValueError("The shapefile ZIP is invalid, encrypted, or unsupported.") from exc
 
 
-def upload_raw_components(s3_client, bucket, output_key_value, job_id, uploaded_file, companion_files):
+def upload_raw_components(s3_client, output_key_value, job_id, uploaded_file, companion_files):
     """Persist each originally-uploaded file (not just the synthesized zip) to S3."""
     directory = sources_directory_key(output_key_value, job_id)
     for component in (uploaded_file, *companion_files):
         component.seek(0)
         key = f"{directory}/{PurePosixPath(component.name).name}"
         content_type = component.content_type or "application/octet-stream"
-        s3_client.client.upload_fileobj(component, bucket, key, ExtraArgs={"ContentType": content_type})
+        s3_client.client.upload_fileobj(component, s3_client.bucket, key, ExtraArgs={"ContentType": content_type})
 
 
-def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, companion_files=()):
+def start_conversion(uploaded_file, key, connection_id, owner_id, companion_files=()):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
@@ -126,11 +126,12 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
+    s3_client = get_s3_client(connection_id, owner_id)
     job = CngLiteJob(
         kind=KIND,
         owner_id=owner_id,
         connection_id=connection_id,
-        bucket=bucket,
+        bucket=s3_client.bucket,
         source_name=uploaded_file.name,
         output_key=output_key(key),
         input_size=input_size,
@@ -149,13 +150,12 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
             source_filename = f"{PurePosixPath(uploaded_file.name).stem}.zip"
             content_type = "application/zip"
         job.source_key = source_object_key(job.output_key, job.id, source_filename)
-        s3_client = get_s3_client(connection_id, owner_id)
         if companion_files:
-            upload_raw_components(s3_client, bucket, job.output_key, job.id, uploaded_file, companion_files)
+            upload_raw_components(s3_client, job.output_key, job.id, uploaded_file, companion_files)
         with source_path.open("rb") as source_file:
             s3_client.client.upload_fileobj(
                 source_file,
-                bucket,
+                s3_client.bucket,
                 job.source_key,
                 ExtraArgs={"ContentType": content_type},
             )
@@ -169,7 +169,7 @@ def start_conversion(uploaded_file, key, connection_id, bucket, owner_id, compan
     return job
 
 
-def inspect_geopackage(uploaded_file, key, connection_id, bucket, owner_id):
+def inspect_geopackage(uploaded_file, key, connection_id, owner_id):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite for its layers.
 
     Creates the CngLiteJob now (so the eventual conversion reuses the same
@@ -183,11 +183,12 @@ def inspect_geopackage(uploaded_file, key, connection_id, bucket, owner_id):
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The GeoPackage exceeds the upload size limit.")
 
+    s3_client = get_s3_client(connection_id, owner_id)
     job = CngLiteJob(
         kind=KIND,
         owner_id=owner_id,
         connection_id=connection_id,
-        bucket=bucket,
+        bucket=s3_client.bucket,
         source_name=uploaded_file.name,
         output_key=output_key(key),
         input_size=uploaded_file.size,
@@ -199,16 +200,15 @@ def inspect_geopackage(uploaded_file, key, connection_id, bucket, owner_id):
         source_path = directory / "source.gpkg"
         prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
         job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
-        s3_client = get_s3_client(connection_id, owner_id)
         with source_path.open("rb") as source_file:
             s3_client.client.upload_fileobj(
                 source_file,
-                bucket,
+                s3_client.bucket,
                 job.source_key,
                 ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
             )
         job.save()
-        presigned_url = s3_client.generate_presigned_url(bucket, job.source_key, expiration=300)
+        presigned_url = s3_client.generate_presigned_url(job.source_key, expiration=300)
         with httpx.Client(base_url=f"{settings.CLOUDNATIVEGIS_URL}/", timeout=httpx.Timeout(30, connect=10)) as client:
             layers = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})["layers"]
     except Exception:

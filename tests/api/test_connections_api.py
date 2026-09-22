@@ -150,9 +150,10 @@ class TestS3ConnectionsAPI:
             {
                 "name": "Test MinIO",
                 "endpoint": "localhost:9000",
+                "bucket": "test-bucket",
                 "accessKey": "minioadmin",
                 "secretKey": "minioadmin",
-                "useSsl": False,
+                "useSSL": False,
                 "pathStyle": True,
             },
             format="json",
@@ -160,7 +161,22 @@ class TestS3ConnectionsAPI:
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
         assert data["name"] == "Test MinIO"
+        assert data["bucket"] == "test-bucket"
         assert "id" in data
+
+    def test_create_s3_connection_requires_bucket(self, api_client: APIClient) -> None:
+        """A connection can't be created without a bucket."""
+        response = api_client.post(
+            "/api/s3/connections",
+            {
+                "name": "Test MinIO",
+                "endpoint": "localhost:9000",
+                "accessKey": "minioadmin",
+                "secretKey": "minioadmin",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_delete_s3_connection(self, api_client: APIClient) -> None:
         """Test deleting an S3 connection."""
@@ -170,6 +186,7 @@ class TestS3ConnectionsAPI:
             {
                 "name": "Test MinIO",
                 "endpoint": "localhost:9000",
+                "bucket": "test-bucket",
                 "accessKey": "minioadmin",
                 "secretKey": "minioadmin",
             },

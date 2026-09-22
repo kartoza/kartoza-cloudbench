@@ -10,7 +10,7 @@ import {
   Link as ChakraLink,
   Tooltip,
 } from '@chakra-ui/react'
-import { getS3Connections, getS3Buckets } from '../../api/s3'
+import { getS3Connections } from '../../api/s3'
 import { listPmtilesObjects, getS3PresignedUrl, openStyleEditor } from '../../api/mapExplorer'
 import { getConnections } from '../../api/connection'
 import { getWorkspaces } from '../../api/workspace'
@@ -67,34 +67,31 @@ async function buildS3Sections(): Promise<CatalogueSection[]> {
   const sections: CatalogueSection[] = []
 
   for (const connection of connections) {
-    const buckets = await getS3Buckets(connection.id).catch(() => [])
-    for (const bucket of buckets) {
-      try {
-        const objects = await listPmtilesObjects(connection.id, bucket.name)
-        if (objects.length === 0) continue
-        sections.push({
-          id: `s3-${connection.id}-${bucket.name}`,
-          title: `${connection.name} / ${bucket.name}`,
-          items: objects.map((obj) => ({
-            id: `s3-${connection.id}-${bucket.name}-${obj.key}`,
-            title: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
-            description: `${formatBytes(obj.size)} · Updated ${new Date(obj.lastModified).toLocaleDateString()}`,
-            mapTarget: { connectionId: connection.id, bucketName: bucket.name },
-            styleTarget: {
-              connectionId: connection.id,
-              bucketName: bucket.name,
-              key: obj.key,
-              name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
-            },
-            downloadOnClick: async () => {
-              const url = await getS3PresignedUrl(connection.id, bucket.name, obj.key)
-              window.open(url, '_blank')
-            },
-          })),
-        })
-      } catch {
-        // A bucket failing to list shouldn't block the rest of the catalogue.
-      }
+    try {
+      const objects = await listPmtilesObjects(connection.id)
+      if (objects.length === 0) continue
+      sections.push({
+        id: `s3-${connection.id}`,
+        title: `${connection.name} / ${connection.bucket}`,
+        items: objects.map((obj) => ({
+          id: `s3-${connection.id}-${obj.key}`,
+          title: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
+          description: `${formatBytes(obj.size)} · Updated ${new Date(obj.lastModified).toLocaleDateString()}`,
+          mapTarget: { connectionId: connection.id, bucketName: connection.bucket },
+          styleTarget: {
+            connectionId: connection.id,
+            bucketName: connection.bucket,
+            key: obj.key,
+            name: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
+          },
+          downloadOnClick: async () => {
+            const url = await getS3PresignedUrl(connection.id, obj.key)
+            window.open(url, '_blank')
+          },
+        })),
+      })
+    } catch {
+      // A connection failing to list shouldn't block the rest of the catalogue.
     }
   }
 
@@ -230,7 +227,7 @@ export default function StacCataloguePage({ onOpenOnMap }: StacCataloguePageProp
                               color="gray.500"
                               onClick={() => {
                                 const target = item.styleTarget!
-                                openStyleEditor(target.connectionId, target.bucketName, target.key, target.name)
+                                openStyleEditor(target.connectionId, target.key, target.name)
                               }}
                             >
                               Edit style

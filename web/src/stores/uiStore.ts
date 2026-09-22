@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { MapExplorerLayerRef } from '../utils/mapViewUrl'
 
 // Export MapViewState for use in preview components
 export interface MapViewState {
@@ -154,6 +155,10 @@ interface UIState {
   // Jupyter Preview state (for embedded Jupyter notebook)
   activeJupyterPreview: JupyterPreviewState | null
 
+  // A layer another part of the app wants Map Explorer to open with —
+  // App.tsx watches this and opens the overlay when it's set.
+  mapExplorerLayerRequest: MapExplorerLayerRef | null
+
   // Status messages
   statusMessage: string
   errorMessage: string | null
@@ -181,6 +186,8 @@ interface UIState {
   setPGQuery: (query: PGQueryState | null) => void
   setIcebergPreview: (preview: IcebergPreviewState | null) => void
   setJupyterPreview: (preview: JupyterPreviewState | null) => void
+  requestOpenMapExplorer: (layer: MapExplorerLayerRef) => void
+  clearMapExplorerLayerRequest: () => void
   setStatus: (message: string) => void
   setError: (message: string | null) => void
   setSuccess: (message: string | null) => void
@@ -226,6 +233,7 @@ export const useUIStore = create<UIState>((set) => ({
   activePGQuery: null,
   activeIcebergPreview: null,
   activeJupyterPreview: null,
+  mapExplorerLayerRequest: null,
   statusMessage: 'Ready',
   errorMessage: null,
   successMessage: null,
@@ -328,6 +336,14 @@ export const useUIStore = create<UIState>((set) => ({
       activePGQuery: null,
       activeIcebergPreview: null
     })
+  },
+
+  requestOpenMapExplorer: (layer) => {
+    set({ mapExplorerLayerRequest: layer })
+  },
+
+  clearMapExplorerLayerRequest: () => {
+    set({ mapExplorerLayerRequest: null })
   },
 
   setStatus: (message) => {

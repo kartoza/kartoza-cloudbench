@@ -7,8 +7,14 @@ import { SearchModal, useSearchShortcut } from './components/SearchModal'
 import { HelpPanel, useHelpShortcut } from './components/HelpPanel'
 import MapExplorerView from './components/MapExplorer'
 import { useTreeStore } from './stores/treeStore'
+import { useUIStore } from './stores/uiStore'
 import { getNodeUrlParam, parseNodeId } from './utils/nodeUrl'
-import { setMapViewUrlParam, clearMapViewUrlParam, isMapViewUrlParamSet } from './utils/mapViewUrl'
+import {
+  setMapViewUrlParam,
+  clearMapViewUrlParam,
+  isMapViewUrlParamSet,
+  setMapExplorerLayersUrlParam,
+} from './utils/mapViewUrl'
 import type { TreeNode } from './types'
 
 function applyUrlToTree(restoreNode: (node: TreeNode) => void) {
@@ -29,6 +35,8 @@ function App() {
   // show the login screen instead of the main app.
   const [isAuthed, setIsAuthed] = useState(() => !!localStorage.getItem('token'))
   const restoreNode = useTreeStore((state) => state.restoreNode)
+  const mapExplorerLayerRequest = useUIStore((state) => state.mapExplorerLayerRequest)
+  const clearMapExplorerLayerRequest = useUIStore((state) => state.clearMapExplorerLayerRequest)
   // True only when this session itself pushed the history entry that opened
   // the map view (via the Map button) — so "close" knows a same-app entry
   // exists to go back to, versus having landed on ?view=map directly
@@ -56,6 +64,18 @@ function App() {
     openedMapViaHistoryRef.current = true
     setIsMapExplorerOpen(true)
   }, [])
+
+  // Lets any component (e.g. a tree node's "Open in Map" action) open Map
+  // Explorer preloaded with a specific layer, without needing a prop path
+  // down to wherever the button lives.
+  useEffect(() => {
+    if (!mapExplorerLayerRequest) return
+    setMapExplorerLayersUrlParam([mapExplorerLayerRequest])
+    setMapViewUrlParam()
+    openedMapViaHistoryRef.current = true
+    setIsMapExplorerOpen(true)
+    clearMapExplorerLayerRequest()
+  }, [mapExplorerLayerRequest, clearMapExplorerLayerRequest])
 
   const closeMapExplorer = useCallback(() => {
     if (openedMapViaHistoryRef.current) {
