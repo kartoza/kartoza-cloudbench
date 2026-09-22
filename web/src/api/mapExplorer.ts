@@ -160,9 +160,13 @@ export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
   return { hasConnections: connections.length > 0, entries }
 }
 
-// A PMTiles style lives as a sibling JSON object next to the tileset itself
+// Every converted layer lives in its own folder alongside a styles/ folder
+// holding its default MapLibre style (see apps.s3.portolan.finalize_layer on
+// the backend) — the pmtiles file's parent directory is that layer folder.
 export function styleKeyForPmtiles(pmtilesKey: string): string {
-  return pmtilesKey.replace(/\.pmtiles$/i, '.style.json')
+  const lastSlash = pmtilesKey.lastIndexOf('/')
+  const folder = lastSlash >= 0 ? pmtilesKey.slice(0, lastSlash) : ''
+  return folder ? `${folder}/styles/default.json` : 'styles/default.json'
 }
 
 // Fetches a PMTiles layer's saved style, if one exists.
