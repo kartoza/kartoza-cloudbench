@@ -183,7 +183,8 @@ export async function uploadToS3(
   onProgress?: (progress: number) => void,
   subfolder?: boolean,
   prefix?: string,
-  companionFiles: File[] = []
+  companionFiles: File[] = [],
+  license?: string
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -202,6 +203,9 @@ export async function uploadToS3(
   }
   if (prefix) {
     formData.append('prefix', prefix)
+  }
+  if (license) {
+    formData.append('license', license)
   }
 
   return new Promise((resolve, reject) => {
@@ -239,16 +243,23 @@ export interface GeoPackageLayer {
   featureCount: number
 }
 
-// Stage a GeoPackage upload and get back its layers (name/geometry/feature count),
-// before any conversion starts.
+export interface GeoPackageRasterTable {
+  name: string
+}
+
+// Stage a GeoPackage upload and get back its contents — vector layers
+// (name/geometry/feature count) and raster tables (name only) — before
+// any conversion starts. A GeoPackage can hold either or both.
 export async function inspectGeoPackage(
   connectionId: string,
   file: File,
-  key?: string
-): Promise<{ jobId: string; layers: GeoPackageLayer[]; key: string }> {
+  key?: string,
+  license?: string
+): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
   if (key) formData.append('key', key)
+  if (license) formData.append('license', license)
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }
@@ -256,17 +267,28 @@ export async function inspectGeoPackage(
   return handleResponse(response)
 }
 
-// Confirm which layers to convert for a previously-inspected GeoPackage job.
+// Confirm which layers/tables to convert for a previously-inspected
+// GeoPackage job. `format` selects which pipeline handles it — 'pmtiles'
+// (vector layers, the default) or 'cog' (raster tables).
 export async function convertGeoPackageLayers(
   jobId: string,
-  layers: string[]
+  layers: string[],
+  format: 'pmtiles' | 'cog' = 'pmtiles'
 ): Promise<S3UploadResult> {
   const response = await fetch(`${API_BASE}/s3/gpkg/convert/${encodeURIComponent(jobId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ layers }),
+    body: JSON.stringify({ layers, format }),
   })
   return handleResponse<S3UploadResult>(response)
+}
+
+// Cancel a previously-inspected GeoPackage job, removing its staged S3 upload.
+export async function cancelGeoPackageInspection(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/s3/gpkg/convert/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+  })
+  await handleResponse<void>(response)
 }
 
 // Get a presigned URL for an S3 object

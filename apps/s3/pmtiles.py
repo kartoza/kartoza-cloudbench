@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 import httpx
 from django.conf import settings
 
+from . import portolan
 from .client import get_s3_client
 from .cng_lite import (
     job_directory,
@@ -22,6 +23,31 @@ from .models import CngLiteJob
 KIND = "pmtiles"
 ENDPOINT = "api/v1/pmtiles"
 CONTENT_TYPE = "application/vnd.pmtiles"
+
+
+def group_results(job, results):
+    """Groups cng-lite's PMTiles output into one logical layer per file.
+
+    A GeoPackage's per-layer files each keep their own name; a plain
+    shapefile's single (generically-named) file instead takes its title
+    from the original upload, since cng-lite's own name for it
+    ("output.pmtiles") isn't meaningful to a reader.
+    """
+    is_multi = job.layers is not None
+    layers = []
+    for item in results:
+        stem = PurePosixPath(item["name"]).stem
+        title_stem = stem if is_multi else PurePosixPath(job.source_name).stem
+        title = portolan.prettify(title_stem)
+        layer_id = portolan.sanitize_layer_id(title_stem)
+        layers.append(
+            {
+                "layer_id": layer_id,
+                "title": title,
+                "assets": [{"item": item, "filename": f"{layer_id}.pmtiles", "role": "visual"}],
+            }
+        )
+    return layers
 
 
 def output_key(key):
@@ -117,7 +143,7 @@ def upload_raw_components(s3_client, output_key_value, job_id, uploaded_file, co
         s3_client.client.upload_fileobj(component, s3_client.bucket, key, ExtraArgs={"ContentType": content_type})
 
 
-def start_conversion(uploaded_file, key, connection_id, owner_id, companion_files=()):
+def start_conversion(uploaded_file, key, connection_id, owner_id, companion_files=(), license_id=portolan.DEFAULT_LICENSE):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
@@ -135,6 +161,7 @@ def start_conversion(uploaded_file, key, connection_id, owner_id, companion_file
         source_name=uploaded_file.name,
         output_key=output_key(key),
         input_size=input_size,
+        license=license_id,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
@@ -169,12 +196,16 @@ def start_conversion(uploaded_file, key, connection_id, owner_id, companion_file
     return job
 
 
-def inspect_geopackage(uploaded_file, key, connection_id, owner_id):
-    """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite for its layers.
+def inspect_geopackage(uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE):
+    """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
     Creates the CngLiteJob now (so the eventual conversion reuses the same
     already-uploaded source), but leaves it "pending" — the caller is
-    expected to let the user pick layers, then call start_geopackage_conversion.
+    expected to let the user pick layers, then call start_geopackage_conversion
+    (vector layers -> PMTiles) or cog.start_geopackage_conversion (raster
+    tables -> COG, for a GeoPackage that turns out to have no vector layers).
+
+    Returns (job, layers, raster_tables).
     """
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
@@ -193,6 +224,7 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id):
         output_key=output_key(key),
         input_size=uploaded_file.size,
         message="Waiting for layer selection",
+        license=license_id,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
@@ -210,7 +242,9 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id):
         job.save()
         presigned_url = s3_client.generate_presigned_url(job.source_key, expiration=300)
         with httpx.Client(base_url=f"{settings.CLOUDNATIVEGIS_URL}/", timeout=httpx.Timeout(30, connect=10)) as client:
-            layers = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})["layers"]
+            inspection = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})
+        layers = inspection["layers"]
+        raster_tables = inspection.get("rasterTables", [])
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
         if job.pk:
@@ -219,7 +253,7 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id):
     # Keep `directory` around: run_conversion (started once layers are
     # confirmed) reuses it to write the downloaded result, and cleans it
     # up itself in its `finally` once the job finishes either way.
-    return job, layers
+    return job, layers, raster_tables
 
 
 def start_geopackage_conversion(job_id, owner_id, layers):
@@ -235,6 +269,27 @@ def start_geopackage_conversion(job_id, owner_id, layers):
     return job
 
 
+def cancel_geopackage_inspection(job_id, owner_id):
+    """Discard a previously-inspected GeoPackage job the user didn't confirm.
+
+    Removes the raw GeoPackage `inspect_geopackage` already staged in S3,
+    so cancelling the layer picker doesn't leave it behind.
+    """
+    # `layers` is set synchronously by start_geopackage_conversion, before
+    # its background thread gets a chance to move status off "pending" —
+    # check it too so a confirmed job can't be cancelled out from under it.
+    job = CngLiteJob.objects.filter(
+        pk=job_id, owner_id=owner_id, kind=KIND, status="pending", layers__isnull=True
+    ).first()
+    if not job:
+        raise ValueError("Job not found, or conversion was already started.")
+    if job.source_key:
+        s3_client = get_s3_client(job.connection_id, owner_id)
+        s3_client.delete_object(job.source_key)
+    shutil.rmtree(job_directory(KIND, job.id), ignore_errors=True)
+    job.delete()
+
+
 def validate_pmtiles(output):
     return output.read(7) == b"PMTiles"
 
@@ -248,5 +303,5 @@ def run_conversion(job_id):
         invalid_result_message="CloudNativeGIS did not return a valid PMTiles file.",
         output_content_type=CONTENT_TYPE,
         build_extra_payload=lambda job: {"layers": job.layers} if job.layers else None,
-        use_folder=lambda job: job.layers is not None,
+        group_results=group_results,
     )

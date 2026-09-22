@@ -38,6 +38,16 @@ import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { ConversionJob } from '../../types'
 
+// Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync.
+const LICENSE_CHOICES = [
+  { id: 'other', label: 'Not specified' },
+  { id: 'CC0-1.0', label: 'CC0 1.0 (Public Domain)' },
+  { id: 'CC-BY-4.0', label: 'CC BY 4.0' },
+  { id: 'CC-BY-SA-4.0', label: 'CC BY-SA 4.0' },
+  { id: 'ODbL-1.0', label: 'ODbL 1.0' },
+  { id: 'proprietary', label: 'Proprietary / All rights reserved' },
+]
+
 // Helper to format file size
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -111,6 +121,7 @@ export default function S3UploadDialog() {
   const [recommendedFormat, setRecommendedFormat] = useState<string | null>(null)
   const [createSubfolder, setCreateSubfolder] = useState(true) // For GeoPackage layer extraction
   const [isGeoPackage, setIsGeoPackage] = useState(false)
+  const [license, setLicense] = useState(LICENSE_CHOICES[0].id)
 
   // Upload state
   const [isUploading, setIsUploading] = useState(false)
@@ -118,11 +129,17 @@ export default function S3UploadDialog() {
   const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string; conversionJobId?: string } | null>(null)
   const [conversionJobId, setConversionJobId] = useState<string | null>(null)
 
-  // GeoPackage -> PMTiles layer picker (QGIS-style "select items to add")
+  // GeoPackage -> PMTiles/COG layer picker (QGIS-style "select items to add")
   const [isInspecting, setIsInspecting] = useState(false)
   const [gpkgJobId, setGpkgJobId] = useState<string | null>(null)
+  // Which pipeline the inspected GeoPackage is headed for — set once
+  // inspection reveals whether it has vector layers or raster tables.
+  const [gpkgFormat, setGpkgFormat] = useState<'pmtiles' | 'cog'>('pmtiles')
   const [gpkgLayers, setGpkgLayers] = useState<api.GeoPackageLayer[] | null>(null)
+  const [gpkgRasterTables, setGpkgRasterTables] = useState<api.GeoPackageRasterTable[] | null>(null)
   const [selectedLayerNames, setSelectedLayerNames] = useState<Set<string>>(new Set())
+  // Items shown in the picker table, whichever kind they are.
+  const gpkgItems = gpkgLayers ?? gpkgRasterTables
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
@@ -132,6 +149,11 @@ export default function S3UploadDialog() {
   const isGpkgFile = !!selectedFile && /\.gpkg$/i.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
+  // Once the GeoPackage has been inspected, the layer picker (and later
+  // the conversion progress) is the main event — collapse the file picker
+  // down to a single-line summary for the rest of this dialog's lifetime.
+  const gpkgFlowActive = !!gpkgItems
+  const inLayerPickerMode = gpkgFlowActive && !conversionJobId
 
   // Fetch conversion tools status
   const { data: toolStatus } = useQuery({
@@ -139,8 +161,9 @@ export default function S3UploadDialog() {
     queryFn: () => api.getConversionToolStatus(),
     enabled: isOpen,
   })
-  const showPMTiles = (isShapefile || isGpkgFile) && !!toolStatus?.cloudnativegis?.available
-  const showCOG = (isTiff || isGpkgFile) && !!toolStatus?.cloudnativegis?.available
+  const cngLiteConnected = !!toolStatus?.cloudnativegis?.available
+  const showPMTiles = (isShapefile || isGpkgFile) && cngLiteConnected
+  const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -175,9 +198,12 @@ export default function S3UploadDialog() {
       setConversionJobId(null)
       setCreateSubfolder(true)
       setIsGeoPackage(false)
+      setLicense(LICENSE_CHOICES[0].id)
       setIsInspecting(false)
       setGpkgJobId(null)
+      setGpkgFormat('pmtiles')
       setGpkgLayers(null)
+      setGpkgRasterTables(null)
       setSelectedLayerNames(new Set())
     }
   }, [isOpen])
@@ -206,14 +232,21 @@ export default function S3UploadDialog() {
       toast({ title: 'Select one file, or the components of one shapefile', status: 'warning' })
       return
     }
+    // Swapping files while a GeoPackage is pending layer selection would
+    // otherwise leave its staged S3 upload behind — cancel it first.
+    if (gpkgJobId) {
+      api.cancelGeoPackageInspection(gpkgJobId).catch(() => {})
+    }
     setSelectedFile(file)
     setCompanionFiles(files.filter((component) => component !== file))
     setUploadResult(null)
     setGpkgJobId(null)
+    setGpkgFormat('pmtiles')
     setGpkgLayers(null)
+    setGpkgRasterTables(null)
     setSelectedLayerNames(new Set())
     setCustomKey(folderPrefix + file.name)
-  }, [isUploading, isConverting, toast, folderPrefix])
+  }, [isUploading, isConverting, toast, folderPrefix, gpkgJobId])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -236,18 +269,39 @@ export default function S3UploadDialog() {
       return
     }
 
-    // A GeoPackage converting to PMTiles goes through the layer picker
-    // instead of converting immediately — stage it and ask what it contains.
-    if (isGpkgFile && convertToCloudNative && targetFormat === 'pmtiles') {
+    // A GeoPackage going through cng-lite is inspected first — it may
+    // hold vector layers (-> PMTiles), raster tables (-> COG), or both;
+    // only inspecting it tells us which, so the format picked so far is
+    // just a guess. Stage it and ask what it actually contains.
+    if (isGpkgFile && convertToCloudNative && cngLiteConnected) {
       setIsInspecting(true)
       setUploadResult(null)
       try {
-        const { jobId, layers } = await api.inspectGeoPackage(
-          connectionId, selectedFile, customKey || undefined
+        const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
+          connectionId, selectedFile, customKey || undefined, license
         )
+        if (layers.length === 0 && rasterTables.length === 0) {
+          toast({
+            title: 'Nothing to convert',
+            description: 'This GeoPackage has no vector layers or raster tables.',
+            status: 'warning',
+            duration: 5000,
+          })
+          // Cancel the job the inspect step already created — it has
+          // nothing to confirm, so it would otherwise sit there orphaned.
+          await api.cancelGeoPackageInspection(jobId).catch(() => {})
+          return
+        }
         setGpkgJobId(jobId)
-        setGpkgLayers(layers)
-        setSelectedLayerNames(new Set(layers.map((layer) => layer.name)))
+        if (layers.length > 0) {
+          setGpkgFormat('pmtiles')
+          setGpkgLayers(layers)
+          setSelectedLayerNames(new Set(layers.map((layer) => layer.name)))
+        } else {
+          setGpkgFormat('cog')
+          setGpkgRasterTables(rasterTables)
+          setSelectedLayerNames(new Set(rasterTables.map((table) => table.name)))
+        }
       } catch (err) {
         toast({
           title: 'Could not read GeoPackage',
@@ -275,7 +329,8 @@ export default function S3UploadDialog() {
         (progress) => setUploadProgress(progress),
         isGeoPackage ? createSubfolder : undefined,
         undefined,
-        companionFiles
+        companionFiles,
+        license
       )
 
       setUploadResult({
@@ -329,7 +384,7 @@ export default function S3UploadDialog() {
     setUploadResult(null)
 
     try {
-      const result = await api.convertGeoPackageLayers(gpkgJobId, Array.from(selectedLayerNames))
+      const result = await api.convertGeoPackageLayers(gpkgJobId, Array.from(selectedLayerNames), gpkgFormat)
 
       setUploadResult({
         success: result.success,
@@ -381,8 +436,17 @@ export default function S3UploadDialog() {
     }
   }
 
+  const handleClose = () => {
+    // Cancelling the layer picker means the raw GeoPackage staged in S3
+    // during inspection would otherwise be left behind — clean it up.
+    if (inLayerPickerMode && gpkgJobId) {
+      api.cancelGeoPackageInspection(gpkgJobId).catch(() => {})
+    }
+    closeDialog()
+  }
+
   return (
-    <Modal isOpen={isOpen} onClose={closeDialog} size="3xl" isCentered>
+    <Modal isOpen={isOpen} onClose={handleClose} size="3xl" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden" maxH="90vh">
         {/* Gradient Header */}
@@ -407,194 +471,245 @@ export default function S3UploadDialog() {
         <ModalCloseButton color="white" />
 
         <ModalBody py={4} overflowY="auto">
-          {/* Two-column layout for file selection and options */}
-          <HStack spacing={4} align="stretch">
-            {/* Left column: File selection */}
-            <VStack spacing={3} flex="1" align="stretch">
-              {/* File Drop Zone */}
-              <FormControl flex="1">
-                <FormLabel fontWeight="500" color="gray.700" fontSize="sm">File</FormLabel>
-                <Box
-                  border="2px dashed"
-                  borderColor={selectedFile ? 'orange.400' : dropzoneBorderColor}
-                  borderRadius="lg"
-                  p={4}
-                  bg={selectedFile ? 'orange.50' : dropzoneBg}
-                  textAlign="center"
-                  cursor="pointer"
-                  transition="all 0.2s"
-                  _hover={{ borderColor: 'orange.400', bg: 'orange.50' }}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  minH="120px"
-                  display="flex"
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    hidden
-                    onChange={(e) => {
-                      handleFileSelect(Array.from(e.target.files || []))
-                      e.target.value = ''
-                    }}
-                  />
-                  {selectedFile ? (
-                    <VStack spacing={1}>
-                      <Icon as={FiFile} boxSize={6} color="orange.500" />
-                      <Text fontWeight="500" color="gray.700" fontSize="sm" noOfLines={1}>{selectedFile.name}</Text>
-                      <Text fontSize="xs" color="gray.500">
-                        {formatFileSize(selectedFile.size + companionFiles.reduce((total, file) => total + file.size, 0))}
-                      </Text>
-                      {companionFiles.length > 0 && (
-                        <Text fontSize="xs" color="gray.600">
-                          Also selected: {companionFiles.map((file) => file.name).join(', ')}
-                        </Text>
-                      )}
-                      {recommendedFormat && (
-                        <Badge colorScheme="orange" fontSize="xs">
-                          → {recommendedFormat.toUpperCase()}
-                        </Badge>
-                      )}
-                    </VStack>
-                  ) : (
-                    <VStack spacing={1}>
-                      <Icon as={FiUpload} boxSize={6} color="gray.400" />
-                      <Text color="gray.600" fontSize="sm">
-                        Drop file or click to browse
-                      </Text>
-                      <Text fontSize="xs" color="gray.500">
-                        GeoTIFF, Shapefile, LAS, GeoPackage...
-                      </Text>
-                    </VStack>
-                  )}
-                </Box>
-                {isShapefile && (
-                  <Text fontSize="xs" color="gray.500" mt={1}>
-                    Select .shp, .shx and .dbf together (plus .prj if available).
-                    Cloudbench will ZIP them automatically.
-                  </Text>
-                )}
-              </FormControl>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              handleFileSelect(Array.from(e.target.files || []))
+              e.target.value = ''
+            }}
+          />
 
-              {/* Object Key (path) */}
-              <FormControl>
-                <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Object Key (optional)</FormLabel>
-                <Input
-                  value={customKey}
-                  isDisabled={isUploading || isConverting}
-                  onChange={(e) => setCustomKey(e.target.value)}
-                  placeholder="path/to/file.tif"
-                  size="sm"
-                  borderRadius="lg"
-                />
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  {folderPrefix
-                    ? `Defaults to the current folder: ${folderPrefix}`
-                    : 'Leave empty to use original filename'}
+          {gpkgFlowActive ? (
+            /* File picked and inspected — collapse to a one-line summary so
+               the layer picker (and later the conversion progress) below
+               is the main focus. */
+            <HStack
+              p={2}
+              px={3}
+              borderRadius="lg"
+              border="1px solid"
+              borderColor={dropzoneBorderColor}
+              bg={dropzoneBg}
+              cursor={inLayerPickerMode ? 'pointer' : 'default'}
+              onClick={inLayerPickerMode ? () => fileInputRef.current?.click() : undefined}
+            >
+              <Icon as={FiFile} boxSize={4} color="orange.500" />
+              <Text fontSize="sm" fontWeight="500" color="gray.700" noOfLines={1} flex="1">
+                {selectedFile?.name}
+              </Text>
+              {selectedFile && (
+                <Text fontSize="xs" color="gray.500" flexShrink={0}>
+                  {formatFileSize(selectedFile.size)}
                 </Text>
-              </FormControl>
-            </VStack>
-
-            {/* Right column: Conversion options */}
-            <VStack spacing={3} flex="1" align="stretch">
-              {/* Cloud-Native Conversion Options */}
-              {recommendedFormat || showPMTiles ? (
-                <Box p={3} bg="orange.50" borderRadius="lg" border="1px solid" borderColor="orange.200" h="100%">
-                  <HStack justify="space-between" mb={2}>
-                    <Text fontWeight="500" color="gray.700" fontSize="sm">Convert to Cloud-Native</Text>
-                    <Switch
-                      isChecked={convertToCloudNative}
-                      isDisabled={isUploading || isConverting}
-                      onChange={(e) => setConvertToCloudNative(e.target.checked)}
-                      colorScheme="orange"
-                      size="sm"
-                    />
-                  </HStack>
-
-                  {convertToCloudNative && (
-                    <VStack spacing={2} align="stretch">
-                      <Select
-                        value={targetFormat}
-                        isDisabled={isUploading || isConverting}
-                        onChange={(e) => setTargetFormat(e.target.value)}
-                        placeholder="Select a format"
-                        size="sm"
-                        borderRadius="lg"
-                      >
-                        <option value="cog" disabled={!canConvert('cog')}>
-                          COG {!canConvert('cog') && '- unavailable'}
-                        </option>
-                        <option value="copc" disabled={!canConvert('copc')}>
-                          COPC {!canConvert('copc') && '- unavailable'}
-                        </option>
-                        <option value="geoparquet" disabled={!canConvert('geoparquet')}>
-                          GeoParquet {!canConvert('geoparquet') && '- unavailable'}
-                        </option>
-                        {showPMTiles && (
-                          <option value="pmtiles">
-                            PMTiles
-                          </option>
-                        )}
-                      </Select>
-
-                      {/* GeoPackage-specific options */}
-                      {isGeoPackage && targetFormat === 'geoparquet' && (
-                        <Box p={2} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
-                          <Text fontSize="xs" color="blue.700" fontWeight="500" mb={1}>
-                            GeoPackage Layer Extraction
-                          </Text>
-                          <Text fontSize="xs" color="gray.600" mb={2}>
-                            All layers extracted as separate GeoParquet/Parquet files.
-                          </Text>
-                          <HStack justify="space-between">
-                            <Text fontSize="xs" color="gray.700">Create subfolder</Text>
-                            <Switch
-                              isChecked={createSubfolder}
-                              onChange={(e) => setCreateSubfolder(e.target.checked)}
-                              colorScheme="blue"
-                              size="sm"
-                            />
-                          </HStack>
-                        </Box>
-                      )}
-
-                      {targetFormat && !canConvert(targetFormat) && (
-                        <Alert status="warning" size="sm" borderRadius="md" py={1} px={2}>
-                          <AlertIcon boxSize={3} />
-                          <Text fontSize="xs">
-                            Tool not available. Upload without conversion.
-                          </Text>
-                        </Alert>
-                      )}
-                    </VStack>
-                  )}
-                </Box>
-              ) : (
-                <Box p={3} bg="gray.50" borderRadius="lg" border="1px solid" borderColor="gray.200" h="100%">
-                  <Text fontSize="sm" color="gray.500" textAlign="center">
-                    Select a file to see conversion options
-                  </Text>
-                </Box>
               )}
-            </VStack>
-          </HStack>
+            </HStack>
+          ) : (
+            /* Cloud-Native Conversion Options are only shown when cng-lite
+                is disconnected — when it's connected, conversion just
+                happens automatically using the recommended format. */
+            <HStack spacing={4} align="stretch">
+              {/* Left column: File selection */}
+              <VStack spacing={3} flex="1" align="stretch">
+                {/* File Drop Zone */}
+                <FormControl flex="1">
+                  <FormLabel fontWeight="500" color="gray.700" fontSize="sm">File</FormLabel>
+                  <Box
+                    border="2px dashed"
+                    borderColor={selectedFile ? 'orange.400' : dropzoneBorderColor}
+                    borderRadius="lg"
+                    p={8}
+                    bg={selectedFile ? 'orange.50' : dropzoneBg}
+                    textAlign="center"
+                    cursor="pointer"
+                    transition="all 0.2s"
+                    _hover={{ borderColor: 'orange.400', bg: 'orange.50' }}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    minH="260px"
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="center"
+                  >
+                    {selectedFile ? (
+                      <VStack spacing={2}>
+                        <Icon as={FiFile} boxSize={10} color="orange.500" />
+                        <Text fontWeight="500" color="gray.700" fontSize="md" noOfLines={1}>{selectedFile.name}</Text>
+                        <Text fontSize="sm" color="gray.500">
+                          {formatFileSize(selectedFile.size + companionFiles.reduce((total, file) => total + file.size, 0))}
+                        </Text>
+                        {companionFiles.length > 0 && (
+                          <Text fontSize="xs" color="gray.600">
+                            Also selected: {companionFiles.map((file) => file.name).join(', ')}
+                          </Text>
+                        )}
+                        {recommendedFormat && (
+                          <Badge colorScheme="orange" fontSize="xs">
+                            → {recommendedFormat.toUpperCase()}
+                          </Badge>
+                        )}
+                      </VStack>
+                    ) : (
+                      <VStack spacing={2}>
+                        <Icon as={FiUpload} boxSize={10} color="gray.400" />
+                        <Text color="gray.600" fontSize="md">
+                          Drop file or click to browse
+                        </Text>
+                        <Text fontSize="sm" color="gray.500">
+                          GeoTIFF, Shapefile, LAS, GeoPackage...
+                        </Text>
+                      </VStack>
+                    )}
+                  </Box>
+                  {isShapefile && (
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      Select .shp, .shx and .dbf together (plus .prj if available).
+                      Cloudbench will ZIP them automatically.
+                    </Text>
+                  )}
+                </FormControl>
 
-          {/* GeoPackage layer picker (QGIS-style "Select Items to Add") */}
-          {gpkgLayers && !conversionJobId && (
-            <Box mt={4} p={3} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
-              <HStack justify="space-between" mb={2}>
-                <Text fontWeight="600" color="gray.700" fontSize="sm">
-                  Select layers to convert ({selectedLayerNames.size}/{gpkgLayers.length})
+                {/* Object Key (path) */}
+                <FormControl>
+                  <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Object Key (optional)</FormLabel>
+                  <Input
+                    value={customKey}
+                    isDisabled={isUploading || isConverting}
+                    onChange={(e) => setCustomKey(e.target.value)}
+                    placeholder="path/to/file.tif"
+                    size="sm"
+                    borderRadius="lg"
+                  />
+                  <Text fontSize="xs" color="gray.500" mt={1}>
+                    {folderPrefix
+                      ? `Defaults to the current folder: ${folderPrefix}`
+                      : 'Leave empty to use original filename'}
+                  </Text>
+                </FormControl>
+
+                {/* License (recorded in the generated Portolan catalog entry) */}
+                <FormControl>
+                  <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License</FormLabel>
+                  <Select
+                    value={license}
+                    isDisabled={isUploading || isConverting}
+                    onChange={(e) => setLicense(e.target.value)}
+                    size="sm"
+                    borderRadius="lg"
+                  >
+                    {LICENSE_CHOICES.map((choice) => (
+                      <option key={choice.id} value={choice.id}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+              </VStack>
+
+              {/* Right column: Conversion options (cng-lite disconnected only) */}
+              {!cngLiteConnected && (
+                <VStack spacing={3} flex="1" align="stretch">
+                  {recommendedFormat || showPMTiles ? (
+                    <Box p={2} bg="orange.50" borderRadius="lg" border="1px solid" borderColor="orange.200">
+                      <HStack justify="space-between" mb={1}>
+                        <Text fontWeight="500" color="gray.700" fontSize="xs">Convert to Cloud-Native</Text>
+                        <Switch
+                          isChecked={convertToCloudNative}
+                          isDisabled={isUploading || isConverting}
+                          onChange={(e) => setConvertToCloudNative(e.target.checked)}
+                          colorScheme="orange"
+                          size="sm"
+                        />
+                      </HStack>
+
+                      {convertToCloudNative && (
+                        <VStack spacing={2} align="stretch">
+                          <Select
+                            value={targetFormat}
+                            isDisabled={isUploading || isConverting}
+                            onChange={(e) => setTargetFormat(e.target.value)}
+                            placeholder="Select a format"
+                            size="sm"
+                            borderRadius="lg"
+                          >
+                            <option value="cog" disabled={!canConvert('cog')}>
+                              COG {!canConvert('cog') && '- unavailable'}
+                            </option>
+                            <option value="copc" disabled={!canConvert('copc')}>
+                              COPC {!canConvert('copc') && '- unavailable'}
+                            </option>
+                            <option value="geoparquet" disabled={!canConvert('geoparquet')}>
+                              GeoParquet {!canConvert('geoparquet') && '- unavailable'}
+                            </option>
+                            {showPMTiles && (
+                              <option value="pmtiles">
+                                PMTiles
+                              </option>
+                            )}
+                          </Select>
+
+                          {/* GeoPackage-specific options */}
+                          {isGeoPackage && targetFormat === 'geoparquet' && (
+                            <Box p={2} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
+                              <Text fontSize="xs" color="blue.700" fontWeight="500" mb={1}>
+                                GeoPackage Layer Extraction
+                              </Text>
+                              <Text fontSize="xs" color="gray.600" mb={2}>
+                                All layers extracted as separate GeoParquet/Parquet files.
+                              </Text>
+                              <HStack justify="space-between">
+                                <Text fontSize="xs" color="gray.700">Create subfolder</Text>
+                                <Switch
+                                  isChecked={createSubfolder}
+                                  onChange={(e) => setCreateSubfolder(e.target.checked)}
+                                  colorScheme="blue"
+                                  size="sm"
+                                />
+                              </HStack>
+                            </Box>
+                          )}
+
+                          {targetFormat && !canConvert(targetFormat) && (
+                            <Alert status="warning" size="sm" borderRadius="md" py={1} px={2}>
+                              <AlertIcon boxSize={3} />
+                              <Text fontSize="xs">
+                                Tool not available. Upload without conversion.
+                              </Text>
+                            </Alert>
+                          )}
+                        </VStack>
+                      )}
+                    </Box>
+                  ) : (
+                    <Box p={2} bg="gray.50" borderRadius="lg" border="1px solid" borderColor="gray.200">
+                      <Text fontSize="xs" color="gray.500" textAlign="center">
+                        Select a file to see conversion options
+                      </Text>
+                    </Box>
+                  )}
+                </VStack>
+              )}
+            </HStack>
+          )}
+
+          {/* GeoPackage layer/table picker (QGIS-style "Select Items to Add") —
+              the main focus of the dialog once a GeoPackage is inspected.
+              Vector layers (-> PMTiles) show geometry/feature columns;
+              raster tables (-> COG) are name-only. */}
+          {inLayerPickerMode && gpkgItems && (
+            <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
+              <HStack justify="space-between" mb={3}>
+                <Text fontWeight="600" color="gray.700" fontSize="md">
+                  Select {gpkgFormat === 'cog' ? 'raster tables' : 'layers'} to convert ({selectedLayerNames.size}/{gpkgItems.length})
                 </Text>
                 <HStack spacing={1}>
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={() => setSelectedLayerNames(new Set(gpkgLayers.map((layer) => layer.name)))}
+                    onClick={() => setSelectedLayerNames(new Set(gpkgItems.map((item) => item.name)))}
                   >
                     Select All
                   </Button>
@@ -603,33 +718,86 @@ export default function S3UploadDialog() {
                   </Button>
                 </HStack>
               </HStack>
-              <Box maxH="180px" overflowY="auto" borderRadius="md" border="1px solid" borderColor="gray.200" bg="white">
+              <Box maxH="380px" overflowY="auto" borderRadius="md" border="1px solid" borderColor="gray.200" bg="white">
                 <Table size="sm">
                   <Thead position="sticky" top={0} bg="gray.50">
                     <Tr>
                       <Th width="1%" />
-                      <Th>Layer</Th>
-                      <Th>Geometry</Th>
-                      <Th isNumeric>Features</Th>
+                      <Th>{gpkgFormat === 'cog' ? 'Table' : 'Layer'}</Th>
+                      {gpkgFormat === 'pmtiles' && <Th>Geometry</Th>}
+                      {gpkgFormat === 'pmtiles' && <Th isNumeric>Features</Th>}
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {gpkgLayers.map((layer) => (
-                      <Tr key={layer.name} cursor="pointer" onClick={() => toggleLayer(layer.name)}>
-                        <Td onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            isChecked={selectedLayerNames.has(layer.name)}
-                            onChange={() => toggleLayer(layer.name)}
-                          />
-                        </Td>
-                        <Td fontSize="xs" fontWeight="500">{layer.name}</Td>
-                        <Td fontSize="xs" color="gray.500">{layer.geometryType}</Td>
-                        <Td fontSize="xs" color="gray.500" isNumeric>{layer.featureCount.toLocaleString()}</Td>
-                      </Tr>
-                    ))}
+                    {gpkgItems.map((item) => {
+                      const layer = gpkgFormat === 'pmtiles' ? (item as api.GeoPackageLayer) : null
+                      return (
+                        <Tr key={item.name} cursor="pointer" onClick={() => toggleLayer(item.name)}>
+                          <Td onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              isChecked={selectedLayerNames.has(item.name)}
+                              onChange={() => toggleLayer(item.name)}
+                            />
+                          </Td>
+                          <Td fontSize="sm" fontWeight="500">{item.name}</Td>
+                          {layer && (
+                            <>
+                              <Td fontSize="sm" color="gray.500">{layer.geometryType}</Td>
+                              <Td fontSize="sm" color="gray.500" isNumeric>{layer.featureCount.toLocaleString()}</Td>
+                            </>
+                          )}
+                        </Tr>
+                      )
+                    })}
                   </Tbody>
                 </Table>
               </Box>
+            </Box>
+          )}
+
+          {/* Conversion progress — takes over the layer picker's spot as
+              the main focus once the layers have been confirmed. */}
+          {gpkgFlowActive && !inLayerPickerMode && conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
+            <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
+              <HStack mb={2}>
+                <Icon as={FiRefreshCw} className="spin" color="blue.500" />
+                <Text fontWeight="600" color="gray.700" fontSize="md">Converting layers...</Text>
+              </HStack>
+              <Progress
+                value={conversionJob.progress}
+                size="sm"
+                colorScheme="blue"
+                borderRadius="full"
+                hasStripe
+                isAnimated
+              />
+              <Text fontSize="sm" color="gray.600" mt={2}>
+                {conversionJob.message}
+              </Text>
+              {(() => {
+                const layerStatuses = layerConversionStatuses(conversionJob)
+                if (!layerStatuses) return null
+                return (
+                  <VStack align="stretch" spacing={1} mt={3} pt={3} borderTop="1px solid" borderColor="blue.100" maxH="300px" overflowY="auto">
+                    {layerStatuses.map((layer) => (
+                      <HStack key={layer.name} spacing={2}>
+                        {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={4} />}
+                        {layer.status === 'active' && (
+                          <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={4} />
+                        )}
+                        {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={4} />}
+                        <Text
+                          fontSize="sm"
+                          color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
+                          fontWeight={layer.status === 'active' ? '600' : '400'}
+                        >
+                          {layer.name}
+                        </Text>
+                      </HStack>
+                    ))}
+                  </VStack>
+                )
+              })()}
             </Box>
           )}
 
@@ -653,8 +821,8 @@ export default function S3UploadDialog() {
               </Box>
             )}
 
-            {/* Conversion Job Progress */}
-            {conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
+            {/* Conversion Job Progress (GeoPackage jobs show this above instead) */}
+            {!gpkgFlowActive && conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
               <Box w="100%" p={2} bg="blue.50" borderRadius="lg">
                 <HStack mb={1}>
                   <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
@@ -796,11 +964,11 @@ export default function S3UploadDialog() {
           borderTopColor="gray.100"
           bg="gray.50"
         >
-          <Button variant="ghost" onClick={closeDialog} borderRadius="lg">
+          <Button variant="ghost" onClick={handleClose} borderRadius="lg">
             {uploadResult?.success ? 'Close' : 'Cancel'}
           </Button>
           <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            {gpkgLayers && !conversionJobId ? (
+            {inLayerPickerMode ? (
               <Button
                 colorScheme="orange"
                 onClick={handleConfirmLayers}
@@ -811,7 +979,7 @@ export default function S3UploadDialog() {
                 px={6}
                 leftIcon={<FiUpload />}
               >
-                Convert {selectedLayerNames.size} Layer{selectedLayerNames.size === 1 ? '' : 's'}
+                Convert {selectedLayerNames.size} {gpkgFormat === 'cog' ? 'Table' : 'Layer'}{selectedLayerNames.size === 1 ? '' : 's'}
               </Button>
             ) : (
               <Button

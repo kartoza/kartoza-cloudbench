@@ -10,8 +10,23 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3.models import CngLiteJob
-from apps.s3.pmtiles import output_key, prepare_shapefile, run_conversion, start_conversion
+from apps.s3.models import CngLiteJob, LayerCollection
+from apps.s3.pmtiles import (
+    cancel_geopackage_inspection,
+    group_results,
+    inspect_geopackage,
+    output_key,
+    prepare_shapefile,
+    run_conversion,
+    start_conversion,
+    start_geopackage_conversion,
+)
+
+GPKG_MAGIC = b"SQLite format 3\x00"
+
+
+def gpkg_file(name="parcels.gpkg"):
+    return SimpleUploadedFile(name, GPKG_MAGIC + b"fixture-bytes", "application/geopackage+sqlite3")
 
 
 def shapefile_zip(names=("folder/roads.shp", "folder/roads.shx", "folder/roads.dbf")):
@@ -33,6 +48,25 @@ def shapefile_zip(names=("folder/roads.shp", "folder/roads.shx", "folder/roads.d
 )
 def test_output_key(key, expected):
     assert output_key(key) == expected
+
+
+def test_group_results_plain_shapefile_uses_source_name_for_title():
+    job = Mock(source_name="roads.zip", layers=None)
+    results = [{"name": "output.pmtiles", "info": {}}]
+    layers = group_results(job, results)
+    assert len(layers) == 1
+    layer = layers[0]
+    assert layer["layer_id"] == "roads"
+    assert layer["title"] == "Roads"
+    assert layer["assets"] == [{"item": results[0], "filename": "roads.pmtiles", "role": "visual"}]
+
+
+def test_group_results_geopackage_uses_layer_names():
+    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
+    results = [{"name": "roads.pmtiles", "info": {}}, {"name": "rivers.pmtiles", "info": {}}]
+    layers = group_results(job, results)
+    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
+    assert [layer["title"] for layer in layers] == ["Roads", "Rivers"]
 
 
 def test_flattens_and_uniquely_names_shapefile(tmp_path):
@@ -261,7 +295,11 @@ def test_conversion_pipeline(conversion_job, settings, outcome):
     if outcome == "success":
         assert conversion_job.status == "completed"
         assert conversion_job.progress == 100
-        assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", "folder/roads.pmtiles")
+        # Every layer gets its own Portolan folder ("folder/roads/").
+        assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", "folder/roads/roads.pmtiles")
+        assert conversion_job.to_dict()["outputPath"] == "s3://bucket/folder/roads/roads.pmtiles"
+        collection = LayerCollection.objects.get()
+        assert collection.items.get().key == "folder/roads/roads.pmtiles"
     else:
         assert conversion_job.status == "failed"
         assert conversion_job.error
@@ -279,3 +317,55 @@ def test_job_status_is_scoped_to_owner(conversion_job):
     assert response.json()["targetFormat"] == "pmtiles"
     api.force_authenticate(user=Mock(id=8, is_authenticated=True))
     assert api.get(f"/api/s3/conversion/jobs/{conversion_job.id}").status_code == 404
+
+
+@pytest.fixture
+def gpkg_inspect_job(settings, tmp_path):
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+
+    def respond(request):
+        assert request.url.path == "/api/v1/gpkg/layers"
+        return httpx.Response(
+            200,
+            json={
+                "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
+                "rasterTables": [],
+            },
+        )
+
+    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.httpx.Client", return_value=client),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
+        job, layers, raster_tables = inspect_geopackage(gpkg_file(), "folder/parcels.gpkg", "s3-one", "7")
+    return job, layers, raster_tables
+
+
+@pytest.mark.django_db
+def test_cancel_geopackage_inspection_deletes_staged_upload(gpkg_inspect_job):
+    job, _, _ = gpkg_inspect_job
+    with patch("apps.s3.pmtiles.get_s3_client") as get_client:
+        cancel_geopackage_inspection(job.id, "7")
+    get_client.return_value.delete_object.assert_called_once_with(job.source_key)
+    assert not CngLiteJob.objects.filter(pk=job.id).exists()
+
+
+@pytest.mark.django_db
+def test_cancel_geopackage_inspection_rejects_wrong_owner(gpkg_inspect_job):
+    job, _, _ = gpkg_inspect_job
+    with pytest.raises(ValueError, match="Job not found"):
+        cancel_geopackage_inspection(job.id, "someone-else")
+    assert CngLiteJob.objects.filter(pk=job.id).exists()
+
+
+@pytest.mark.django_db
+def test_cancel_geopackage_inspection_rejects_already_confirmed_job(gpkg_inspect_job):
+    job, layers, _ = gpkg_inspect_job
+    with patch("apps.s3.pmtiles.threading.Thread"):
+        start_geopackage_conversion(job.id, "7", [layer["name"] for layer in layers])
+    with pytest.raises(ValueError, match="already started"):
+        cancel_geopackage_inspection(job.id, "7")

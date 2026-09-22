@@ -8,8 +8,22 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3.cog import cog_dest_key, output_key, prepare_tiff, run_conversion, start_conversion
+from apps.s3.cog import (
+    group_results,
+    output_key,
+    prepare_tiff,
+    run_conversion,
+    start_conversion,
+    start_geopackage_conversion as start_geopackage_cog_conversion,
+)
 from apps.s3.models import CngLiteJob, LayerCollection
+from apps.s3.pmtiles import inspect_geopackage
+
+GPKG_MAGIC = b"SQLite format 3\x00"
+
+
+def gpkg_file(name="rasters.gpkg"):
+    return SimpleUploadedFile(name, GPKG_MAGIC + b"fixture-bytes", "application/geopackage+sqlite3")
 
 
 def tiff_file(name="raster.tif", header=b"II*\x00"):
@@ -28,22 +42,36 @@ def test_output_key(key, expected):
     assert output_key(key) == expected
 
 
-def test_cog_dest_key_folder_mode_uses_item_name():
-    job = Mock(output_key="folder/raster.tif")
-    item = {"name": "table_cog_3857.tif"}
-    assert cog_dest_key(job, item, True, "sources/job-1") == "sources/job-1/table_cog_3857.tif"
+def test_group_results_plain_tiff_uses_source_name_for_title():
+    job = Mock(source_name="my raster.tif", layers=None)
+    results = [
+        {"name": "output_cog.tif", "info": {}},
+        {"name": "output_cog_3857.tif", "info": {}},
+    ]
+    with patch("apps.s3.cog.is_geopackage", return_value=False):
+        layers = group_results(job, results)
+    assert len(layers) == 1
+    layer = layers[0]
+    assert layer["layer_id"] == "my-raster"
+    assert layer["title"] == "My Raster"
+    assert {a["role"]: a["filename"] for a in layer["assets"]} == {
+        "data": "my-raster.tif",
+        "visual": "my-raster_3857.tif",
+    }
 
 
-def test_cog_dest_key_non_folder_original_uses_output_key():
-    job = Mock(output_key="folder/raster.tif")
-    item = {"name": "output_cog.tif"}
-    assert cog_dest_key(job, item, False, None) == "folder/raster.tif"
-
-
-def test_cog_dest_key_non_folder_3857_variant_gets_suffixed():
-    job = Mock(output_key="folder/raster.tif")
-    item = {"name": "output_cog_3857.tif"}
-    assert cog_dest_key(job, item, False, None) == "folder/raster_3857.tif"
+def test_group_results_geopackage_uses_table_names():
+    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
+    results = [
+        {"name": "roads_cog.tif", "info": {}},
+        {"name": "roads_cog_3857.tif", "info": {}},
+        {"name": "rivers_cog.tif", "info": {}},
+        {"name": "rivers_cog_3857.tif", "info": {}},
+    ]
+    with patch("apps.s3.cog.is_geopackage", return_value=True):
+        layers = group_results(job, results)
+    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
+    assert [layer["title"] for layer in layers] == ["Roads", "Rivers"]
 
 
 def test_prepare_tiff_rejects_non_tiff_extension(tmp_path):
@@ -89,8 +117,36 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
     assert response.json()["key"] == "folder/raster.tif"
     job = CngLiteJob.objects.get(pk=response.json()["conversionJobId"])
     assert job.kind == "cog"
+    assert job.license == "other"
     assert (tmp_path / "cog" / str(job.id) / "source.tif").exists()
     get_client.return_value.client.upload_fileobj.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_upload_accepts_chosen_license(settings, tmp_path):
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    api = APIClient()
+    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    with (
+        patch("apps.s3.cog.get_s3_client") as get_client,
+        patch("apps.s3.views.get_s3_client", get_client),
+        patch("apps.s3.cog.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        response = api.post(
+            "/api/s3/upload/s3-one",
+            {
+                "file": tiff_file(),
+                "convert": "true",
+                "targetFormat": "cog",
+                "key": "folder/raster.tif",
+                "license": "CC0-1.0",
+            },
+            format="multipart",
+        )
+    job = CngLiteJob.objects.get(pk=response.json()["conversionJobId"])
+    assert job.license == "CC0-1.0"
 
 
 @pytest.mark.django_db
@@ -179,15 +235,17 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
     if outcome == "success":
         assert cog_job.status == "completed"
         assert cog_job.progress == 100
-        # Distinct keys — the two files must not overwrite each other.
+        # Every layer gets its own Portolan folder ("folder/raster/") — the
+        # original-CRS COG and the EPSG:3857 variant land there together.
         uploaded_keys = {entry[2] for entry in uploaded}
-        assert uploaded_keys == {"folder/raster.tif", "folder/raster_3857.tif"}
+        assert uploaded_keys == {"folder/raster/raster.tif", "folder/raster/raster_3857.tif"}
         assert cog_job.output_keys and len(cog_job.output_keys) == 2
         assert set(cog_job.to_dict()["outputPaths"]) == {
-            "s3://bucket/folder/raster.tif",
-            "s3://bucket/folder/raster_3857.tif",
+            "s3://bucket/folder/raster/raster.tif",
+            "s3://bucket/folder/raster/raster_3857.tif",
         }
-        assert not LayerCollection.objects.exists()
+        collection = LayerCollection.objects.get()
+        assert collection.items.get().key == "folder/raster/raster_3857.tif"
     else:
         assert cog_job.status == "failed"
         assert cog_job.error
@@ -204,3 +262,70 @@ def test_cog_job_status_reports_formats(cog_job):
     assert body["sourceFormat"] == "tiff"
     assert body["targetFormat"] == "cog"
     assert body["outputPath"] == "s3://bucket/folder/raster.tif"
+
+
+@pytest.fixture
+def raster_gpkg_inspect_job(settings, tmp_path):
+    """A GeoPackage inspection that finds only raster tables (no vector layers)."""
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+
+    def respond(request):
+        assert request.url.path == "/api/v1/gpkg/layers"
+        return httpx.Response(200, json={"layers": [], "rasterTables": [{"name": "elevation"}]})
+
+    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.httpx.Client", return_value=client),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
+        job, layers, raster_tables = inspect_geopackage(gpkg_file(), "folder/rasters.gpkg", "s3-one", "7")
+    return job, layers, raster_tables
+
+
+@pytest.mark.django_db
+def test_raster_geopackage_inspection_finds_no_vector_layers(raster_gpkg_inspect_job):
+    job, layers, raster_tables = raster_gpkg_inspect_job
+    assert job.kind == "pmtiles"  # not yet reassigned — inspection alone doesn't decide
+    assert layers == []
+    assert raster_tables == [{"name": "elevation"}]
+
+
+@pytest.mark.django_db
+def test_start_geopackage_cog_conversion_reassigns_job_kind(raster_gpkg_inspect_job, settings, tmp_path):
+    job, _, raster_tables = raster_gpkg_inspect_job
+    # The staging directory from inspect_geopackage (kind="pmtiles") exists...
+    assert (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job.id)).exists()
+    with patch("apps.s3.cog.threading.Thread"):
+        started = start_geopackage_cog_conversion(job.id, "7", [table["name"] for table in raster_tables])
+    started.refresh_from_db()
+    assert started.kind == "cog"
+    assert started.layers == ["elevation"]
+    # ...and is cleaned up once reassigned, since cog's run_conversion
+    # creates its own "cog" directory instead of reusing it.
+    assert not (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job.id)).exists()
+
+
+@pytest.mark.django_db
+def test_start_geopackage_cog_conversion_requires_tables(raster_gpkg_inspect_job):
+    job, _, _ = raster_gpkg_inspect_job
+    with pytest.raises(ValueError, match="Select at least one"):
+        start_geopackage_cog_conversion(job.id, "7", [])
+
+
+@pytest.mark.django_db
+def test_geopackage_convert_endpoint_routes_by_format(raster_gpkg_inspect_job, settings):
+    job, _, raster_tables = raster_gpkg_inspect_job
+    api = APIClient()
+    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    with patch("apps.s3.cog.threading.Thread"):
+        response = api.post(
+            f"/api/s3/gpkg/convert/{job.id}",
+            {"layers": [table["name"] for table in raster_tables], "format": "cog"},
+            format="json",
+        )
+    assert response.status_code == 202
+    job.refresh_from_db()
+    assert job.kind == "cog"
