@@ -272,7 +272,7 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
                 leftIcon={<FiUpload />}
                 onClick={() => openDialog('s3upload', {
                   mode: 'create',
-                  data: { connectionId },
+                  data: { connectionId, prefix },
                 })}
               >
                 Upload
