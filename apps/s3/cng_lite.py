@@ -14,40 +14,36 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import close_old_connections
 from django.utils import timezone
 
+from . import portolan
 from .client import get_s3_client
 from .models import CngLiteJob, LayerCollection, LayerCollectionItem
 
 logger = logging.getLogger(__name__)
 
 
-def _item_display_name(filename, kind):
-    """Strips the file extension (and cog.py's "_cog"/"_cog_3857" suffix) for a clean layer name."""
-    stem = PurePosixPath(filename).stem
-    if kind == "cog":
-        for suffix in ("_cog_3857", "_cog"):
-            if stem.endswith(suffix):
-                stem = stem[: -len(suffix)]
-                break
-    return stem
+def _provider_name(owner_id):
+    try:
+        user = get_user_model().objects.filter(pk=owner_id).first()
+        if user:
+            return user.get_username() or user.email or f"CloudBench user {owner_id}"
+    except Exception:
+        pass
+    return f"CloudBench user {owner_id}"
 
 
-def _create_collection(job, output_keys, kind):
-    """Groups a multi-output job's layers into a LayerCollection for Map Explorer.
+def _create_collection(job, items):
+    """Groups a job's published layers into a LayerCollection for Map Explorer.
 
-    Every COG conversion produces both an original-CRS file and an
-    EPSG:3857 ("_3857") one (see tiff_to_cog.py) — maplibre-cog-protocol
-    only renders Web Mercator COGs, so only the "_3857" file is offered
-    here. The original-CRS copy still lands in S3 for download/GIS use.
-
-    Best-effort: a failure here shouldn't undo the conversion that already
-    succeeded and already landed in S3.
+    `items` is [{'name', 'key'}, ...] — one per logical layer, already
+    pointing at its Portolan-published data file. Best-effort: a failure
+    here shouldn't undo the conversion that already succeeded and already
+    landed in S3.
     """
-    if kind == "cog":
-        output_keys = [item for item in output_keys if item["name"].endswith("_3857.tif")]
-    if not output_keys:
+    if not items:
         return
     try:
         collection = LayerCollection.objects.create(
@@ -60,11 +56,11 @@ def _create_collection(job, output_keys, kind):
         LayerCollectionItem.objects.bulk_create([
             LayerCollectionItem(
                 collection=collection,
-                name=_item_display_name(item["name"], kind),
+                name=item["name"],
                 key=item["key"],
-                format=kind,
+                format=job.kind,
             )
-            for item in output_keys
+            for item in items
         ])
     except Exception:
         logger.exception("Job %s: failed to create a layer collection (files were still uploaded)", job.id)
@@ -189,33 +185,32 @@ def run_conversion(
     validate_result,
     invalid_result_message,
     output_content_type,
+    group_results,
     build_extra_payload=None,
-    use_folder=None,
-    resolve_dest_key=None,
 ):
-    """Run a conversion job and upload whatever cng-lite produced.
+    """Run a conversion job, then publish each result as its own Portolan layer.
 
-    A job that produces exactly one file is uploaded straight to
-    `job.output_key`, unchanged from before. A job that produces several
-    (every GeoPackage conversion does — one PMTiles per vector layer, or
-    two COGs per raster table — plus a plain-TIFF COG conversion, which
-    also now produces two files) is uploaded into the same "source" folder
-    the original upload was staged in (see source_object_key), one object
-    per file, recorded in `job.output_keys`. `use_folder(job)`, if given,
-    forces folder mode even for a single file (e.g. a GeoPackage with
-    exactly one selected layer still gets a folder, so the output location
-    doesn't depend on how many layers you picked).
-
-    `resolve_dest_key(job, item, folder, folder_key)`, if given, overrides
-    how each result's destination key is computed — used by cog.py so a
-    non-folder job's two files (original-CRS + "_3857") don't collide by
-    both landing on `job.output_key`.
+    `group_results(job, results)` (provided by pmtiles.py/cog.py) groups
+    cng-lite's raw output files into logical layers — one PMTiles file is
+    one layer; a COG's original-CRS file and its "_3857" companion (see
+    tiff_to_cog.py) are the same layer's two assets. Each logical layer
+    gets its own folder under wherever `job.output_key` pointed
+    ("{parent}/{layer_id}/"), holding its data file(s) plus a generated
+    collection.json/README.md/AGENTS.md/default style (see
+    apps.s3.portolan) instead of landing as a bare object.
 
     Any layers/tables cng-lite skipped (rather than failing the whole job)
     are recorded on `job.error`, even though the job itself still completes.
     """
     close_old_connections()
     directory = job_directory(kind, job_id)
+    # Usually already created by the staging step (start_conversion/
+    # inspect_geopackage) under this same `kind`. A GeoPackage that turns
+    # out to hold only raster tables gets reassigned from pmtiles to cog
+    # after inspection (see cog.start_geopackage_conversion) — staged
+    # under "pmtiles", converted under "cog" — so this can't assume it
+    # exists yet.
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     try:
         job = CngLiteJob.objects.get(pk=job_id)
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
@@ -238,37 +233,64 @@ def run_conversion(
             update_job(job.id, progress=20, message="Waiting for CloudNativeGIS conversion")
             results, layer_errors = wait_for_results(client, job.id, cng_job_id, deadline)
 
-            update_job(job.id, progress=85, message="Downloading converted file(s)")
-            folder = bool(use_folder(job)) if use_folder else len(results) > 1
-            # "Well-named folder" = wherever the original upload was already
-            # staged (sources/<job_id>/...), so each layer lands right next
-            # to the file it came from.
-            folder_key = str(PurePosixPath(job.source_key).parent) if folder else None
-
-            output_keys = []
+            update_job(job.id, progress=70, message="Downloading converted file(s)")
+            local_paths = {}
             total_size = 0
             for index, item in enumerate(results):
                 local_path = directory / f"result-{index}"
                 total_size += download_result(client, item["result_url"], local_path, validate_result, invalid_result_message)
-                if resolve_dest_key:
-                    dest_key = resolve_dest_key(job, item, folder, folder_key)
-                else:
-                    dest_key = f"{folder_key}/{item['name']}" if folder else job.output_key
-                with local_path.open("rb") as source:
-                    s3_client.client.upload_fileobj(
-                        source, job.bucket, dest_key, ExtraArgs={"ContentType": output_content_type}
-                    )
-                output_keys.append({"name": item["name"], "key": dest_key})
+                local_paths[item["name"]] = local_path
 
-        if folder and output_keys:
-            _create_collection(job, output_keys, kind)
+            update_job(job.id, progress=85, message="Publishing to catalog")
+            layers = group_results(job, results)
+            base_prefix = str(PurePosixPath(job.output_key).parent)
+            base_prefix = "" if base_prefix in ("", ".") else base_prefix
+            provider_name = _provider_name(job.owner_id)
+
+            collection_items = []
+            output_keys = []
+            for layer in layers:
+                folder = f"{base_prefix}/{layer['layer_id']}" if base_prefix else layer["layer_id"]
+                data_assets = []
+                dest_keys = {}
+                info = None
+                for asset in layer["assets"]:
+                    local_path = local_paths[asset["item"]["name"]]
+                    dest_key = f"{folder}/{asset['filename']}"
+                    with local_path.open("rb") as source:
+                        s3_client.client.upload_fileobj(
+                            source, job.bucket, dest_key, ExtraArgs={"ContentType": output_content_type}
+                        )
+                    output_keys.append({"name": asset["filename"], "key": dest_key})
+                    data_assets.append({"filename": asset["filename"], "role": asset["role"]})
+                    dest_keys[asset["role"]] = dest_key
+                    if info is None:
+                        info = asset["item"].get("info")
+
+                portolan.finalize_layer(
+                    s3_client,
+                    folder=folder,
+                    layer_id=layer["layer_id"],
+                    title=layer["title"],
+                    kind=kind,
+                    data_assets=data_assets,
+                    license_id=job.license,
+                    provider_name=provider_name,
+                    source_name=job.source_name,
+                    info=info,
+                )
+                # The "visual" (renderable) asset is what Map Explorer opens —
+                # a plain PMTiles layer has only that; a COG layer's other
+                # asset is its original-CRS file, kept for download/GIS use.
+                primary_key = dest_keys.get("visual") or dest_keys.get("data")
+                collection_items.append({"name": layer["title"], "key": primary_key})
+
+        _create_collection(job, collection_items)
 
         if layer_errors:
             logger.warning("Job %s: %d layer(s)/table(s) skipped: %s", job_id, len(layer_errors), layer_errors)
         error_summary = "; ".join(f"{e['name']}: {e['error']}" for e in layer_errors)
-        # A non-folder job can still produce >1 file now (see cog_dest_key).
-        multi = len(output_keys) > 1
-        message = f"{len(output_keys)} files uploaded to S3" if multi else "File uploaded to S3"
+        message = f"Published {len(layers)} layer{'s' if len(layers) != 1 else ''} to the catalog"
         if layer_errors:
             message += f" ({len(layer_errors)} skipped)"
 
@@ -277,7 +299,7 @@ def run_conversion(
             status="completed",
             progress=100,
             output_size=total_size,
-            output_keys=output_keys if multi else None,
+            output_keys=output_keys,
             error=error_summary,
             message=message,
             completed_at=timezone.now(),

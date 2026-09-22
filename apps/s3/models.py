@@ -62,6 +62,9 @@ class CngLiteJob(models.Model):
     # inspecting the file (see apps.s3.pmtiles.inspect_geopackage). Null for
     # jobs that don't go through the inspect/pick flow (shapefiles, TIFFs).
     layers = models.JSONField(null=True, blank=True)
+    # SPDX id (or "other") the user picked at upload time, carried through
+    # to the generated Portolan collection.json — see apps.s3.portolan.
+    license = models.CharField(max_length=100, default="other", blank=True)
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,

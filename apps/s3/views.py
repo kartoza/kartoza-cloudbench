@@ -27,12 +27,17 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import portolan
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import expire_stalled_job
-from .cog import start_conversion as start_cog_conversion
+from .cog import (
+    start_conversion as start_cog_conversion,
+    start_geopackage_conversion as start_cog_geopackage_conversion,
+)
 from .duckdb import get_duckdb_engine
 from .models import CngLiteJob, LayerCollection, S3Connection
 from .pmtiles import (
+    cancel_geopackage_inspection,
     inspect_geopackage,
     prepare_shapefile,
     start_conversion as start_pmtiles_conversion,
@@ -775,6 +780,7 @@ class S3UploadView(APIView):
         try:
             client = get_s3_client(conn_id, str(request.user.id))
             target_format = request.data.get("targetFormat")
+            license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
             if str(request.data.get("convert", "false")).lower() == "true" and target_format in (
                 "pmtiles",
                 "cog",
@@ -782,7 +788,7 @@ class S3UploadView(APIView):
                 try:
                     if target_format == "pmtiles":
                         job = start_pmtiles_conversion(
-                            uploaded_file, key, conn_id, str(request.user.id), companion_files
+                            uploaded_file, key, conn_id, str(request.user.id), companion_files, license_id
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -791,7 +797,7 @@ class S3UploadView(APIView):
                                 {"error": "COG conversion accepts a single file."},
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
-                        job = start_cog_conversion(uploaded_file, key, conn_id, str(request.user.id))
+                        job = start_cog_conversion(uploaded_file, key, conn_id, str(request.user.id), license_id)
                         message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -849,31 +855,40 @@ class S3UploadView(APIView):
 
 
 class S3GeoPackageInspectView(APIView):
-    """Stage a GeoPackage upload and report its layers, before conversion starts."""
+    """Stage a GeoPackage upload and report its contents, before conversion starts."""
 
     def post(self, request, conn_id):
         if "file" not in request.FILES:
             return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
         uploaded_file = request.FILES["file"]
         key = request.data.get("key", uploaded_file.name)
+        license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
         try:
-            job, layers = inspect_geopackage(uploaded_file, key, conn_id, str(request.user.id))
+            job, layers, raster_tables = inspect_geopackage(
+                uploaded_file, key, conn_id, str(request.user.id), license_id
+            )
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except httpx.HTTPError as exc:
             return Response(
                 {"error": f"Could not inspect the GeoPackage: {exc}"}, status=status.HTTP_502_BAD_GATEWAY
             )
-        return Response({"jobId": str(job.id), "layers": layers, "key": job.output_key})
+        return Response(
+            {"jobId": str(job.id), "layers": layers, "rasterTables": raster_tables, "key": job.output_key}
+        )
 
 
 class S3GeoPackageConvertView(APIView):
-    """Confirm which layers to convert for a previously-inspected GeoPackage job."""
+    """Confirm which layers/tables to convert for a previously-inspected GeoPackage job."""
 
     def post(self, request, job_id):
         layers = request.data.get("layers")
+        target_format = request.data.get("format", "pmtiles")
         try:
-            job = start_geopackage_conversion(job_id, str(request.user.id), layers)
+            if target_format == "cog":
+                job = start_cog_geopackage_conversion(job_id, str(request.user.id), layers)
+            else:
+                job = start_geopackage_conversion(job_id, str(request.user.id), layers)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
@@ -886,6 +901,14 @@ class S3GeoPackageConvertView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+    def delete(self, request, job_id):
+        """Cancel a previously-inspected GeoPackage job, removing its staged S3 upload."""
+        try:
+            cancel_geopackage_inspection(job_id, str(request.user.id))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class S3LayerCollectionListView(APIView):
