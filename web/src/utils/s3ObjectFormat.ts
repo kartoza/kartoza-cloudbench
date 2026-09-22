@@ -27,7 +27,7 @@ export function isMapPreviewable(key: string): boolean {
   const keyLower = key.toLowerCase()
   if (['tif', 'tiff', 'cog', 'gtiff', 'geotiff'].includes(ext)) return true
   if (['las', 'laz', 'copc'].includes(ext) || keyLower.endsWith('.copc.laz') || keyLower.endsWith('.copc.las')) return true
-  if (['geojson', 'parquet', 'geoparquet', 'json', 'gpkg'].includes(ext)) return true
+  if (['geojson', 'parquet', 'geoparquet'].includes(ext)) return true
   return false
 }
 

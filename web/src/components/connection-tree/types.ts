@@ -130,6 +130,17 @@ export interface S3ConnectionNodeProps {
   }
 }
 
+export interface S3ObjectNodeProps {
+  connectionId: string
+  bucket: string
+  object: {
+    key: string
+    size: number
+    lastModified: string
+    isFolder: boolean
+  }
+}
+
 // Iceberg types
 export interface IcebergConnectionNodeProps {
   connection: {

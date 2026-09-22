@@ -74,6 +74,27 @@ interface S3PreviewState {
   objectKey: string
 }
 
+// PMTiles/COG shown with the same map viewer Map Explorer uses, but inline
+// in the main panel — triggered by clicking a pmtiles/web-mercator-cog
+// object in the S3 connection tree.
+interface S3MapPreviewState {
+  connectionId: string
+  bucketName: string
+  objectKey: string
+  format: 'pmtiles' | 'cog'
+}
+
+// A text-ish S3 object (README.md, collection.json, ...) shown formatted in
+// the main panel — the component itself decides markdown/JSON/plain-text
+// rendering from the object key's extension.
+interface S3TextPreviewState {
+  connectionId: string
+  objectKey: string
+  title: string
+  size?: number
+  lastModified?: string
+}
+
 interface QGISPreviewState {
   projectId: string
   projectName: string
@@ -134,6 +155,12 @@ interface UIState {
   // S3 Preview state
   activeS3Preview: S3PreviewState | null
 
+  // Inline PMTiles/COG map preview (S3 connection tree)
+  activeS3MapPreview: S3MapPreviewState | null
+
+  // Inline markdown/JSON/text preview (S3 connection tree)
+  activeS3TextPreview: S3TextPreviewState | null
+
   // QGIS Preview state
   activeQGISPreview: QGISPreviewState | null
 
@@ -179,6 +206,9 @@ interface UIState {
   setPreview: (preview: PreviewState | null) => void
   setPreviewMode: (mode: PreviewMode) => void
   setS3Preview: (preview: S3PreviewState | null) => void
+  setS3MapPreview: (preview: S3MapPreviewState | null) => void
+  setS3TextPreview: (preview: S3TextPreviewState | null) => void
+  clearPreviews: () => void
   setQGISPreview: (preview: QGISPreviewState | null) => void
   setGeoNodePreview: (preview: GeoNodePreviewState | null) => void
   setGeoNodeMapView: (view: MapViewState | null) => void
@@ -220,12 +250,29 @@ const saveSettings = (settings: Settings) => {
   }
 }
 
+// Every "active preview" slot, all null — the base every setter below
+// spreads from so a new preview always replaces whichever one was showing.
+const emptyPreviews = {
+  activePreview: null,
+  activeS3Preview: null,
+  activeS3MapPreview: null,
+  activeS3TextPreview: null,
+  activeQGISPreview: null,
+  activeGeoNodePreview: null,
+  activeDuckDBQuery: null,
+  activePGQuery: null,
+  activeIcebergPreview: null,
+  activeJupyterPreview: null,
+}
+
 export const useUIStore = create<UIState>((set) => ({
   activeDialog: null,
   dialogData: null,
   activePreview: null,
   previewMode: '2d',
   activeS3Preview: null,
+  activeS3MapPreview: null,
+  activeS3TextPreview: null,
   activeQGISPreview: null,
   activeGeoNodePreview: null,
   geonodeMapView: null,
@@ -250,8 +297,7 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setPreview: (preview) => {
-    // Clear all other previews when setting GeoServer preview
-    set({ activePreview: preview, activeS3Preview: null, activeQGISPreview: null, activeGeoNodePreview: null, activeDuckDBQuery: null, activePGQuery: null, activeIcebergPreview: null, activeJupyterPreview: null })
+    set({ ...emptyPreviews, activePreview: preview })
   },
 
   setPreviewMode: (mode) => {
@@ -259,23 +305,28 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setS3Preview: (preview) => {
-    // Clear all other previews when setting S3 preview
-    set({ activeS3Preview: preview, activePreview: null, activeQGISPreview: null, activeGeoNodePreview: null, activeDuckDBQuery: null, activePGQuery: null, activeIcebergPreview: null, activeJupyterPreview: null })
+    set({ ...emptyPreviews, activeS3Preview: preview })
+  },
+
+  setS3MapPreview: (preview) => {
+    set({ ...emptyPreviews, activeS3MapPreview: preview })
+  },
+
+  setS3TextPreview: (preview) => {
+    set({ ...emptyPreviews, activeS3TextPreview: preview })
+  },
+
+  clearPreviews: () => {
+    set(emptyPreviews)
   },
 
   setQGISPreview: (preview) => {
-    // Clear all other previews when setting QGIS preview
-    set({ activeQGISPreview: preview, activePreview: null, activeS3Preview: null, activeGeoNodePreview: null, activeDuckDBQuery: null, activePGQuery: null, activeIcebergPreview: null, activeJupyterPreview: null })
+    set({ ...emptyPreviews, activeQGISPreview: preview })
   },
 
   setGeoNodePreview: (preview) => {
-    // Clear all other previews when setting GeoNode preview
     // Clear map view only when closing the preview (preview is null)
-    if (preview === null) {
-      set({ activeGeoNodePreview: null, activePreview: null, activeS3Preview: null, activeQGISPreview: null, geonodeMapView: null, activeDuckDBQuery: null, activePGQuery: null, activeIcebergPreview: null, activeJupyterPreview: null })
-    } else {
-      set({ activeGeoNodePreview: preview, activePreview: null, activeS3Preview: null, activeQGISPreview: null, activeDuckDBQuery: null, activePGQuery: null, activeIcebergPreview: null, activeJupyterPreview: null })
-    }
+    set({ ...emptyPreviews, activeGeoNodePreview: preview, ...(preview === null ? { geonodeMapView: null } : {}) })
   },
 
   setGeoNodeMapView: (view) => {
@@ -283,59 +334,19 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setDuckDBQuery: (query) => {
-    // Clear all other previews when setting DuckDB query
-    set({
-      activeDuckDBQuery: query,
-      activePreview: null,
-      activeS3Preview: null,
-      activeQGISPreview: null,
-      activeGeoNodePreview: null,
-      activePGQuery: null,
-      activeIcebergPreview: null,
-      activeJupyterPreview: null
-    })
+    set({ ...emptyPreviews, activeDuckDBQuery: query })
   },
 
   setPGQuery: (query) => {
-    // Clear all other previews when setting PG query
-    set({
-      activePGQuery: query,
-      activePreview: null,
-      activeS3Preview: null,
-      activeQGISPreview: null,
-      activeGeoNodePreview: null,
-      activeDuckDBQuery: null,
-      activeIcebergPreview: null,
-      activeJupyterPreview: null
-    })
+    set({ ...emptyPreviews, activePGQuery: query })
   },
 
   setIcebergPreview: (preview) => {
-    // Clear all other previews when setting Iceberg preview
-    set({
-      activeIcebergPreview: preview,
-      activePreview: null,
-      activeS3Preview: null,
-      activeQGISPreview: null,
-      activeGeoNodePreview: null,
-      activeDuckDBQuery: null,
-      activePGQuery: null,
-      activeJupyterPreview: null
-    })
+    set({ ...emptyPreviews, activeIcebergPreview: preview })
   },
 
   setJupyterPreview: (preview) => {
-    // Clear all other previews when setting Jupyter preview
-    set({
-      activeJupyterPreview: preview,
-      activePreview: null,
-      activeS3Preview: null,
-      activeQGISPreview: null,
-      activeGeoNodePreview: null,
-      activeDuckDBQuery: null,
-      activePGQuery: null,
-      activeIcebergPreview: null
-    })
+    set({ ...emptyPreviews, activeJupyterPreview: preview })
   },
 
   requestOpenMapExplorer: (layer) => {

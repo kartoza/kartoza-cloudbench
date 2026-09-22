@@ -1,17 +1,31 @@
-import { Box } from '@chakra-ui/react'
+import { Box, Text } from '@chakra-ui/react'
+import { useQuery } from '@tanstack/react-query'
 import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
+import * as api from '../../../api'
 import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { S3ObjectNode } from './S3ObjectNode'
 import type { S3ConnectionNodeProps } from '../types'
 
-// A connection is scoped to one bucket. Its objects are browsed in the main
-// panel (S3ConnectionPanel), not expanded here in the tree.
+// A connection is scoped to one bucket. Selecting it opens the full bucket
+// browser in the main panel; expanding it browses the bucket's contents
+// right here in the tree (see S3ObjectNode for per-item behavior).
 export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
   const nodeId = generateNodeId('s3connection', connection.id)
+  const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
+  const toggleNode = useTreeStore((state) => state.toggleNode)
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
+  const clearPreviews = useUIStore((state) => state.clearPreviews)
+
+  const { data: children, isLoading } = useQuery({
+    queryKey: ['s3objects', connection.id, ''],
+    queryFn: () => api.getS3Objects(connection.id, ''),
+    enabled: isExpanded,
+    staleTime: 30000,
+  })
 
   const node: TreeNode = {
     id: nodeId,
@@ -24,6 +38,8 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
 
   const handleClick = () => {
     selectNode(node)
+    clearPreviews()
+    toggleNode(nodeId)
   }
 
   const handleEdit = (e: React.MouseEvent) => {
@@ -56,16 +72,31 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
     <Box>
       <TreeNodeRow
         node={node}
-        isExpanded={false}
+        isExpanded={isExpanded}
         isSelected={isSelected}
-        isLoading={false}
-        isLeaf
+        isLoading={isLoading}
         onClick={handleClick}
         onEdit={handleEdit}
         onDelete={handleDelete}
         onUpload={handleUpload}
         level={2}
+        count={children ? children.length : undefined}
       />
+      {isExpanded && children && (
+        <>
+          {children.length === 0 ? (
+            <Box px={2} py={1} ml={5 * 3}>
+              <Text fontSize="xs" color="gray.400">
+                Empty bucket
+              </Text>
+            </Box>
+          ) : (
+            children.map((child) => (
+              <S3ObjectNode key={child.key} connectionId={connection.id} bucket={connection.bucket} object={child} />
+            ))
+          )}
+        </>
+      )}
     </Box>
   )
 }

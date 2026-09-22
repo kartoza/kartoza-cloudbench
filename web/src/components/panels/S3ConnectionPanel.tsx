@@ -92,9 +92,10 @@ function S3StatCard({ label, value, helpText, icon, colorScheme = 'orange' }: S3
 
 interface S3ConnectionPanelProps {
   connectionId: string
+  initialPrefix?: string
 }
 
-export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelProps) {
+export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: S3ConnectionPanelProps) {
   const cardBg = useColorModeValue('white', 'gray.800')
   const objectBg = useColorModeValue('gray.50', 'gray.700')
   const objectHoverBg = useColorModeValue('orange.50', 'gray.600')
@@ -102,7 +103,7 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
   const requestOpenMapExplorer = useUIStore((state) => state.requestOpenMapExplorer)
   const queryClient = useQueryClient()
   const toast = useToast()
-  const [prefix, setPrefix] = useState('')
+  const [prefix, setPrefix] = useState(initialPrefix)
 
   // Fetch connection details
   const { data: connection, isLoading: loadingConnection } = useQuery({
@@ -281,28 +282,6 @@ export default function S3ConnectionPanel({ connectionId }: S3ConnectionPanelPro
           </Flex>
         </CardBody>
       </Card>
-
-      {/* Stats */}
-      <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
-        <S3StatCard
-          label="Bucket"
-          value={connection.bucket}
-          icon={FiArchive}
-          colorScheme="orange"
-        />
-        <S3StatCard
-          label="Region"
-          value={connection.region || 'Default'}
-          icon={FiHardDrive}
-          colorScheme="blue"
-        />
-        <S3StatCard
-          label="SSL"
-          value={connection.useSSL ? 'Enabled' : 'Disabled'}
-          icon={FiCheckCircle}
-          colorScheme={connection.useSSL ? 'green' : 'gray'}
-        />
-      </SimpleGrid>
 
       {/* Objects */}
       <Card bg={cardBg}>
