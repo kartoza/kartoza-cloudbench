@@ -24,19 +24,31 @@ logger = logging.getLogger(__name__)
 
 
 def _item_display_name(filename, kind):
-    """Strips the file extension (and cog.py's "_cog" suffix) for a clean layer name."""
+    """Strips the file extension (and cog.py's "_cog"/"_cog_3857" suffix) for a clean layer name."""
     stem = PurePosixPath(filename).stem
-    if kind == "cog" and stem.endswith("_cog"):
-        stem = stem[: -len("_cog")]
+    if kind == "cog":
+        for suffix in ("_cog_3857", "_cog"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
     return stem
 
 
 def _create_collection(job, output_keys, kind):
     """Groups a multi-output job's layers into a LayerCollection for Map Explorer.
 
+    Every COG conversion produces both an original-CRS file and an
+    EPSG:3857 ("_3857") one (see tiff_to_cog.py) — maplibre-cog-protocol
+    only renders Web Mercator COGs, so only the "_3857" file is offered
+    here. The original-CRS copy still lands in S3 for download/GIS use.
+
     Best-effort: a failure here shouldn't undo the conversion that already
     succeeded and already landed in S3.
     """
+    if kind == "cog":
+        output_keys = [item for item in output_keys if item["name"].endswith("_3857.tif")]
+    if not output_keys:
+        return
     try:
         collection = LayerCollection.objects.create(
             owner_id=job.owner_id,
@@ -179,18 +191,25 @@ def run_conversion(
     output_content_type,
     build_extra_payload=None,
     use_folder=None,
+    resolve_dest_key=None,
 ):
     """Run a conversion job and upload whatever cng-lite produced.
 
     A job that produces exactly one file is uploaded straight to
     `job.output_key`, unchanged from before. A job that produces several
     (every GeoPackage conversion does — one PMTiles per vector layer, or
-    one COG per raster table) is uploaded into the same "source" folder
+    two COGs per raster table — plus a plain-TIFF COG conversion, which
+    also now produces two files) is uploaded into the same "source" folder
     the original upload was staged in (see source_object_key), one object
     per file, recorded in `job.output_keys`. `use_folder(job)`, if given,
     forces folder mode even for a single file (e.g. a GeoPackage with
     exactly one selected layer still gets a folder, so the output location
     doesn't depend on how many layers you picked).
+
+    `resolve_dest_key(job, item, folder, folder_key)`, if given, overrides
+    how each result's destination key is computed — used by cog.py so a
+    non-folder job's two files (original-CRS + "_3857") don't collide by
+    both landing on `job.output_key`.
 
     Any layers/tables cng-lite skipped (rather than failing the whole job)
     are recorded on `job.error`, even though the job itself still completes.
@@ -231,7 +250,10 @@ def run_conversion(
             for index, item in enumerate(results):
                 local_path = directory / f"result-{index}"
                 total_size += download_result(client, item["result_url"], local_path, validate_result, invalid_result_message)
-                dest_key = f"{folder_key}/{item['name']}" if folder else job.output_key
+                if resolve_dest_key:
+                    dest_key = resolve_dest_key(job, item, folder, folder_key)
+                else:
+                    dest_key = f"{folder_key}/{item['name']}" if folder else job.output_key
                 with local_path.open("rb") as source:
                     s3_client.client.upload_fileobj(
                         source, job.bucket, dest_key, ExtraArgs={"ContentType": output_content_type}
@@ -244,7 +266,9 @@ def run_conversion(
         if layer_errors:
             logger.warning("Job %s: %d layer(s)/table(s) skipped: %s", job_id, len(layer_errors), layer_errors)
         error_summary = "; ".join(f"{e['name']}: {e['error']}" for e in layer_errors)
-        message = f"{len(output_keys)} files uploaded to S3" if folder else "File uploaded to S3"
+        # A non-folder job can still produce >1 file now (see cog_dest_key).
+        multi = len(output_keys) > 1
+        message = f"{len(output_keys)} files uploaded to S3" if multi else "File uploaded to S3"
         if layer_errors:
             message += f" ({len(layer_errors)} skipped)"
 
@@ -253,7 +277,7 @@ def run_conversion(
             status="completed",
             progress=100,
             output_size=total_size,
-            output_keys=output_keys if folder else None,
+            output_keys=output_keys if multi else None,
             error=error_summary,
             message=message,
             completed_at=timezone.now(),

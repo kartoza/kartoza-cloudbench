@@ -36,8 +36,17 @@ export function isQueryable(key: string): boolean {
   return ['parquet', 'geoparquet'].includes(ext)
 }
 
+// maplibre-cog-protocol (Map Explorer's COG renderer) only supports Web
+// Mercator COGs — cng-lite's COG conversion always produces one of these
+// (suffixed "_3857") alongside the original-CRS file, see apps/s3/cog.py.
+export function isWebMercatorCog(key: string): boolean {
+  return /_3857\.[^./]+$/i.test(key)
+}
+
 // Formats Map Explorer can load directly as a map layer (PMTiles vector/raster tiles, COG rasters)
 export function isMapExplorerFormat(key: string): boolean {
   const ext = getFileExtension(key)
-  return ['pmtiles', 'tif', 'tiff', 'cog', 'gtiff', 'geotiff'].includes(ext)
+  if (ext === 'pmtiles') return true
+  if (['tif', 'tiff', 'cog', 'gtiff', 'geotiff'].includes(ext)) return isWebMercatorCog(key)
+  return false
 }
