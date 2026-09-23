@@ -106,7 +106,7 @@ class SearchService:
                     )
                 )
 
-        for s3_conn in S3Connection.objects.filter(owner_id=int(self._user_id)):
+        for s3_conn in S3Connection.objects.filter(owner__username=self._user_id):
             if (
                 query in s3_conn.name.lower()
                 or query in s3_conn.endpoint.lower()
