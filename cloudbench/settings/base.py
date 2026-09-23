@@ -196,7 +196,9 @@ COOP_COEP_ENABLED = False
 
 # CloudBench specific settings
 CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8000").rstrip("/")
-CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800")))
+CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800"))
+)
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
 # Shared secret sent as `Authorization: Bearer <token>` on every request to
 # CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no

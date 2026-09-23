@@ -230,7 +230,9 @@ def conversion_job(settings, tmp_path):
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
-        get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
+        get_client.return_value.generate_presigned_url.return_value = (
+            "http://cloudnativegis/presigned"
+        )
         return start_conversion(shapefile_zip(), "folder/roads.zip", "s3-one", "7")
 
 
@@ -266,7 +268,10 @@ def test_conversion_pipeline(conversion_job, settings, outcome):
                 json={
                     "status": "done",
                     "results": [
-                        {"name": "output.pmtiles", "result_url": "/api/v1/jobs/cng-job-1/result/output.pmtiles"}
+                        {
+                            "name": "output.pmtiles",
+                            "result_url": "/api/v1/jobs/cng-job-1/result/output.pmtiles",
+                        }
                     ],
                     "errors": [],
                 },
@@ -340,8 +345,12 @@ def gpkg_inspect_job(settings, tmp_path):
         patch("apps.s3.pmtiles.httpx.Client", return_value=client),
     ):
         get_client.return_value.bucket = "bucket"
-        get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
-        job, layers, raster_tables = inspect_geopackage(gpkg_file(), "folder/parcels.gpkg", "s3-one", "7")
+        get_client.return_value.generate_presigned_url.return_value = (
+            "http://cloudnativegis/presigned"
+        )
+        job, layers, raster_tables = inspect_geopackage(
+            gpkg_file(), "folder/parcels.gpkg", "s3-one", "7"
+        )
     return job, layers, raster_tables
 
 

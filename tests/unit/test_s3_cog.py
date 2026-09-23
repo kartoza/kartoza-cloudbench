@@ -200,13 +200,18 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
             return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
         if request.url.path == "/api/v1/jobs/cng-job-1":
             if outcome == "failed":
-                return httpx.Response(200, json={"status": "failed", "detail": "gdal_translate failed"})
+                return httpx.Response(
+                    200, json={"status": "failed", "detail": "gdal_translate failed"}
+                )
             return httpx.Response(
                 200,
                 json={
                     "status": "done",
                     "results": [
-                        {"name": "output_cog.tif", "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif"},
+                        {
+                            "name": "output_cog.tif",
+                            "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif",
+                        },
                         {
                             "name": "output_cog_3857.tif",
                             "result_url": "/api/v1/jobs/cng-job-1/result/output_cog_3857.tif",
@@ -282,8 +287,12 @@ def raster_gpkg_inspect_job(settings, tmp_path):
         patch("apps.s3.pmtiles.httpx.Client", return_value=client),
     ):
         get_client.return_value.bucket = "bucket"
-        get_client.return_value.generate_presigned_url.return_value = "http://cloudnativegis/presigned"
-        job, layers, raster_tables = inspect_geopackage(gpkg_file(), "folder/rasters.gpkg", "s3-one", "7")
+        get_client.return_value.generate_presigned_url.return_value = (
+            "http://cloudnativegis/presigned"
+        )
+        job, layers, raster_tables = inspect_geopackage(
+            gpkg_file(), "folder/rasters.gpkg", "s3-one", "7"
+        )
     return job, layers, raster_tables
 
 
@@ -296,12 +305,16 @@ def test_raster_geopackage_inspection_finds_no_vector_layers(raster_gpkg_inspect
 
 
 @pytest.mark.django_db
-def test_start_geopackage_cog_conversion_reassigns_job_kind(raster_gpkg_inspect_job, settings, tmp_path):
+def test_start_geopackage_cog_conversion_reassigns_job_kind(
+    raster_gpkg_inspect_job, settings, tmp_path
+):
     job, _, raster_tables = raster_gpkg_inspect_job
     # The staging directory from inspect_geopackage (kind="pmtiles") exists...
     assert (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job.id)).exists()
     with patch("apps.s3.cog.threading.Thread"):
-        started = start_geopackage_cog_conversion(job.id, "7", [table["name"] for table in raster_tables])
+        started = start_geopackage_cog_conversion(
+            job.id, "7", [table["name"] for table in raster_tables]
+        )
     started.refresh_from_db()
     assert started.kind == "cog"
     assert started.layers == ["elevation"]

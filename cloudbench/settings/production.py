@@ -16,7 +16,7 @@ CLOUDBENCH_ENCRYPTION_KEY = os.environ.get("CLOUDBENCH_ENCRYPTION_KEY")
 if not CLOUDBENCH_ENCRYPTION_KEY:
     raise ImproperlyConfigured(
         "CLOUDBENCH_ENCRYPTION_KEY must be set in production "
-        "(generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\")"
+        '(generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")'
     )
 
 # HTTPS settings

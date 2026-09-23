@@ -67,4 +67,6 @@ class Command(BaseCommand):
                 imported += 1
                 self.stdout.write(f"Imported '{name}' for user {user.username!r}")
 
-        self.stdout.write(self.style.SUCCESS(f"Done: {imported} imported, {skipped} already present."))
+        self.stdout.write(
+            self.style.SUCCESS(f"Done: {imported} imported, {skipped} already present.")
+        )

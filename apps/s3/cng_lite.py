@@ -53,17 +53,21 @@ def _create_collection(job, items):
             name=PurePosixPath(job.source_name).stem,
             source_name=job.source_name,
         )
-        LayerCollectionItem.objects.bulk_create([
-            LayerCollectionItem(
-                collection=collection,
-                name=item["name"],
-                key=item["key"],
-                format=job.kind,
-            )
-            for item in items
-        ])
+        LayerCollectionItem.objects.bulk_create(
+            [
+                LayerCollectionItem(
+                    collection=collection,
+                    name=item["name"],
+                    key=item["key"],
+                    format=job.kind,
+                )
+                for item in items
+            ]
+        )
     except Exception:
-        logger.exception("Job %s: failed to create a layer collection (files were still uploaded)", job.id)
+        logger.exception(
+            "Job %s: failed to create a layer collection (files were still uploaded)", job.id
+        )
 
 
 def cng_lite_headers():
@@ -151,7 +155,9 @@ def wait_for_results(client, job_id, cng_job_id, deadline):
     while time.monotonic() < deadline:
         body = client.get(f"api/v1/jobs/{cng_job_id}").json()
         if body.get("status") == "failed":
-            raise ValueError(f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}")
+            raise ValueError(
+                f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
+            )
         if body.get("status") == "done":
             results = body.get("results")
             if not results:
@@ -246,7 +252,9 @@ def run_conversion(
             total_size = 0
             for index, item in enumerate(results):
                 local_path = directory / f"result-{index}"
-                total_size += download_result(client, item["result_url"], local_path, validate_result, invalid_result_message)
+                total_size += download_result(
+                    client, item["result_url"], local_path, validate_result, invalid_result_message
+                )
                 local_paths[item["name"]] = local_path
 
             update_job(job.id, progress=85, message="Publishing to catalog")
@@ -267,7 +275,10 @@ def run_conversion(
                     dest_key = f"{folder}/{asset['filename']}"
                     with local_path.open("rb") as source:
                         s3_client.client.upload_fileobj(
-                            source, job.bucket, dest_key, ExtraArgs={"ContentType": output_content_type}
+                            source,
+                            job.bucket,
+                            dest_key,
+                            ExtraArgs={"ContentType": output_content_type},
                         )
                     output_keys.append({"name": asset["filename"], "key": dest_key})
                     data_assets.append({"filename": asset["filename"], "role": asset["role"]})
@@ -296,7 +307,9 @@ def run_conversion(
         _create_collection(job, collection_items)
 
         if layer_errors:
-            logger.warning("Job %s: %d layer(s)/table(s) skipped: %s", job_id, len(layer_errors), layer_errors)
+            logger.warning(
+                "Job %s: %d layer(s)/table(s) skipped: %s", job_id, len(layer_errors), layer_errors
+            )
         error_summary = "; ".join(f"{e['name']}: {e['error']}" for e in layer_errors)
         message = f"Published {len(layers)} layer{'s' if len(layers) != 1 else ''} to the catalog"
         if layer_errors:

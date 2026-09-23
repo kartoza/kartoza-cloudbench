@@ -22,7 +22,9 @@ class S3Connection(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="s3_connections")
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="s3_connections"
+    )
     name = models.CharField(max_length=255)
     endpoint = models.CharField(max_length=500)
     bucket = models.CharField(max_length=255, blank=True, default="")
@@ -40,6 +42,7 @@ class S3Connection(models.Model):
 
     def __str__(self):
         return self.name
+
 
 # Source/target labels per job kind, used only for API responses.
 CONVERSION_FORMATS = {
@@ -93,7 +96,9 @@ class CngLiteJob(models.Model):
             "message": self.message,
             "error": self.error,
             "sourcePath": self.source_name,
-            "sourceStoredPath": f"s3://{self.bucket}/{self.source_key}" if self.source_key else None,
+            "sourceStoredPath": (
+                f"s3://{self.bucket}/{self.source_key}" if self.source_key else None
+            ),
             "outputPath": output_paths[0] if len(output_paths) == 1 else None,
             "outputPaths": output_paths,
             "sourceFormat": formats["sourceFormat"],

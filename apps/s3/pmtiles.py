@@ -143,10 +143,19 @@ def upload_raw_components(s3_client, output_key_value, job_id, uploaded_file, co
         component.seek(0)
         key = f"{directory}/{PurePosixPath(component.name).name}"
         content_type = component.content_type or "application/octet-stream"
-        s3_client.client.upload_fileobj(component, s3_client.bucket, key, ExtraArgs={"ContentType": content_type})
+        s3_client.client.upload_fileobj(
+            component, s3_client.bucket, key, ExtraArgs={"ContentType": content_type}
+        )
 
 
-def start_conversion(uploaded_file, key, connection_id, owner_id, companion_files=(), license_id=portolan.DEFAULT_LICENSE):
+def start_conversion(
+    uploaded_file,
+    key,
+    connection_id,
+    owner_id,
+    companion_files=(),
+    license_id=portolan.DEFAULT_LICENSE,
+):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
@@ -199,7 +208,9 @@ def start_conversion(uploaded_file, key, connection_id, owner_id, companion_file
     return job
 
 
-def inspect_geopackage(uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE):
+def inspect_geopackage(
+    uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE
+):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
     Creates the CngLiteJob now (so the eventual conversion reuses the same
@@ -234,7 +245,9 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id, license_id=p
     try:
         source_path = directory / "source.gpkg"
         prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
-        job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
+        job.source_key = source_object_key(
+            job.output_key, job.id, PurePosixPath(uploaded_file.name).name
+        )
         with source_path.open("rb") as source_file:
             s3_client.client.upload_fileobj(
                 source_file,
@@ -249,7 +262,9 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id, license_id=p
             timeout=httpx.Timeout(30, connect=10),
             headers=cng_lite_headers(),
         ) as client:
-            inspection = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})
+            inspection = request_json(
+                client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url}
+            )
         layers = inspection["layers"]
         raster_tables = inspection.get("rasterTables", [])
     except Exception:
@@ -267,7 +282,9 @@ def start_geopackage_conversion(job_id, owner_id, layers):
     """Confirm which layers to include and start a previously-inspected GeoPackage's conversion."""
     if not layers:
         raise ValueError("Select at least one layer.")
-    job = CngLiteJob.objects.filter(pk=job_id, owner_id=owner_id, kind=KIND, status="pending").first()
+    job = CngLiteJob.objects.filter(
+        pk=job_id, owner_id=owner_id, kind=KIND, status="pending"
+    ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
     job.layers = layers

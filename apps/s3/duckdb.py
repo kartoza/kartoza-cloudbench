@@ -6,7 +6,7 @@ files stored in S3-compatible storage using DuckDB.
 
 import json
 import threading
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 from django.core.exceptions import ValidationError
@@ -19,6 +19,7 @@ class DuckDBQueryEngine:
 
     _instance: "DuckDBQueryEngine | None" = None
     _lock = threading.RLock()
+    _initialized: bool
 
     def __new__(cls) -> "DuckDBQueryEngine":
         """Ensure singleton instance."""
@@ -57,7 +58,7 @@ class DuckDBQueryEngine:
             user_id: User ID the connection is scoped to
         """
         try:
-            conn = S3Connection.objects.filter(owner_id=user_id, id=connection_id).first()
+            conn = S3Connection.objects.filter(owner_id=int(user_id), id=connection_id).first()
         except (ValueError, ValidationError):
             conn = None
         if not conn:
@@ -284,7 +285,7 @@ class DuckDBQueryEngine:
         result = self.execute_query(query, connection_id, user_id=user_id)
 
         if result["rows"]:
-            return result["rows"][0]
+            return cast(dict, result["rows"][0])
         return {}
 
     def query_geoparquet(

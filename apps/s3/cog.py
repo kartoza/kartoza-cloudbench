@@ -51,9 +51,17 @@ def group_results(job, results):
         layer_id = portolan.sanitize_layer_id(title_stem)
         assets = []
         if "data" in groups[base]:
-            assets.append({"item": groups[base]["data"], "filename": f"{layer_id}.tif", "role": "data"})
+            assets.append(
+                {"item": groups[base]["data"], "filename": f"{layer_id}.tif", "role": "data"}
+            )
         if "visual" in groups[base]:
-            assets.append({"item": groups[base]["visual"], "filename": f"{layer_id}_3857.tif", "role": "visual"})
+            assets.append(
+                {
+                    "item": groups[base]["visual"],
+                    "filename": f"{layer_id}_3857.tif",
+                    "role": "visual",
+                }
+            )
         layers.append({"layer_id": layer_id, "title": title, "assets": assets})
     return layers
 
@@ -80,7 +88,9 @@ def prepare_tiff(uploaded_file, destination):
             output.write(chunk)
 
 
-def start_conversion(uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE):
+def start_conversion(
+    uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE
+):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
@@ -108,7 +118,9 @@ def start_conversion(uploaded_file, key, connection_id, owner_id, license_id=por
             source_path = directory / "source.tif"
             prepare_tiff(uploaded_file, source_path)
             content_type = "image/tiff"
-        job.source_key = source_object_key(job.output_key, job.id, PurePosixPath(uploaded_file.name).name)
+        job.source_key = source_object_key(
+            job.output_key, job.id, PurePosixPath(uploaded_file.name).name
+        )
         with source_path.open("rb") as source_file:
             s3_client.client.upload_fileobj(
                 source_file,

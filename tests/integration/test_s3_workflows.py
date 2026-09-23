@@ -84,7 +84,11 @@ class TestS3ConnectionWorkflow:
         """Test listing S3 connections."""
         client, user = authenticated_client
         S3Connection.objects.create(
-            owner=user, name="Test MinIO", endpoint="localhost:9000", access_key="minioadmin", secret_key="minioadmin"
+            owner=user,
+            name="Test MinIO",
+            endpoint="localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
         )
         response = client.get("/api/s3/connections")
         assert response.status_code == status.HTTP_200_OK
@@ -116,7 +120,11 @@ class TestS3ConnectionWorkflow:
         """Test getting S3 connection details."""
         client, user = authenticated_client
         conn = S3Connection.objects.create(
-            owner=user, name="Test MinIO", endpoint="localhost:9000", access_key="minioadmin", secret_key="minioadmin"
+            owner=user,
+            name="Test MinIO",
+            endpoint="localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
         )
         response = client.get(f"/api/s3/connections/{conn.id}")
         assert response.status_code == status.HTTP_200_OK
@@ -126,7 +134,11 @@ class TestS3ConnectionWorkflow:
         """Test updating an S3 connection."""
         client, user = authenticated_client
         conn = S3Connection.objects.create(
-            owner=user, name="Test MinIO", endpoint="localhost:9000", access_key="minioadmin", secret_key="minioadmin"
+            owner=user,
+            name="Test MinIO",
+            endpoint="localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
         )
         response = client.put(
             f"/api/s3/connections/{conn.id}",
@@ -141,7 +153,11 @@ class TestS3ConnectionWorkflow:
         """Test deleting an S3 connection."""
         client, user = authenticated_client
         conn = S3Connection.objects.create(
-            owner=user, name="Test MinIO", endpoint="localhost:9000", access_key="minioadmin", secret_key="minioadmin"
+            owner=user,
+            name="Test MinIO",
+            endpoint="localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
         )
         response = client.delete(f"/api/s3/connections/{conn.id}")
         assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -161,9 +177,7 @@ class TestS3ObjectWorkflow:
         assert "objects" in data
         assert len(data["objects"]) == 2
 
-    def test_list_objects_with_prefix(
-        self, api_client: APIClient, mock_s3_client
-    ) -> None:
+    def test_list_objects_with_prefix(self, api_client: APIClient, mock_s3_client) -> None:
         """Test listing objects with prefix filter."""
         response = api_client.get("/api/s3/objects/test-s3-conn?prefix=data/")
         assert response.status_code == status.HTTP_200_OK
@@ -238,9 +252,7 @@ class TestDuckDBQueryWorkflow:
             mock_get.return_value = engine
             yield engine
 
-    def test_query_parquet_file(
-        self, api_client: APIClient, mock_duckdb_views
-    ) -> None:
+    def test_query_parquet_file(self, api_client: APIClient, mock_duckdb_views) -> None:
         """Test querying a Parquet file with DuckDB."""
         response = api_client.post(
             "/api/s3/duckdb/",
@@ -262,9 +274,7 @@ class TestDuckDBQueryWorkflow:
 class TestS3UploadWorkflow:
     """Test S3 file upload workflows."""
 
-    def test_upload_missing_file(
-        self, api_client: APIClient, mock_s3_client
-    ) -> None:
+    def test_upload_missing_file(self, api_client: APIClient, mock_s3_client) -> None:
         """Test upload fails without file."""
         response = api_client.post(
             "/api/s3/upload/test-s3-conn",
@@ -297,9 +307,7 @@ class TestCloudNativeConversionWorkflow:
         data = response.json()
         assert "tools" in data
 
-    def test_start_conversion_job(
-        self, api_client: APIClient, mock_conversion_tools
-    ) -> None:
+    def test_start_conversion_job(self, api_client: APIClient, mock_conversion_tools) -> None:
         """Test starting a conversion job."""
         response = api_client.post(
             "/api/s3/conversion/jobs",

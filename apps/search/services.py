@@ -106,17 +106,21 @@ class SearchService:
                     )
                 )
 
-        for conn in S3Connection.objects.filter(owner_id=self._user_id):
-            if query in conn.name.lower() or query in conn.endpoint.lower() or query in conn.bucket.lower():
+        for s3_conn in S3Connection.objects.filter(owner_id=int(self._user_id)):
+            if (
+                query in s3_conn.name.lower()
+                or query in s3_conn.endpoint.lower()
+                or query in s3_conn.bucket.lower()
+            ):
                 results.append(
                     SearchResult(
                         type="connection",
-                        name=conn.name,
-                        title=conn.name,
-                        description=f"S3 bucket {conn.bucket!r} on {conn.endpoint}",
+                        name=s3_conn.name,
+                        title=s3_conn.name,
+                        description=f"S3 bucket {s3_conn.bucket!r} on {s3_conn.endpoint}",
                         source="s3",
-                        source_id=str(conn.id),
-                        path=f"/s3/{conn.id}",
+                        source_id=str(s3_conn.id),
+                        path=f"/s3/{s3_conn.id}",
                     )
                 )
 

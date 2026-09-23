@@ -41,6 +41,7 @@ class PreviewSessionManager:
 
     _instance: "PreviewSessionManager | None" = None
     _lock = threading.RLock()
+    _sessions: dict[str, PreviewSession]
 
     def __new__(cls) -> "PreviewSessionManager":
         """Singleton pattern for session manager."""
@@ -48,7 +49,7 @@ class PreviewSessionManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._sessions: dict[str, PreviewSession] = {}
+                    cls._instance._sessions = {}
         return cls._instance
 
     def create_session(

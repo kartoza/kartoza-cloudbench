@@ -54,8 +54,7 @@ from .pmtiles import (
 
 
 def _get_owned_connection(request, conn_id):
-    """Looks up a connection owned by the requesting user, or None.
-    """
+    """Looks up a connection owned by the requesting user, or None."""
     try:
         return S3Connection.objects.filter(owner=request.user, id=conn_id).first()
     except (ValueError, ValidationError):
@@ -546,6 +545,7 @@ class ConversionJobManager:
 
     _instance: "ConversionJobManager | None" = None
     _lock = threading.RLock()
+    _jobs: dict[str, ConversionJob]
 
     def __new__(cls) -> "ConversionJobManager":
         """Ensure singleton instance."""
@@ -553,7 +553,7 @@ class ConversionJobManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._jobs: dict[str, ConversionJob] = {}
+                    cls._instance._jobs = {}
         return cls._instance
 
     def create_job(
@@ -795,7 +795,12 @@ class S3UploadView(APIView):
                 try:
                     if target_format == "pmtiles":
                         job = start_pmtiles_conversion(
-                            uploaded_file, key, conn_id, str(request.user.id), companion_files, license_id
+                            uploaded_file,
+                            key,
+                            conn_id,
+                            str(request.user.id),
+                            companion_files,
+                            license_id,
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -804,7 +809,9 @@ class S3UploadView(APIView):
                                 {"error": "COG conversion accepts a single file."},
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
-                        job = start_cog_conversion(uploaded_file, key, conn_id, str(request.user.id), license_id)
+                        job = start_cog_conversion(
+                            uploaded_file, key, conn_id, str(request.user.id), license_id
+                        )
                         message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -823,7 +830,9 @@ class S3UploadView(APIView):
                 with tempfile.TemporaryFile() as archive:
                     try:
                         prepare_shapefile(
-                            uploaded_file, archive, PurePosixPath(uploaded_file.name).stem,
+                            uploaded_file,
+                            archive,
+                            PurePosixPath(uploaded_file.name).stem,
                             companion_files,
                         )
                     except ValueError as exc:
@@ -831,7 +840,9 @@ class S3UploadView(APIView):
                     upload_size = archive.tell()
                     archive.seek(0)
                     key = str(PurePosixPath(key).with_suffix(".zip"))
-                    result = client.put_object(key=key, body=archive, content_type="application/zip")
+                    result = client.put_object(
+                        key=key, body=archive, content_type="application/zip"
+                    )
             else:
                 result = client.put_object(
                     key=key,
@@ -878,10 +889,16 @@ class S3GeoPackageInspectView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except httpx.HTTPError as exc:
             return Response(
-                {"error": f"Could not inspect the GeoPackage: {exc}"}, status=status.HTTP_502_BAD_GATEWAY
+                {"error": f"Could not inspect the GeoPackage: {exc}"},
+                status=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(
-            {"jobId": str(job.id), "layers": layers, "rasterTables": raster_tables, "key": job.output_key}
+            {
+                "jobId": str(job.id),
+                "layers": layers,
+                "rasterTables": raster_tables,
+                "key": job.output_key,
+            }
         )
 
 

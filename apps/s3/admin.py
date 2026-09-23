@@ -17,7 +17,17 @@ def _mask(value: str) -> str:
 @admin.register(S3Connection)
 class S3ConnectionAdmin(admin.ModelAdmin):
     verbose_name = "S3 Connection"
-    list_display = ["name", "owner", "endpoint", "bucket", "region", "use_ssl", "path_style", "is_active", "created_at"]
+    list_display = [
+        "name",
+        "owner",
+        "endpoint",
+        "bucket",
+        "region",
+        "use_ssl",
+        "path_style",
+        "is_active",
+        "created_at",
+    ]
     list_filter = ["use_ssl", "path_style", "is_active"]
     search_fields = ["name", "endpoint", "bucket", "owner__username"]
     readonly_fields = ["id", "masked_access_key", "masked_secret_key", "created_at", "updated_at"]
@@ -38,7 +48,16 @@ class S3ConnectionAdmin(admin.ModelAdmin):
 @admin.register(CngLiteJob)
 class CngLiteJobAdmin(admin.ModelAdmin):
     verbose_name = "CloudNativeGIS Lite Job"
-    list_display = ["id", "kind", "owner_id", "bucket", "status", "progress", "created_at", "completed_at"]
+    list_display = [
+        "id",
+        "kind",
+        "owner_id",
+        "bucket",
+        "status",
+        "progress",
+        "created_at",
+        "completed_at",
+    ]
     list_filter = ["kind", "status"]
     search_fields = ["id", "owner_id", "connection_id", "bucket", "source_name", "output_key"]
     readonly_fields = [
@@ -70,5 +89,13 @@ class LayerCollectionAdmin(admin.ModelAdmin):
     verbose_name = "Layer Collection"
     list_display = ["name", "owner_id", "bucket", "source_name", "created_at"]
     search_fields = ["name", "owner_id", "connection_id", "bucket", "source_name"]
-    readonly_fields = ["id", "owner_id", "connection_id", "bucket", "name", "source_name", "created_at"]
+    readonly_fields = [
+        "id",
+        "owner_id",
+        "connection_id",
+        "bucket",
+        "name",
+        "source_name",
+        "created_at",
+    ]
     inlines = [LayerCollectionItemInline]

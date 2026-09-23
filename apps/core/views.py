@@ -11,8 +11,7 @@ from .providers import get_providers_manager
 
 
 class LoginView(ObtainAuthToken):
-    """Username/password -> DRF auth token, independent of any existing session.
-    """
+    """Username/password -> DRF auth token, independent of any existing session."""
 
     authentication_classes = []
 

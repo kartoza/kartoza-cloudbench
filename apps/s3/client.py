@@ -10,7 +10,7 @@ requiring account-wide permissions like ListAllMyBuckets.
 
 import threading
 from dataclasses import dataclass
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 import boto3
 from botocore.config import Config
@@ -185,7 +185,7 @@ class S3Client:
             Object content as bytes
         """
         response = self.client.get_object(Bucket=self.bucket, Key=key)
-        return response["Body"].read()
+        return cast(bytes, response["Body"].read())
 
     def get_object_stream(self, key: str) -> BinaryIO:
         """Get object content as a stream.
@@ -197,7 +197,7 @@ class S3Client:
             StreamingBody for the object
         """
         response = self.client.get_object(Bucket=self.bucket, Key=key)
-        return response["Body"]
+        return cast(BinaryIO, response["Body"])
 
     def get_object_info(self, key: str) -> dict[str, Any]:
         """Get object metadata.
@@ -285,7 +285,7 @@ class S3Client:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
             for i in range(0, len(keys), 1000):
-                batch = keys[i:i + 1000]
+                batch = keys[i : i + 1000]
                 self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
                 deleted += len(batch)
         return deleted
@@ -306,10 +306,13 @@ class S3Client:
         Returns:
             Presigned URL
         """
-        return self.client.generate_presigned_url(
-            method,
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=expiration,
+        return cast(
+            str,
+            self.client.generate_presigned_url(
+                method,
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=expiration,
+            ),
         )
 
     def copy_object(self, source_key: str, dest_key: str) -> dict[str, Any]:
@@ -338,6 +341,7 @@ class S3ClientManager:
 
     _instance: "S3ClientManager | None" = None
     _lock = threading.RLock()
+    _clients: dict[str, S3Client]
 
     def __new__(cls) -> "S3ClientManager":
         """Ensure singleton instance."""
@@ -345,7 +349,7 @@ class S3ClientManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._clients: dict[str, S3Client] = {}
+                    cls._instance._clients = {}
         return cls._instance
 
     def get_client(self, connection_id: str, user_id: str = "default") -> S3Client:
@@ -368,7 +372,7 @@ class S3ClientManager:
 
             # Get connection config
             try:
-                conn = S3Connection.objects.filter(owner_id=user_id, id=connection_id).first()
+                conn = S3Connection.objects.filter(owner_id=int(user_id), id=connection_id).first()
             except (ValueError, ValidationError):
                 conn = None
             if not conn:

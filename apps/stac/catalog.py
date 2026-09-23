@@ -44,12 +44,14 @@ def parse_collection_id(collection_id: str) -> tuple[str, str, str | None]:
 def _get_owned_s3_connection(user_id: str, conn_id: str) -> "S3Connection | None":
     """conn_id is parsed out of a collection id and isn't guaranteed to be a well-formed UUID."""
     try:
-        return S3Connection.objects.filter(owner_id=user_id, id=conn_id).first()
+        return S3Connection.objects.filter(owner_id=int(user_id), id=conn_id).first()
     except (ValueError, ValidationError):
         return None
 
 
-def _link(rel: str, href: str, media_type: str = "application/json", title: str | None = None) -> dict[str, Any]:
+def _link(
+    rel: str, href: str, media_type: str = "application/json", title: str | None = None
+) -> dict[str, Any]:
     link: dict[str, Any] = {"rel": rel, "href": href, "type": media_type}
     if title:
         link["title"] = title
@@ -73,9 +75,9 @@ def _list_pmtiles_objects(client) -> list[dict[str, Any]]:
 
 def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
     results = []
-    for conn in S3Connection.objects.filter(owner_id=user_id):
+    for conn in S3Connection.objects.filter(owner_id=int(user_id)):
         try:
-            client = get_s3_client(conn.id, user_id)
+            client = get_s3_client(str(conn.id), user_id)
             objects = _list_pmtiles_objects(client)
         except Exception:
             continue
@@ -83,7 +85,7 @@ def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
             continue
         results.append(
             {
-                "id": s3_collection_id(conn.id),
+                "id": s3_collection_id(str(conn.id)),
                 "title": f"{conn.name} / {conn.bucket}",
                 "item_count": len(objects),
             }
@@ -178,7 +180,9 @@ def build_collection_json(request, user_id: str, collection_id: str) -> dict[str
             _link("self", self_href),
             _link("root", request.build_absolute_uri("/api/stac/")),
             _link("parent", request.build_absolute_uri("/api/stac/")),
-            _link("items", request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items")),
+            _link(
+                "items", request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items")
+            ),
         ],
     }
 
@@ -198,12 +202,16 @@ def _wms_preview_url(base_url: str, workspace: str, layer_name: str) -> str:
     return f"{base_url.rstrip('/')}/wms?{urlencode(params)}"
 
 
-def _s3_item(request, collection_id: str, conn, obj: dict[str, Any], user_id: str) -> dict[str, Any]:
+def _s3_item(
+    request, collection_id: str, conn, obj: dict[str, Any], user_id: str
+) -> dict[str, Any]:
     key = obj["key"]
     self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items/{key}")
 
     try:
-        asset_href = get_s3_client(conn.id, user_id).generate_presigned_url(key=key, expiration=3600)
+        asset_href = get_s3_client(conn.id, user_id).generate_presigned_url(
+            key=key, expiration=3600
+        )
     except Exception:
         asset_href = None
 
@@ -222,7 +230,9 @@ def _s3_item(request, collection_id: str, conn, obj: dict[str, Any], user_id: st
         },
         "links": [
             _link("self", self_href),
-            _link("collection", request.build_absolute_uri(f"/api/stac/collections/{collection_id}")),
+            _link(
+                "collection", request.build_absolute_uri(f"/api/stac/collections/{collection_id}")
+            ),
             _link("root", request.build_absolute_uri("/api/stac/")),
         ],
         "assets": (
@@ -240,9 +250,13 @@ def _s3_item(request, collection_id: str, conn, obj: dict[str, Any], user_id: st
     }
 
 
-def _gs_item(request, collection_id: str, conn, workspace: str, layer: dict[str, Any], user_id: str) -> dict[str, Any]:
-    layer_name = layer.get("name")
-    self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items/{layer_name}")
+def _gs_item(
+    request, collection_id: str, conn, workspace: str, layer: dict[str, Any], user_id: str
+) -> dict[str, Any]:
+    layer_name = layer.get("name", "")
+    self_href = request.build_absolute_uri(
+        f"/api/stac/collections/{collection_id}/items/{layer_name}"
+    )
 
     bbox = None
     geometry = None
@@ -255,7 +269,9 @@ def _gs_item(request, collection_id: str, conn, workspace: str, layer: dict[str,
             bbox = [minx, miny, maxx, maxy]
             geometry = {
                 "type": "Polygon",
-                "coordinates": [[[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]],
+                "coordinates": [
+                    [[minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny]]
+                ],
             }
     except Exception:
         pass
@@ -274,7 +290,9 @@ def _gs_item(request, collection_id: str, conn, workspace: str, layer: dict[str,
         },
         "links": [
             _link("self", self_href),
-            _link("collection", request.build_absolute_uri(f"/api/stac/collections/{collection_id}")),
+            _link(
+                "collection", request.build_absolute_uri(f"/api/stac/collections/{collection_id}")
+            ),
             _link("root", request.build_absolute_uri("/api/stac/")),
         ],
         "assets": {
@@ -300,15 +318,20 @@ def list_items(request, user_id: str, collection_id: str) -> list[dict[str, Any]
         objects = _list_pmtiles_objects(client)
         return [_s3_item(request, collection_id, conn, obj, user_id) for obj in objects]
 
+    assert name is not None  # guaranteed by parse_collection_id for kind == "gs"
     config = get_config(user_id)
-    conn = config.get_connection(conn_id)
-    if conn is None:
+    gs_conn = config.get_connection(conn_id)
+    if gs_conn is None:
         return None
     try:
         layers = get_geoserver_client(conn_id, user_id).list_layers(name)
     except Exception:
         layers = []
-    return [_gs_item(request, collection_id, conn, name, layer, user_id) for layer in layers if layer.get("name")]
+    return [
+        _gs_item(request, collection_id, gs_conn, name, layer, user_id)
+        for layer in layers
+        if layer.get("name")
+    ]
 
 
 def get_item(request, user_id: str, collection_id: str, item_id: str) -> dict[str, Any] | None:
@@ -322,12 +345,13 @@ def get_item(request, user_id: str, collection_id: str, item_id: str) -> dict[st
         obj = next((o for o in _list_pmtiles_objects(client) if o["key"] == item_id), None)
         return _s3_item(request, collection_id, conn, obj, user_id) if obj else None
 
+    assert name is not None  # guaranteed by parse_collection_id for kind == "gs"
     config = get_config(user_id)
-    conn = config.get_connection(conn_id)
-    if conn is None:
+    gs_conn = config.get_connection(conn_id)
+    if gs_conn is None:
         return None
     try:
         layer = get_geoserver_client(conn_id, user_id).get_layer(name, item_id)
     except Exception:
         return None
-    return _gs_item(request, collection_id, conn, name, layer, user_id) if layer else None
+    return _gs_item(request, collection_id, gs_conn, name, layer, user_id) if layer else None

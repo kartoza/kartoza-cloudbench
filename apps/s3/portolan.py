@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,9 @@ def prettify(name: str) -> str:
     words = [word for word in re.split(r"[-_\s]+", name or "") if word]
     if not words:
         return name or "Untitled layer"
-    return " ".join(word if not word.islower() and not word.isupper() else word.capitalize() for word in words)
+    return " ".join(
+        word if not word.islower() and not word.isupper() else word.capitalize() for word in words
+    )
 
 
 def _now_iso() -> str:
@@ -89,7 +92,9 @@ def default_style_for_cog(data_filename: str) -> dict:
     return {
         "version": 8,
         "name": "COG default",
-        "sources": {"data": {"type": "raster", "url": f"cog://../{data_filename}", "tileSize": 256}},
+        "sources": {
+            "data": {"type": "raster", "url": f"cog://../{data_filename}", "tileSize": 256}
+        },
         "layers": [{"id": "raster", "type": "raster", "source": "data"}],
     }
 
@@ -103,7 +108,7 @@ def build_collection_json(
     provider_name: str,
     kind: str,
     data_assets: list,
-    bbox: list,
+    bbox: list | None,
     root_relative_path: str,
     style_filename: str = "default.json",
     pmtiles_layers: list | None = None,
@@ -133,11 +138,21 @@ def build_collection_json(
         "roles": ["style", "default"],
     }
 
-    links = [
+    links: list[dict[str, Any]] = [
         {"rel": "root", "href": root_relative_path, "type": "application/json"},
         {"rel": "parent", "href": root_relative_path, "type": "application/json"},
-        {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown", "title": "Guidance for AI agents"},
-        {"rel": "describedby", "href": "./README.md", "type": "text/markdown", "title": "Human-readable documentation"},
+        {
+            "rel": "agents",
+            "href": "./AGENTS.md",
+            "type": "text/markdown",
+            "title": "Guidance for AI agents",
+        },
+        {
+            "rel": "describedby",
+            "href": "./README.md",
+            "type": "text/markdown",
+            "title": "Human-readable documentation",
+        },
     ]
     if kind == "pmtiles":
         links.append(
@@ -197,7 +212,10 @@ def build_readme(
 
 def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) -> str:
     media_type = _MEDIA_TYPES[kind]
-    file_lines = "\n".join(f"- Data file: `./{asset['filename']}` ({media_type}, {asset['role']})" for asset in data_assets)
+    file_lines = "\n".join(
+        f"- Data file: `./{asset['filename']}` ({media_type}, {asset['role']})"
+        for asset in data_assets
+    )
     return (
         f"# Agent notes for {title}\n\n"
         f"{file_lines}\n"
@@ -210,7 +228,7 @@ def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) 
 
 def _load_json(s3_client, key: str) -> dict | None:
     try:
-        return json.loads(s3_client.get_object(key))
+        return cast(dict, json.loads(s3_client.get_object(key)))
     except Exception:
         return None
 
@@ -313,7 +331,11 @@ def finalize_layer(
             ("collection.json", json.dumps(collection, indent=2), "application/json"),
             ("README.md", readme, "text/markdown"),
             ("AGENTS.md", agents, "text/markdown"),
-            ("styles/default.json", json.dumps(style, indent=2), "application/vnd.mapbox.style+json"),
+            (
+                "styles/default.json",
+                json.dumps(style, indent=2),
+                "application/vnd.mapbox.style+json",
+            ),
         ):
             s3_client.put_object(
                 key=f"{folder}/{suffix}",
@@ -323,4 +345,6 @@ def finalize_layer(
 
         ensure_root_catalog(s3_client, folder=folder, title=title)
     except Exception:
-        logger.exception("Failed to finalize Portolan layer %r (data file was still uploaded)", layer_id)
+        logger.exception(
+            "Failed to finalize Portolan layer %r (data file was still uploaded)", layer_id
+        )

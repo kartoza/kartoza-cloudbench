@@ -32,8 +32,16 @@ class StacCollectionListView(APIView):
             {
                 "collections": collections,
                 "links": [
-                    {"rel": "self", "href": request.build_absolute_uri(), "type": "application/json"},
-                    {"rel": "root", "href": request.build_absolute_uri("/api/stac/"), "type": "application/json"},
+                    {
+                        "rel": "self",
+                        "href": request.build_absolute_uri(),
+                        "type": "application/json",
+                    },
+                    {
+                        "rel": "root",
+                        "href": request.build_absolute_uri("/api/stac/"),
+                        "type": "application/json",
+                    },
                 ],
             }
         )
@@ -67,10 +75,16 @@ class StacItemListView(APIView):
                 "stac_version": catalog.STAC_VERSION,
                 "features": items,
                 "links": [
-                    {"rel": "self", "href": request.build_absolute_uri(), "type": "application/json"},
+                    {
+                        "rel": "self",
+                        "href": request.build_absolute_uri(),
+                        "type": "application/json",
+                    },
                     {
                         "rel": "collection",
-                        "href": request.build_absolute_uri(f"/api/stac/collections/{collection_id}"),
+                        "href": request.build_absolute_uri(
+                            f"/api/stac/collections/{collection_id}"
+                        ),
                         "type": "application/json",
                     },
                 ],
