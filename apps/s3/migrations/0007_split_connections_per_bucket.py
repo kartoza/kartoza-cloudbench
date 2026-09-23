@@ -51,7 +51,7 @@ def _list_bucket_names(connection):
         return []
 
 
-def split_connections_per_bucket(apps, schema_editor):
+def split_connections_per_bucket(apps, _schema_editor):
     S3Connection = apps.get_model("cloudbench_s3", "S3Connection")
 
     for connection in list(S3Connection.objects.filter(bucket="")):

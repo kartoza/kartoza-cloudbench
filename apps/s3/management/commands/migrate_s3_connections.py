@@ -8,6 +8,7 @@ even though the Pydantic model/field it used to populate no longer exist.
 Usage: python manage.py migrate_s3_connections
 """
 
+import contextlib
 import json
 import uuid
 from pathlib import Path
@@ -24,7 +25,7 @@ User = get_user_model()
 class Command(BaseCommand):
     help = "Import S3 connections from old plaintext config.json files into the database."
 
-    def handle(self, *args, **options):
+    def handle(self, *_args, **_options):
         imported = 0
         skipped = 0
 
@@ -59,10 +60,8 @@ class Command(BaseCommand):
                 # Preserve the old id when it's a real UUID (how the app has
                 # always generated them) so existing bookmarked URLs/saved
                 # frontend state referencing a connection id keep working.
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     kwargs["id"] = uuid.UUID(raw.get("id", ""))
-                except (TypeError, ValueError):
-                    pass
 
                 S3Connection.objects.create(**kwargs)
                 imported += 1

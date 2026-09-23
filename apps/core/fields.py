@@ -24,7 +24,7 @@ class EncryptedCharField(models.CharField):
             return value
         return encrypt(value)
 
-    def from_db_value(self, value, expression, connection):
+    def from_db_value(self, value, _expression, _connection):
         if not value:
             return value
         return decrypt(value)
