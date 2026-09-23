@@ -12,7 +12,6 @@ import {
   Spacer,
   Button,
   Badge,
-  SimpleGrid,
   Center,
   Spinner,
   Flex,
@@ -21,7 +20,6 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import {
-  FiHardDrive,
   FiUpload,
   FiCheckCircle,
   FiAlertCircle,
@@ -41,54 +39,6 @@ import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
 import type { S3Object } from '../../types'
 import { formatFileSize, isMapExplorerFormat } from '../../utils/s3ObjectFormat'
-
-interface S3StatCardProps {
-  label: string
-  value: string | number
-  helpText?: string
-  icon: React.ElementType
-  colorScheme?: string
-}
-
-function S3StatCard({ label, value, helpText, icon, colorScheme = 'orange' }: S3StatCardProps) {
-  const bg = useColorModeValue('white', 'gray.700')
-  const borderColor = useColorModeValue('gray.200', 'gray.600')
-
-  return (
-    <Box
-      bg={bg}
-      p={4}
-      borderRadius="xl"
-      borderWidth={1}
-      borderColor={borderColor}
-      shadow="sm"
-      transition="all 0.2s"
-      _hover={{ shadow: 'md', borderColor: `${colorScheme}.300` }}
-    >
-      <HStack spacing={3} mb={2}>
-        <Box
-          p={2}
-          borderRadius="lg"
-          bg={`${colorScheme}.50`}
-          color={`${colorScheme}.500`}
-        >
-          <Icon as={icon} boxSize={5} />
-        </Box>
-        <Text fontSize="sm" fontWeight="medium" color="gray.500">
-          {label}
-        </Text>
-      </HStack>
-      <Text fontSize="2xl" fontWeight="bold">
-        {value}
-      </Text>
-      {helpText && (
-        <Text fontSize="xs" color="gray.400" mt={1}>
-          {helpText}
-        </Text>
-      )}
-    </Box>
-  )
-}
 
 interface S3ConnectionPanelProps {
   connectionId: string
