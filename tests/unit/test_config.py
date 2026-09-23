@@ -13,13 +13,13 @@ from apps.core.config import (
     GeoNodeConnection,
     IcebergCatalogConnection,
     MerginMapsConnection,
-    PGServiceState,
+    PGService,
     QFieldCloudConnection,
     QGISProject,
-    SavedQuery,
     SyncConfiguration,
     SyncOptions,
 )
+from apps.core.models import SavedQuery
 
 
 class TestConnection:
@@ -199,13 +199,16 @@ class TestConfig:
 
 
 class TestConfigManager:
-    """Tests for ConfigManager singleton."""
+    """Tests for ConfigManager, one per user_id (not a singleton)."""
 
-    def test_singleton_pattern(self, config_manager: ConfigManager) -> None:
-        """Test that ConfigManager is a singleton."""
-        manager1 = ConfigManager()
-        manager2 = ConfigManager()
-        assert manager1 is manager2
+    def test_scoped_per_user_id(
+        self, config_manager: ConfigManager, sample_connection: Connection
+    ) -> None:
+        """Different user_ids must not see each other's connections."""
+        config_manager.add_connection(sample_connection)
+
+        other_manager = ConfigManager(user_id="other-user")
+        assert other_manager.list_connections() == []
 
     def test_add_connection(
         self, config_manager: ConfigManager, sample_connection: Connection
@@ -281,21 +284,32 @@ class TestConfigManager:
         assert len(new_manager.list_connections()) == 1
 
 
-class TestPGServiceState:
-    """Tests for PostgreSQL service state."""
+class TestPGService:
+    """Tests for PostgreSQL service configuration."""
 
-    def test_pg_service_state_creation(self) -> None:
-        """Test creating PG service state."""
-        state = PGServiceState(name="test_service")
-        assert state.name == "test_service"
-        assert state.is_parsed is False
+    def test_pg_service_creation(self) -> None:
+        """Test creating a PG service with defaults."""
+        svc = PGService(name="test_service")
+        assert svc.name == "test_service"
+        assert svc.host == "localhost"
+        assert svc.port == 5432
+        assert svc.is_active is False
 
-    def test_set_pg_service_parsed(self, config_manager: ConfigManager) -> None:
-        """Test setting PG service parsed state."""
-        config_manager.set_pg_service_parsed("test_service", True)
-        state = config_manager.get_pg_service_state("test_service")
-        assert state is not None
-        assert state.is_parsed is True
+    def test_add_and_get_pg_service(self, config_manager: ConfigManager) -> None:
+        """Test adding a PG service and reading it back."""
+        config_manager.add_pg_service(PGService(name="test_service", dbname="mydb"))
+        svc = config_manager.get_pg_service("test_service")
+        assert svc is not None
+        assert svc.dbname == "mydb"
+
+    def test_update_pg_service(self, config_manager: ConfigManager) -> None:
+        """Test updating an existing PG service."""
+        config_manager.add_pg_service(PGService(name="test_service", dbname="mydb"))
+        updated = config_manager.update_pg_service(PGService(name="test_service", dbname="otherdb"))
+        assert updated is True
+        svc = config_manager.get_pg_service("test_service")
+        assert svc is not None
+        assert svc.dbname == "otherdb"
 
 
 class TestSavedQuery:

@@ -111,13 +111,14 @@ class TestDefaultProviders:
 
 
 class TestProvidersManager:
-    """Tests for ProvidersManager singleton."""
+    """Tests for ProvidersManager, one per user_id (not a singleton)."""
 
-    def test_singleton_pattern(self, providers_manager: ProvidersManager) -> None:
-        """Test that ProvidersManager is a singleton."""
-        manager1 = ProvidersManager()
-        manager2 = ProvidersManager()
-        assert manager1 is manager2
+    def test_scoped_per_user_id(self, providers_manager: ProvidersManager) -> None:
+        """Different user_ids must not see each other's provider settings."""
+        providers_manager.set_provider_enabled("iceberg", True)
+
+        other_manager = ProvidersManager(user_id="other-user")
+        assert other_manager.is_provider_enabled("iceberg") is False
 
     def test_list_providers(self, providers_manager: ProvidersManager) -> None:
         """Test listing all providers."""
@@ -234,13 +235,14 @@ class TestProviderHelperFunctions:
     """Tests for provider helper functions."""
 
     def test_get_providers_manager(self, temp_config_dir: str) -> None:
-        """Test get_providers_manager helper."""
-        # Reset singleton first
-        ProvidersManager._instance = None
-        manager1 = get_providers_manager()
-        manager2 = get_providers_manager()
-        # Should return the same singleton instance
-        assert manager1 is manager2
+        """get_providers_manager returns a manager scoped to the given user_id."""
+        manager1 = get_providers_manager("alice")
+        manager1.set_provider_enabled("iceberg", True)
+
+        # Same user_id -> sees the persisted change; default user_id doesn't.
+        manager2 = get_providers_manager("alice")
+        assert manager2.is_provider_enabled("iceberg") is True
+        assert get_providers_manager().is_provider_enabled("iceberg") is False
 
     def test_is_provider_enabled_helper(self, providers_manager: ProvidersManager) -> None:
         """Test is_provider_enabled helper."""

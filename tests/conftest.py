@@ -24,12 +24,19 @@ from rest_framework.test import APIClient
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment() -> Generator[None, None, None]:
-    """Set up test environment before any tests run."""
+    """Set up test environment before any tests run.
+
+    Session-wide safety net so a test that reads/writes per-user config
+    (apps.core.utilities.get_data_folder) without its own isolation still
+    can't touch the real ~/<user_id>/config — CLOUDBENCH_DATA_FOLDER, not
+    XDG_*, is what that function actually reads.
+    """
     # Create temporary directories for testing
     with tempfile.TemporaryDirectory(prefix="cloudbench-test-") as tmpdir:
         os.environ["XDG_CONFIG_HOME"] = tmpdir
         os.environ["XDG_DATA_HOME"] = tmpdir
         os.environ["XDG_CACHE_HOME"] = tmpdir
+        os.environ["CLOUDBENCH_DATA_FOLDER"] = tmpdir
         os.environ["DJANGO_SETTINGS_MODULE"] = "cloudbench.settings.testing"
         yield
 
@@ -81,29 +88,26 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
 
     from apps.core.config import Config, ConfigManager
 
-    # Use patch.dict for reliable environment isolation
+    # apps.core.utilities.get_data_folder reads CLOUDBENCH_DATA_FOLDER, not
+    # XDG_* — those are set for parity with the session-wide fixture but do
+    # nothing here on their own.
     with patch.dict(
         os.environ,
         {
             "XDG_CONFIG_HOME": str(tmp_path),
             "XDG_DATA_HOME": str(tmp_path),
             "XDG_CACHE_HOME": str(tmp_path),
+            "CLOUDBENCH_DATA_FOLDER": str(tmp_path),
         },
         clear=False,  # Don't clear other env vars
     ):
-        # Reset the singleton AFTER setting env vars
-        ConfigManager._instance = None
-
-        # Create new manager - it will use the tmp_path
+        # ConfigManager isn't a singleton (it's per user_id) - construct fresh.
         manager = ConfigManager()
 
         # Force a fresh config (in case it loaded from wrong path)
         manager._config = Config()
 
         yield manager
-
-        # Clean up singleton
-        ConfigManager._instance = None
 
 
 @pytest.fixture
@@ -113,25 +117,22 @@ def providers_manager(tmp_path: Any) -> Generator[Any, None, None]:
 
     from apps.core.providers import ProvidersManager
 
-    # Use patch.dict for reliable environment isolation
+    # apps.core.utilities.get_data_folder reads CLOUDBENCH_DATA_FOLDER, not
+    # XDG_* — those are set for parity with the session-wide fixture but do
+    # nothing here on their own.
     with patch.dict(
         os.environ,
         {
             "XDG_CONFIG_HOME": str(tmp_path),
             "XDG_DATA_HOME": str(tmp_path),
             "XDG_CACHE_HOME": str(tmp_path),
+            "CLOUDBENCH_DATA_FOLDER": str(tmp_path),
         },
     ):
-        # Reset the singleton AFTER setting env vars
-        ProvidersManager._instance = None
-
-        # Create new manager - it will use the tmp_path
+        # ProvidersManager isn't a singleton (it's per user_id) - construct fresh.
         manager = ProvidersManager()
 
         yield manager
-
-        # Clean up singleton
-        ProvidersManager._instance = None
 
 
 # ============================================================================
@@ -395,25 +396,3 @@ def temp_pg_service_file(sample_pg_service_conf: str) -> Generator[str, None, No
 def anyio_backend() -> str:
     """Return the async backend to use."""
     return "asyncio"
-
-
-# ============================================================================
-# Cleanup Fixtures
-# ============================================================================
-
-
-@pytest.fixture(autouse=True)
-def reset_singletons() -> Generator[None, None, None]:
-    """Reset all singletons before and after each test."""
-    # Reset BEFORE test
-    from apps.core.config import ConfigManager
-    from apps.core.providers import ProvidersManager
-
-    ConfigManager._instance = None
-    ProvidersManager._instance = None
-
-    yield
-
-    # Reset AFTER test
-    ConfigManager._instance = None
-    ProvidersManager._instance = None
