@@ -10,7 +10,7 @@ full spec — no checksums, thumbnails, or multi-language support yet.
 import json
 import logging
 import re
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def prettify(name: str) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now(dt_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:

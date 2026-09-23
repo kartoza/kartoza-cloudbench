@@ -32,6 +32,8 @@ from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import expire_stalled_job
 from .cog import (
     start_conversion as start_cog_conversion,
+)
+from .cog import (
     start_geopackage_conversion as start_cog_geopackage_conversion,
 )
 from .duckdb import get_duckdb_engine
@@ -40,8 +42,10 @@ from .pmtiles import (
     cancel_geopackage_inspection,
     inspect_geopackage,
     prepare_shapefile,
-    start_conversion as start_pmtiles_conversion,
     start_geopackage_conversion,
+)
+from .pmtiles import (
+    start_conversion as start_pmtiles_conversion,
 )
 
 # ============================================================================

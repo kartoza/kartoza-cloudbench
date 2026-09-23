@@ -8,7 +8,8 @@ from django.conf import settings
 
 from . import portolan
 from .client import get_s3_client
-from .cng_lite import job_directory, run_conversion as run_cng_lite_conversion, source_object_key
+from .cng_lite import job_directory, source_object_key
+from .cng_lite import run_conversion as run_cng_lite_conversion
 from .geopackage import is_geopackage, prepare_geopackage
 from .models import CngLiteJob
 

@@ -14,9 +14,11 @@ from .cng_lite import (
     cng_lite_headers,
     job_directory,
     request_json,
-    run_conversion as run_cng_lite_conversion,
     source_object_key,
     sources_directory_key,
+)
+from .cng_lite import (
+    run_conversion as run_cng_lite_conversion,
 )
 from .geopackage import is_geopackage, prepare_geopackage
 from .models import CngLiteJob
