@@ -11,6 +11,7 @@ from django.conf import settings
 from . import portolan
 from .client import get_s3_client
 from .cng_lite import (
+    cng_lite_headers,
     job_directory,
     request_json,
     run_conversion as run_cng_lite_conversion,
@@ -241,7 +242,11 @@ def inspect_geopackage(uploaded_file, key, connection_id, owner_id, license_id=p
             )
         job.save()
         presigned_url = s3_client.generate_presigned_url(job.source_key, expiration=300)
-        with httpx.Client(base_url=f"{settings.CLOUDNATIVEGIS_URL}/", timeout=httpx.Timeout(30, connect=10)) as client:
+        with httpx.Client(
+            base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
+            timeout=httpx.Timeout(30, connect=10),
+            headers=cng_lite_headers(),
+        ) as client:
             inspection = request_json(client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url})
         layers = inspection["layers"]
         raster_tables = inspection.get("rasterTables", [])

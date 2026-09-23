@@ -73,10 +73,8 @@ S3 bucket. The original ZIP is not uploaded to S3. The object key keeps its pref
 and replaces `.zip` or `.shp.zip` with `.pmtiles`. The dialog reports each stage,
 refreshes the S3 listing on completion, and displays conversion errors.
 
-CloudNativeGIS credentials are configured server-side using
-`CLOUDNATIVEGIS_USERNAME` / `CLOUDNATIVEGIS_PASSWORD` (falling back to its
-`CLOUDNATIVEGIS_ADMIN_USERNAME` / `CLOUDNATIVEGIS_ADMIN_PASSWORD`). The service's
-Celery worker must be running. The default conversion wait timeout is 30 minutes,
+If the CloudNativeGIS instance requires one, its bearer token is configured
+server-side via `CLOUDNATIVEGIS_API_TOKEN`. The default conversion wait timeout is 30 minutes,
 configurable with `CLOUDNATIVEGIS_CONVERSION_TIMEOUT`; polling defaults to 5 seconds
 via `CLOUDNATIVEGIS_POLL_INTERVAL`.
 

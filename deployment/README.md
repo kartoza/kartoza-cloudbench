@@ -76,9 +76,8 @@ which runs as a separate service — see
 Point Cloudbench at wherever it's deployed:
 
 - `CLOUDNATIVEGIS_URL` — base URL of the CloudNativeGIS instance.
-- `CLOUDNATIVEGIS_USERNAME` / `CLOUDNATIVEGIS_PASSWORD` — Basic auth
-  credentials for its API. No CloudNativeGIS credentials are sent to the
-  browser. Use HTTPS if the service isn't on a trusted local network.
+- `CLOUDNATIVEGIS_API_TOKEN` — bearer token sent on every request, if the
+  instance requires one (see `CloudNativeGIS/lite/README.md`).
 - `CLOUDNATIVEGIS_CONVERSION_TIMEOUT` / `CLOUDNATIVEGIS_POLL_INTERVAL` — how
   long to wait for a conversion and how often to poll it.
 

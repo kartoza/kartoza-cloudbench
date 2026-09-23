@@ -66,6 +66,13 @@ def _create_collection(job, items):
         logger.exception("Job %s: failed to create a layer collection (files were still uploaded)", job.id)
 
 
+def cng_lite_headers():
+    """Auth header for every request to CloudNativeGIS Lite, if a token is configured."""
+    if not settings.CLOUDNATIVEGIS_API_TOKEN:
+        return {}
+    return {"Authorization": f"Bearer {settings.CLOUDNATIVEGIS_API_TOKEN}"}
+
+
 def job_directory(kind, job_id):
     return Path(settings.UPLOAD_TEMP_DIR) / kind / str(job_id)
 
@@ -221,6 +228,7 @@ def run_conversion(
             base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
+            headers=cng_lite_headers(),
         ) as client:
             cng_job_id = submit_job(
                 client,

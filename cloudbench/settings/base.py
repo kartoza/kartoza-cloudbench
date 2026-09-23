@@ -198,6 +198,12 @@ COOP_COEP_ENABLED = False
 CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8000").rstrip("/")
 CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800")))
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
+# Shared secret sent as `Authorization: Bearer <token>` on every request to
+# CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no
+# auth of its own otherwise. A static token that never expires for now;
+# left blank, no Authorization header is sent (matches a lite instance that
+# hasn't set LITE_API_TOKEN either).
+CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
 
 CLOUDBENCH_CONFIG_DIR = os.environ.get(
     "CLOUDBENCH_CONFIG_DIR",
