@@ -79,8 +79,13 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-django pytest-asyncio pytest-cov pytest-xdist pytest-timeout pytest-mock factory-boy faker responses
 
+      # Coverage is only meaningful combined across both suites (they cover
+      # different code), so only the second step — which appends onto the
+      # first's data — enforces pyproject.toml's fail_under. This step's
+      # own number is a partial slice and would fail the threshold on its
+      # own even when the combined total passes.
       - name: Run unit tests
-        run: pytest tests/unit -v --tb=short -m "unit or not integration" --cov=apps --cov=cloudbench --cov-report=xml
+        run: pytest tests/unit -v --tb=short -m "unit or not integration" --cov=apps --cov=cloudbench --cov-report=xml --cov-fail-under=0
 
       - name: Run API tests
         run: pytest tests/api -v --tb=short -m "api" --cov=apps --cov=cloudbench --cov-report=xml --cov-append
