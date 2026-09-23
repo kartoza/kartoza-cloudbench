@@ -300,10 +300,13 @@ class S3ObjectDetailView(APIView):
             )
 
     def delete(self, request, conn_id, key):
-        """Delete an object."""
+        """Delete an object, or every object under it if `key` is a folder prefix."""
         try:
             client = get_s3_client(conn_id, str(request.user.id))
-            client.delete_object(key)
+            if key.endswith("/"):
+                client.delete_prefix(key)
+            else:
+                client.delete_object(key)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ValueError as e:
             return Response(

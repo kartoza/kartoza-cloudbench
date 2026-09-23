@@ -264,6 +264,32 @@ class S3Client:
         self.client.delete_object(Bucket=self.bucket, Key=key)
         return True
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under a "folder" prefix, recursively.
+
+        A "folder" in S3 is just a shared key prefix (see list_objects'
+        CommonPrefixes) — there's no real folder object to delete, so this
+        lists and batch-deletes everything under it instead.
+
+        Args:
+            prefix: Key prefix, e.g. "myfolder/"
+
+        Returns:
+            Number of objects deleted
+        """
+        if not prefix:
+            raise ValueError("Refusing to delete an empty prefix (would clear the whole bucket).")
+
+        deleted = 0
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            for i in range(0, len(keys), 1000):
+                batch = keys[i:i + 1000]
+                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+                deleted += len(batch)
+        return deleted
+
     def generate_presigned_url(
         self,
         key: str,
