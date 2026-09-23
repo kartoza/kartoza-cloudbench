@@ -31,6 +31,8 @@ import {
   Th,
   Td,
   Checkbox,
+  Spinner,
+  Center,
 } from '@chakra-ui/react'
 import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle } from 'react-icons/fi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -156,7 +158,7 @@ export default function S3UploadDialog() {
   const inLayerPickerMode = gpkgFlowActive && !conversionJobId
 
   // Fetch conversion tools status
-  const { data: toolStatus } = useQuery({
+  const { data: toolStatus, isLoading: isCheckingTools } = useQuery({
     queryKey: ['conversionTools'],
     queryFn: () => api.getConversionToolStatus(),
     enabled: isOpen,
@@ -482,7 +484,11 @@ export default function S3UploadDialog() {
             }}
           />
 
-          {gpkgFlowActive ? (
+          {isCheckingTools ? (
+            <Center py={20}>
+              <Spinner size="lg" color="orange.500" />
+            </Center>
+          ) : gpkgFlowActive ? (
             /* File picked and inspected — collapse to a one-line summary so
                the layer picker (and later the conversion progress) below
                is the main focus. */
@@ -609,7 +615,6 @@ export default function S3UploadDialog() {
                 </FormControl>
               </VStack>
 
-              {/* Right column: Conversion options (cng-lite disconnected only) */}
               {!cngLiteConnected && (
                 <VStack spacing={3} flex="1" align="stretch">
                   {recommendedFormat || showPMTiles ? (
