@@ -180,35 +180,41 @@ export default function S3UploadDialog() {
   const isConverting = !!conversionJobId &&
     (!conversionJob || ['pending', 'running'].includes(conversionJob.status))
 
+  const resetInputs = useCallback(() => {
+    setSelectedFile(null)
+    setCompanionFiles([])
+    setCustomKey('')
+    setConvertToCloudNative(true)
+    setTargetFormat('')
+    setRecommendedFormat(null)
+    setCreateSubfolder(true)
+    setIsGeoPackage(false)
+    setLicense(LICENSE_CHOICES[0].id)
+    setIsInspecting(false)
+    setGpkgJobId(null)
+    setGpkgFormat('pmtiles')
+    setGpkgLayers(null)
+    setGpkgRasterTables(null)
+    setSelectedLayerNames(new Set())
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
   useEffect(() => {
     if (conversionJob?.status === 'completed') {
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
+      resetInputs()
     }
-  }, [conversionJob?.status, connectionId, queryClient])
+  }, [conversionJob?.status, connectionId, queryClient, resetInputs])
 
   // Reset form when dialog opens
   useEffect(() => {
     if (isOpen) {
-      setSelectedFile(null)
-      setCompanionFiles([])
-      setCustomKey('')
-      setConvertToCloudNative(true)
-      setTargetFormat('')
-      setRecommendedFormat(null)
+      resetInputs()
       setUploadProgress(0)
       setUploadResult(null)
       setConversionJobId(null)
-      setCreateSubfolder(true)
-      setIsGeoPackage(false)
-      setLicense(LICENSE_CHOICES[0].id)
-      setIsInspecting(false)
-      setGpkgJobId(null)
-      setGpkgFormat('pmtiles')
-      setGpkgLayers(null)
-      setGpkgRasterTables(null)
-      setSelectedLayerNames(new Set())
     }
-  }, [isOpen])
+  }, [isOpen, resetInputs])
 
   // Update recommended format when file changes
   useEffect(() => {
@@ -320,6 +326,7 @@ export default function S3UploadDialog() {
     setIsUploading(true)
     setUploadProgress(0)
     setUploadResult(null)
+    setConversionJobId(null)
 
     try {
       const result = await api.uploadToS3(
@@ -343,6 +350,8 @@ export default function S3UploadDialog() {
 
       if (result.conversionJobId) {
         setConversionJobId(result.conversionJobId)
+      } else if (result.success) {
+        resetInputs()
       }
 
       // Refresh object list

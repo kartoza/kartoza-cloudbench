@@ -127,6 +127,13 @@ export default function S3ConnectionDialog() {
     }
   }
 
+  // In edit mode the saved keys are never sent back to the dialog, so a blank
+  // key field means "keep the saved one": leave it out of every request.
+  const typedCredentials = {
+    ...(accessKey && { accessKey }),
+    ...(secretKey && { secretKey }),
+  }
+
   const handleTest = async () => {
     setIsTesting(true)
     setTestResult(null)
@@ -147,13 +154,15 @@ export default function S3ConnectionDialog() {
         name: name || 'Test',
         endpoint,
         bucket,
-        accessKey,
-        secretKey,
         region: region || undefined,
         useSSL,
         pathStyle,
+        // Editing: the backend fills any omitted key from the saved connection.
+        ...(isEditMode && connectionId
+          ? { connectionId, ...typedCredentials }
+          : { accessKey, secretKey }),
       })
-      setTestResult(result)
+      setTestResult({...result, success: true})
     } catch (err) {
       setTestResult({ success: false, message: (err as Error).message })
     } finally {
@@ -180,22 +189,20 @@ export default function S3ConnectionDialog() {
         name,
         endpoint,
         bucket,
-        accessKey,
-        secretKey,
         region: region || undefined,
         useSSL,
         pathStyle,
       }
 
       if (isEditMode && connectionId) {
-        await api.updateS3Connection(connectionId, connectionData)
+        await api.updateS3Connection(connectionId, { ...connectionData, ...typedCredentials })
         toast({
           title: 'Connection updated',
           status: 'success',
           duration: 2000,
         })
       } else {
-        await api.createS3Connection(connectionData)
+        await api.createS3Connection({ ...connectionData, accessKey, secretKey })
         toast({
           title: 'Connection added',
           status: 'success',

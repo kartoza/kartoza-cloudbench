@@ -551,6 +551,11 @@ export interface S3ConnectionCreate {
   pathStyle: boolean
 }
 
+// Testing an edited connection may omit the keys; the backend then uses the
+// ones saved on connectionId.
+export type S3ConnectionTestRequest = Omit<S3ConnectionCreate, 'accessKey' | 'secretKey'> &
+  Partial<Pick<S3ConnectionCreate, 'accessKey' | 'secretKey'>> & { connectionId?: string }
+
 export interface S3ConnectionTestResult {
   success: boolean
   message: string

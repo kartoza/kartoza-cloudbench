@@ -130,11 +130,26 @@ class S3ConnectionTestView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        access_key = data.get("accessKey") or ""
+        secret_key = data.get("secretKey") or ""
+        # Editing a saved connection: the dialog never receives its keys, so
+        # it leaves them out unless retyped — fall back to the saved ones.
+        conn_id = data.get("connectionId")
+        if conn_id and not (access_key and secret_key):
+            saved = _get_owned_connection(request, conn_id)
+            if not saved:
+                return Response(
+                    {"error": "Connection not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            access_key = access_key or saved.access_key
+            secret_key = secret_key or saved.secret_key
+
         client = S3Client(
             endpoint=data.get("endpoint", ""),
             bucket=bucket,
-            access_key=data.get("accessKey", ""),
-            secret_key=data.get("secretKey", ""),
+            access_key=access_key,
+            secret_key=secret_key,
             region=data.get("region", "us-east-1"),
             use_ssl=data.get("useSSL", True),
             path_style=data.get("pathStyle", True),
