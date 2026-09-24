@@ -271,8 +271,6 @@ LOGGING = {
     },
 }
 
-CLOUDBENCH_MUST_AUTHENTICATED = False
-
 # The one shared secret between GeoHosting and CloudBench. Used two ways:
 # - GeoHosting sends it as "Authorization: Bearer <token>" when calling
 #   /api/geohosting/instances/ and /api/geohosting/sso-token/ (see

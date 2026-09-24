@@ -48,7 +48,7 @@ class PGServiceListView(APIView):
                     "user": svc.user,
                     "sslmode": svc.sslmode,
                 }
-                for svc in list_pg_services(str(request.user.username))
+                for svc in list_pg_services(request.user)
             ]
         )
 
@@ -58,9 +58,9 @@ class PGServiceListView(APIView):
         if not name:
             return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user_id = str(request.user.username)
+        user = request.user
         try:
-            get_pg_client(name, user_id)
+            get_pg_client(name, user)
             return Response(
                 {"error": f"Service '{name}' already exists"},
                 status=status.HTTP_409_CONFLICT,
@@ -77,7 +77,7 @@ class PGServiceListView(APIView):
             password=request.data.get("password", ""),
             sslmode=request.data.get("sslmode", ""),
         )
-        add_pg_service(service, user_id)
+        add_pg_service(service, user)
 
         return Response(
             {
@@ -134,7 +134,7 @@ class PGServiceDetailView(APIView):
     def get(self, request, name):
         """Get service details."""
         try:
-            client = get_pg_client(name, str(request.user.username))
+            client = get_pg_client(name, request.user)
         except ValueError:
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         service = client.service
@@ -152,9 +152,9 @@ class PGServiceDetailView(APIView):
 
     def put(self, request, name):
         """Update a service."""
-        user_id = str(request.user.username)
+        user = request.user
         try:
-            client = get_pg_client(name, user_id)
+            client = get_pg_client(name, user)
         except ValueError:
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         data = request.data
@@ -165,7 +165,7 @@ class PGServiceDetailView(APIView):
                 if k in data
             }
         )
-        update_pg_service(updated, user_id)
+        update_pg_service(updated, user)
         return Response(
             {
                 "name": updated.name,
@@ -178,7 +178,7 @@ class PGServiceDetailView(APIView):
 
     def delete(self, request, name):
         """Delete a service."""
-        if not delete_pg_service(name, str(request.user.username)):
+        if not delete_pg_service(name, request.user):
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -189,7 +189,7 @@ class PGServiceTestView(APIView):
     def get(self, request, name):
         """Test connection to a service."""
         try:
-            client = get_pg_client(name, str(request.user.username))
+            client = get_pg_client(name, request.user)
         except ValueError:
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         success, message = client.test_connection()
@@ -200,7 +200,7 @@ class PGServiceTestView(APIView):
     def post(self, request, name):
         """Test connection to a service."""
         try:
-            client = get_pg_client(name, str(request.user.username))
+            client = get_pg_client(name, request.user)
         except ValueError:
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
         success, message = client.test_connection()
@@ -215,7 +215,7 @@ class PGSchemaStatsView(APIView):
 
     def get(self, request, service_name, schema_name):
         try:
-            stats = get_pg_client(service_name, str(request.user.username)).get_schema_stats(
+            stats = get_pg_client(service_name, request.user).get_schema_stats(
                 schema_name
             )
             return Response(stats)
@@ -233,7 +233,7 @@ class PGServiceStatsView(APIView):
 
     def get(self, request, name):
         try:
-            stats = get_pg_client(name, str(request.user.username)).get_stats()
+            stats = get_pg_client(name, request.user).get_stats()
             return Response(stats)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -249,7 +249,7 @@ class PGDatabaseNameListView(APIView):
 
     def get(self, request, service_name):
         try:
-            databases = get_pg_client(service_name, str(request.user.username)).list_databases()
+            databases = get_pg_client(service_name, request.user).list_databases()
             return Response(databases)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -265,7 +265,7 @@ class PGSchemaNameListView(APIView):
 
     def get(self, request, service_name, database_name):
         try:
-            names = get_pg_client(service_name, str(request.user.username)).list_schema_names(
+            names = get_pg_client(service_name, request.user).list_schema_names(
                 database_name
             )
             return Response(names)
@@ -284,7 +284,7 @@ class PGSchemaListView(APIView):
     def get(self, request, service_name):
         """List all schemas."""
         try:
-            schemas = get_pg_client(service_name, str(request.user.username)).list_schemas()
+            schemas = get_pg_client(service_name, request.user).list_schemas()
             return Response({"schemas": schemas})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -301,7 +301,7 @@ class PGTableListView(APIView):
     def get(self, request, service_name, schema_name):
         """List all tables in a schema."""
         try:
-            tables = get_pg_client(service_name, str(request.user.username)).list_tables(
+            tables = get_pg_client(service_name, request.user).list_tables(
                 schema_name
             )
             return Response({"tables": tables})
@@ -320,7 +320,7 @@ class PGTableDetailView(APIView):
     def get(self, request, service_name, schema_name, table_name):
         """Get table columns and metadata."""
         try:
-            client = get_pg_client(service_name, str(request.user.username))
+            client = get_pg_client(service_name, request.user)
             columns = client.get_table_columns(schema_name, table_name)
             row_count = client.get_table_row_count(schema_name, table_name)
             return Response(
@@ -356,7 +356,7 @@ class PGTableDataView(APIView):
             offset = int(request.query_params.get("offset", 0))
             order_by = request.query_params.get("orderBy")
 
-            data = get_pg_client(service_name, str(request.user.username)).get_table_data(
+            data = get_pg_client(service_name, request.user).get_table_data(
                 schema_name, table_name, limit, offset, order_by
             )
 
@@ -393,7 +393,7 @@ class PGQueryView(APIView):
 
         try:
             t0 = time.monotonic()
-            result = get_pg_client(service_name, str(request.user.username)).execute_query(
+            result = get_pg_client(service_name, request.user).execute_query(
                 query, limit=limit
             )
             elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -448,7 +448,7 @@ class PGImportView(APIView):
             )
 
         try:
-            service = get_pg_client(service_name, str(request.user.username)).service
+            service = get_pg_client(service_name, request.user).service
         except ValueError:
             return Response(
                 {"error": f"Service not found: {service_name}"},
@@ -518,7 +518,7 @@ class PGImportRasterView(APIView):
             )
 
         try:
-            service = get_pg_client(service_name, str(request.user.username)).service
+            service = get_pg_client(service_name, request.user).service
         except ValueError:
             return Response(
                 {"error": f"Service not found: {service_name}"},

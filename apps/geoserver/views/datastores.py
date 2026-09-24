@@ -17,7 +17,7 @@ class DataStoreListView(APIView):
     def get(self, request, conn_id, workspace):
         """List all data stores."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             datastores = client.list_datastores(workspace)
             return Response(datastores)
         except GeoServerError:
@@ -26,7 +26,7 @@ class DataStoreListView(APIView):
     def post(self, request, conn_id, workspace):
         """Create a new data store."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             name = request.data.get("name")
             connection_params = request.data.get("connectionParameters", {})
             description = request.data.get("description", "")
@@ -59,7 +59,7 @@ class DataStoreDetailView(APIView):
     def get(self, request, conn_id, workspace, store):
         """Get data store details."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             ds = client.get_datastore(workspace, store)
             return Response(ds)
         except GeoServerError as e:
@@ -68,7 +68,7 @@ class DataStoreDetailView(APIView):
     def put(self, request, conn_id, workspace, store):
         """Update a data store."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             # For updates, we need to rebuild connection parameters
             connection_params = request.data.get("connectionParameters")
             description = request.data.get("description")
@@ -96,7 +96,7 @@ class DataStoreDetailView(APIView):
     def delete(self, request, conn_id, workspace, store):
         """Delete a data store."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             recurse = get_recurse_param(request)
             client.delete_datastore(workspace, store, recurse=recurse)
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -110,7 +110,7 @@ class DataStoreAvailableView(APIView):
     def get(self, request, conn_id, workspace, store):
         """List available feature types."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             available = client.list_available_featuretypes(workspace, store)
             return Response({"available": available})
         except GeoServerError:
@@ -139,7 +139,7 @@ class DataStorePublishView(APIView):
             )
 
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
         except GeoServerError as e:
             return handle_geoserver_error(e)
 
@@ -166,10 +166,10 @@ class DataStoreConnectPGView(APIView):
         The data store name defaults to the PG service name (pg_conn_id).
         An optional 'schema' field in the request body overrides the default 'public'.
         """
-        user_id = str(request.user.username)
+        user = request.user
 
         try:
-            pg_client = get_pg_client(pg_conn_id, user_id)
+            pg_client = get_pg_client(pg_conn_id, user)
         except ValueError:
             return Response(
                 {"error": f"PostgreSQL service '{pg_conn_id}' not found"},
@@ -194,7 +194,7 @@ class DataStoreConnectPGView(APIView):
         }
 
         try:
-            gs_client = get_geoserver_client(conn_id, user_id)
+            gs_client = get_geoserver_client(conn_id, user)
             gs_client.create_datastore(workspace, name, connection_params, description, enabled)
             return Response(
                 {"message": f"Data store '{name}' created"},

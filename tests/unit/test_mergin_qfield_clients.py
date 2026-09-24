@@ -8,6 +8,9 @@ import pytest
 from apps.mergin import client as mergin
 from apps.qfieldcloud import client as qfield
 
+# Managers only read .pk (cache key) and pass the user on to get_config.
+USER = SimpleNamespace(pk=1, username="u")
+OTHER_USER = SimpleNamespace(pk=2, username="v")
 MERGIN_URL = "https://mergin.test"
 QFIELD_URL = "https://qfield.test"
 
@@ -127,21 +130,26 @@ class TestMerginClientManager:
 
     def test_unknown_connection(self, monkeypatch):
         monkeypatch.setattr(
-            mergin, "get_config", lambda: SimpleNamespace(get_mergin_connection=lambda _id: None)
+            mergin,
+            "get_config",
+            lambda _user: SimpleNamespace(get_mergin_connection=lambda _id: None),
         )
         with pytest.raises(ValueError, match="not found"):
-            mergin.get_mergin_client("x")
+            mergin.get_mergin_client("x", USER)
 
     def test_caches_and_removes_client(self, monkeypatch):
         conn = SimpleNamespace(url=MERGIN_URL, username="u", password=None, token="t")
         monkeypatch.setattr(
-            mergin, "get_config", lambda: SimpleNamespace(get_mergin_connection=lambda _id: conn)
+            mergin,
+            "get_config",
+            lambda _user: SimpleNamespace(get_mergin_connection=lambda _id: conn),
         )
-        first = mergin.get_mergin_client("c1")
-        assert mergin.get_mergin_client("c1") is first
+        first = mergin.get_mergin_client("c1", USER)
+        assert mergin.get_mergin_client("c1", USER) is first
+        assert mergin.get_mergin_client("c1", OTHER_USER) is not first  # cached per user
         assert mergin.MerginClientManager() is mergin.MerginClientManager()
-        mergin.MerginClientManager().remove_client("c1")
-        assert mergin.get_mergin_client("c1") is not first
+        mergin.MerginClientManager().remove_client("c1", USER)
+        assert mergin.get_mergin_client("c1", USER) is not first
 
 
 @pytest.mark.unit
@@ -207,19 +215,20 @@ class TestQFieldCloudClientManager:
         monkeypatch.setattr(
             qfield,
             "get_config",
-            lambda: SimpleNamespace(get_qfieldcloud_connection=lambda _id: None),
+            lambda _user: SimpleNamespace(get_qfieldcloud_connection=lambda _id: None),
         )
         with pytest.raises(ValueError, match="not found"):
-            qfield.get_qfieldcloud_client("x")
+            qfield.get_qfieldcloud_client("x", USER)
 
     def test_caches_and_removes_client(self, monkeypatch):
         conn = SimpleNamespace(url=QFIELD_URL, username="u", password=None, token="t")
         monkeypatch.setattr(
             qfield,
             "get_config",
-            lambda: SimpleNamespace(get_qfieldcloud_connection=lambda _id: conn),
+            lambda _user: SimpleNamespace(get_qfieldcloud_connection=lambda _id: conn),
         )
-        first = qfield.get_qfieldcloud_client("c1")
-        assert qfield.get_qfieldcloud_client("c1") is first
-        qfield.QFieldCloudClientManager().remove_client("c1")
-        assert qfield.get_qfieldcloud_client("c1") is not first
+        first = qfield.get_qfieldcloud_client("c1", USER)
+        assert qfield.get_qfieldcloud_client("c1", USER) is first
+        assert qfield.get_qfieldcloud_client("c1", OTHER_USER) is not first  # cached per user
+        qfield.QFieldCloudClientManager().remove_client("c1", USER)
+        assert qfield.get_qfieldcloud_client("c1", USER) is not first

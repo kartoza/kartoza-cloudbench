@@ -16,7 +16,7 @@ class WorkspaceListView(APIView):
     def get(self, request, conn_id):
         """List all workspaces."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             workspaces = client.list_workspaces()
             return Response(workspaces)
         except GeoServerError:
@@ -25,7 +25,7 @@ class WorkspaceListView(APIView):
     def post(self, request, conn_id):
         """Create a new workspace."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             name = request.data.get("name")
             isolated = request.data.get("isolated", False)
             default = request.data.get("default", False)
@@ -52,7 +52,7 @@ class WorkspaceDetailView(APIView):
     def get(self, request, conn_id, workspace):
         """Get workspace details."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             ws = client.get_workspace(workspace)
             return Response({"workspace": ws})
         except GeoServerError as e:
@@ -61,7 +61,7 @@ class WorkspaceDetailView(APIView):
     def put(self, request, conn_id, workspace):
         """Update a workspace."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             new_name = request.data.get("name")
             isolated = request.data.get("isolated")
 
@@ -73,7 +73,7 @@ class WorkspaceDetailView(APIView):
     def delete(self, request, conn_id, workspace):
         """Delete a workspace."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
             recurse = get_recurse_param(request)
             client.delete_workspace(workspace, recurse=recurse)
             return Response(status=status.HTTP_204_NO_CONTENT)

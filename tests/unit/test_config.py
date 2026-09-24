@@ -6,6 +6,8 @@ Tests the ConfigManager singleton and all connection types.
 import json
 import os
 
+from django.contrib.auth.models import User
+
 from apps.core.config import (
     Config,
     ConfigManager,
@@ -199,15 +201,15 @@ class TestConfig:
 
 
 class TestConfigManager:
-    """Tests for ConfigManager, one per user_id (not a singleton)."""
+    """Tests for ConfigManager, one per user (not a singleton)."""
 
-    def test_scoped_per_user_id(
+    def test_scoped_per_user(
         self, config_manager: ConfigManager, sample_connection: Connection
     ) -> None:
-        """Different user_ids must not see each other's connections."""
+        """Different users must not see each other's connections."""
         config_manager.add_connection(sample_connection)
 
-        other_manager = ConfigManager(user_id="other-user")
+        other_manager = ConfigManager(User(username="other-user"))
         assert other_manager.list_connections() == []
 
     def test_add_connection(
@@ -280,7 +282,7 @@ class TestConfigManager:
 
         # Reset and reload
         ConfigManager._instance = None
-        new_manager = ConfigManager()
+        new_manager = ConfigManager(config_manager._user)
         assert len(new_manager.list_connections()) == 1
 
 

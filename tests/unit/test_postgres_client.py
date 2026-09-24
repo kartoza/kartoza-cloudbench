@@ -232,18 +232,19 @@ class TestPGServiceClient:
 class TestClientHelpers:
     def test_get_pg_client(self, config_manager, svc):
         config_manager.add_pg_service(svc)
-        assert isinstance(pgclient.get_pg_client("s", "test-user"), pgclient.PGServiceClient)
+        client = pgclient.get_pg_client("s", config_manager._user)
+        assert isinstance(client, pgclient.PGServiceClient)
         with pytest.raises(ValueError, match="not found"):
-            pgclient.get_pg_client("missing", "test-user")
+            pgclient.get_pg_client("missing", config_manager._user)
 
     def test_service_crud_helpers(self, config_manager, svc):
-        pgclient.add_pg_service(svc, "test-user")
-        assert [s.name for s in pgclient.list_pg_services("test-user")] == ["s"]
+        pgclient.add_pg_service(svc, config_manager._user)
+        assert [s.name for s in pgclient.list_pg_services(config_manager._user)] == ["s"]
         updated = svc.model_copy(update={"host": "other"})
-        pgclient.update_pg_service(updated, "test-user")
-        assert pgclient.list_pg_services("test-user")[0].host == "other"
-        assert pgclient.delete_pg_service("s", "test-user") is True
-        assert pgclient.delete_pg_service("s", "test-user") is False
+        pgclient.update_pg_service(updated, config_manager._user)
+        assert pgclient.list_pg_services(config_manager._user)[0].host == "other"
+        assert pgclient.delete_pg_service("s", config_manager._user) is True
+        assert pgclient.delete_pg_service("s", config_manager._user) is False
 
 
 @pytest.fixture

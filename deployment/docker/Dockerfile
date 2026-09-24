@@ -5,6 +5,7 @@
 # web/src/components/MapExplorer/StyleEditorDialog.tsx). Requires the
 # submodule to be checked out on the host before `docker build` runs:
 #   git submodule update --init maputnik
+FROM node:22-bookworm AS maputnik-build
 WORKDIR /src
 COPY maputnik/ ./
 COPY deployment/maputnik-patches/cloudbench.patch /tmp/cloudbench.patch

@@ -1,6 +1,10 @@
 import contextlib
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 def _cleanup(file_path: str) -> None:
@@ -10,7 +14,7 @@ def _cleanup(file_path: str) -> None:
 
 def run_geoserver_upload(
     conn_id: str,
-    user_id: str,
+    user: "User",
     workspace: str,
     store_name: str,
     file_path: str,
@@ -18,7 +22,7 @@ def run_geoserver_upload(
     try:
         from apps.geoserver.client import get_geoserver_client  # noqa: PLC0415
 
-        client = get_geoserver_client(conn_id, user_id)
+        client = get_geoserver_client(conn_id, user)
 
         with open(file_path, "rb") as f:
             data = f.read()

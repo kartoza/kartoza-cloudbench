@@ -6,12 +6,15 @@ files stored in S3-compatible storage using DuckDB.
 
 import json
 import threading
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
 from django.core.exceptions import ValidationError
 
 from .models import S3Connection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 class DuckDBQueryEngine:
@@ -50,15 +53,15 @@ class DuckDBQueryEngine:
 
             self._initialized = True
 
-    def configure_s3(self, connection_id: str, user_id: str = "default") -> None:
+    def configure_s3(self, connection_id: str, user: "User") -> None:
         """Configure DuckDB for S3 access.
 
         Args:
             connection_id: S3 connection ID
-            user_id: User ID the connection is scoped to
+            user: User the connection belongs to
         """
         try:
-            conn = S3Connection.objects.filter(owner_id=int(user_id), id=connection_id).first()
+            conn = S3Connection.objects.filter(owner=user, id=connection_id).first()
         except (ValueError, ValidationError):
             conn = None
         if not conn:
@@ -88,22 +91,22 @@ class DuckDBQueryEngine:
         query: str,
         connection_id: str | None = None,
         limit: int = 1000,
-        user_id: str = "default",
+        user: "User | None" = None,
     ) -> dict[str, Any]:
         """Execute a DuckDB query.
 
         Args:
             query: SQL query
             connection_id: Optional S3 connection ID to configure
+            user: User the connection belongs to
             limit: Maximum rows to return
-            user_id: User ID the connection is scoped to
 
         Returns:
             Dictionary with columns, rows, and metadata
         """
         with self._lock:
             if connection_id:
-                self.configure_s3(connection_id, user_id)
+                self.configure_s3(connection_id, user)
 
             # Add limit if not present in SELECT queries
             query_lower = query.lower().strip()
@@ -141,20 +144,20 @@ class DuckDBQueryEngine:
         self,
         s3_path: str,
         connection_id: str,
+        user: "User",
         columns: list[str] | None = None,
         where: str | None = None,
         limit: int = 1000,
-        user_id: str = "default",
     ) -> dict[str, Any]:
         """Query a Parquet file on S3.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
+            user: User the connection belongs to
             columns: Optional columns to select
             where: Optional WHERE clause
             limit: Maximum rows to return
-            user_id: User ID the connection is scoped to
 
         Returns:
             Query results
@@ -165,30 +168,30 @@ class DuckDBQueryEngine:
             query += f" WHERE {where}"
         query += f" LIMIT {limit}"
 
-        return self.execute_query(query, connection_id, limit, user_id)
+        return self.execute_query(query, connection_id, limit, user=user)
 
     def query_csv(
         self,
         s3_path: str,
         connection_id: str,
+        user: "User",
         columns: list[str] | None = None,
         where: str | None = None,
         limit: int = 1000,
         header: bool = True,
         delimiter: str = ",",
-        user_id: str = "default",
     ) -> dict[str, Any]:
         """Query a CSV file on S3.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
+            user: User the connection belongs to
             columns: Optional columns to select
             where: Optional WHERE clause
             limit: Maximum rows to return
             header: Whether CSV has header row
             delimiter: Field delimiter
-            user_id: User ID the connection is scoped to
 
         Returns:
             Query results
@@ -202,26 +205,26 @@ class DuckDBQueryEngine:
             query += f" WHERE {where}"
         query += f" LIMIT {limit}"
 
-        return self.execute_query(query, connection_id, limit, user_id)
+        return self.execute_query(query, connection_id, limit, user=user)
 
     def query_json(
         self,
         s3_path: str,
         connection_id: str,
+        user: "User",
         columns: list[str] | None = None,
         where: str | None = None,
         limit: int = 1000,
-        user_id: str = "default",
     ) -> dict[str, Any]:
         """Query a JSON/JSONL file on S3.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
+            user: User the connection belongs to
             columns: Optional columns to select
             where: Optional WHERE clause
             limit: Maximum rows to return
-            user_id: User ID the connection is scoped to
 
         Returns:
             Query results
@@ -232,26 +235,26 @@ class DuckDBQueryEngine:
             query += f" WHERE {where}"
         query += f" LIMIT {limit}"
 
-        return self.execute_query(query, connection_id, limit, user_id)
+        return self.execute_query(query, connection_id, limit, user=user)
 
     def get_parquet_schema(
         self,
         s3_path: str,
         connection_id: str,
-        user_id: str = "default",
+        user: "User",
     ) -> dict[str, Any]:
         """Get schema of a Parquet file.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
-            user_id: User ID the connection is scoped to
+            user: User the connection belongs to
 
         Returns:
             Schema information
         """
         query = f"DESCRIBE SELECT * FROM read_parquet('{s3_path}')"
-        result = self.execute_query(query, connection_id, user_id=user_id)
+        result = self.execute_query(query, connection_id, user=user)
 
         columns = []
         for row in result["rows"]:
@@ -269,20 +272,20 @@ class DuckDBQueryEngine:
         self,
         s3_path: str,
         connection_id: str,
-        user_id: str = "default",
+        user: "User",
     ) -> dict[str, Any]:
         """Get metadata of a Parquet file.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
-            user_id: User ID the connection is scoped to
+            user: User the connection belongs to
 
         Returns:
             Parquet metadata
         """
         query = f"SELECT * FROM parquet_metadata('{s3_path}')"
-        result = self.execute_query(query, connection_id, user_id=user_id)
+        result = self.execute_query(query, connection_id, user=user)
 
         if result["rows"]:
             return cast(dict, result["rows"][0])
@@ -292,20 +295,20 @@ class DuckDBQueryEngine:
         self,
         s3_path: str,
         connection_id: str,
+        user: "User",
         geometry_column: str = "geometry",
         bbox: tuple[float, float, float, float] | None = None,
         limit: int = 1000,
-        user_id: str = "default",
     ) -> dict[str, Any]:
         """Query a GeoParquet file and return GeoJSON.
 
         Args:
             s3_path: Full S3 path (s3://bucket/key)
             connection_id: S3 connection ID
+            user: User the connection belongs to
             geometry_column: Name of geometry column
             bbox: Optional bounding box filter (minx, miny, maxx, maxy)
             limit: Maximum features to return
-            user_id: User ID the connection is scoped to
 
         Returns:
             GeoJSON FeatureCollection
@@ -326,7 +329,7 @@ class DuckDBQueryEngine:
 
         query += f" LIMIT {limit}"
 
-        result = self.execute_query(query, connection_id, limit, user_id)
+        result = self.execute_query(query, connection_id, limit, user=user)
 
         # Convert to GeoJSON
         features = []

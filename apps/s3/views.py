@@ -204,7 +204,7 @@ class S3ConnectionDetailView(APIView):
         conn.save()
 
         # Clear cached client
-        S3ClientManager().remove_client(conn_id, str(request.user.id))
+        S3ClientManager().remove_client(conn_id, request.user)
 
         return Response({"status": "updated"})
 
@@ -219,7 +219,7 @@ class S3ConnectionDetailView(APIView):
         conn.delete()
 
         # Clear cached client
-        S3ClientManager().remove_client(conn_id, str(request.user.id))
+        S3ClientManager().remove_client(conn_id, request.user)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -230,7 +230,7 @@ class S3ConnectionTestExistingView(APIView):
     def post(self, request, conn_id):
         """Test the connection."""
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             success, message = client.test_connection()
 
             if success:
@@ -262,7 +262,7 @@ class S3ObjectListView(APIView):
         continuation_token = request.query_params.get("continuationToken")
 
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             result = client.list_objects(
                 prefix=prefix,
                 delimiter=delimiter,
@@ -288,7 +288,7 @@ class S3ObjectDetailView(APIView):
     def get(self, request, conn_id, key):
         """Get object metadata."""
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             info = client.get_object_info(key)
             return Response(info)
         except ValueError as e:
@@ -305,7 +305,7 @@ class S3ObjectDetailView(APIView):
     def delete(self, request, conn_id, key):
         """Delete an object, or every object under it if `key` is a folder prefix."""
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             if key.endswith("/"):
                 client.delete_prefix(key)
             else:
@@ -334,7 +334,7 @@ class S3PreviewView(APIView):
     def get(self, request, conn_id, key):
         """Preview file content based on type."""
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             info = client.get_object_info(key)
             content_type = info.get("contentType", "application/octet-stream")
             size = info.get("contentLength", 0)
@@ -366,7 +366,7 @@ class S3PreviewView(APIView):
             if preview_type == "parquet":
                 engine = get_duckdb_engine()
                 s3_path = f"s3://{client.bucket}/{key}"
-                schema = engine.get_parquet_schema(s3_path, conn_id, str(request.user.id))
+                schema = engine.get_parquet_schema(s3_path, conn_id, request.user)
 
             return Response(
                 {
@@ -395,7 +395,7 @@ class S3ProxyView(APIView):
     def get(self, request, conn_id, key):
         """Stream object content."""
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             info = client.get_object_info(key)
             content_type = info.get("contentType", "application/octet-stream")
 
@@ -437,7 +437,7 @@ class S3GeoJSONView(APIView):
         limit = int(request.query_params.get("limit", "1000"))
 
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             s3_path = f"s3://{client.bucket}/{key}"
 
             # Parse bbox if provided
@@ -455,7 +455,7 @@ class S3GeoJSONView(APIView):
                     conn_id,
                     bbox=bbox_tuple,
                     limit=limit,
-                    user_id=str(request.user.id),
+                    user=request.user,
                 )
                 return Response(geojson)
 
@@ -506,7 +506,7 @@ class S3DuckDBQueryView(APIView):
 
         try:
             engine = get_duckdb_engine()
-            result = engine.execute_query(query, conn_id, limit, str(request.user.id))
+            result = engine.execute_query(query, conn_id, limit, user=request.user)
             return Response(result)
         except ValueError as e:
             return Response(
@@ -732,7 +732,7 @@ class S3ConversionJobsView(APIView):
         except ValueError:
             return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
         cng_lite_job = CngLiteJob.objects.filter(
-            pk=conversion_id, owner_id=str(request.user.id)
+            pk=conversion_id, owner_id=request.user.username
         ).first()
         if cng_lite_job:
             expire_stalled_job(cng_lite_job)
@@ -785,7 +785,7 @@ class S3UploadView(APIView):
             content_type, _ = mimetypes.guess_type(key)
 
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             target_format = request.data.get("targetFormat")
             license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
             if str(request.data.get("convert", "false")).lower() == "true" and target_format in (
@@ -798,7 +798,7 @@ class S3UploadView(APIView):
                             uploaded_file,
                             key,
                             conn_id,
-                            str(request.user.id),
+                            request.user,
                             companion_files,
                             license_id,
                         )
@@ -810,7 +810,7 @@ class S3UploadView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
                         job = start_cog_conversion(
-                            uploaded_file, key, conn_id, str(request.user.id), license_id
+                            uploaded_file, key, conn_id, request.user, license_id
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
@@ -883,7 +883,7 @@ class S3GeoPackageInspectView(APIView):
         license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
         try:
             job, layers, raster_tables = inspect_geopackage(
-                uploaded_file, key, conn_id, str(request.user.id), license_id
+                uploaded_file, key, conn_id, request.user, license_id
             )
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -910,9 +910,9 @@ class S3GeoPackageConvertView(APIView):
         target_format = request.data.get("format", "pmtiles")
         try:
             if target_format == "cog":
-                job = start_cog_geopackage_conversion(job_id, str(request.user.id), layers)
+                job = start_cog_geopackage_conversion(job_id, request.user, layers)
             else:
-                job = start_geopackage_conversion(job_id, str(request.user.id), layers)
+                job = start_geopackage_conversion(job_id, request.user, layers)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
@@ -929,7 +929,7 @@ class S3GeoPackageConvertView(APIView):
     def delete(self, request, job_id):
         """Cancel a previously-inspected GeoPackage job, removing its staged S3 upload."""
         try:
-            cancel_geopackage_inspection(job_id, str(request.user.id))
+            cancel_geopackage_inspection(job_id, request.user)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -941,7 +941,7 @@ class S3LayerCollectionListView(APIView):
     def get(self, request):
         connection_id = request.query_params.get("connectionId")
         bucket = request.query_params.get("bucket")
-        collections = LayerCollection.objects.filter(owner_id=str(request.user.id))
+        collections = LayerCollection.objects.filter(owner_id=request.user.username)
         if connection_id:
             collections = collections.filter(connection_id=connection_id)
         if bucket:
@@ -954,7 +954,7 @@ class S3LayerCollectionDetailView(APIView):
 
     def get(self, request, collection_id):
         collection = LayerCollection.objects.filter(
-            pk=collection_id, owner_id=str(request.user.id)
+            pk=collection_id, owner_id=request.user.username
         ).first()
         if not collection:
             return Response({"error": "Collection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -970,7 +970,7 @@ class S3PresignedURLView(APIView):
         method = request.data.get("method", "get_object")
 
         try:
-            client = get_s3_client(conn_id, str(request.user.id))
+            client = get_s3_client(conn_id, request.user)
             url = client.generate_presigned_url(
                 key=key,
                 expiration=expiration,

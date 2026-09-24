@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .models import (
     Config,
@@ -22,6 +23,9 @@ from .models import (
     SyncOptions,
 )
 from .utilities import file_lock, get_cloudbench_config_path, get_cloudbench_data_path
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 # Config directory names
 CONFIG_FILE = "config.json"
@@ -39,8 +43,8 @@ class ConfigManager:
     Provides load/save functionality with atomic writes and migration support.
     """
 
-    def __init__(self, user_id: str = "default") -> None:
-        self._user_id = user_id
+    def __init__(self, user: "User") -> None:
+        self._user = user
         self._config: Config | None = None
 
     @property
@@ -71,7 +75,7 @@ class ConfigManager:
 
     def _config_path(self) -> str:
         """Get the path to the config file."""
-        return get_cloudbench_config_path(CONFIG_FILE, self._user_id)
+        return get_cloudbench_config_path(CONFIG_FILE, self._user)
 
     def post_process_config(self, config: Config) -> Config:
         """Post process config."""
@@ -366,17 +370,17 @@ class ConfigManager:
         return False
 
 
-def get_config(user_id: "str | int" = "default") -> ConfigManager:
+def get_config(user: "User") -> ConfigManager:
     """Get a ConfigManager for the given user."""
-    return ConfigManager(str(user_id))
+    return ConfigManager(user)
 
 
-def get_qgis_projects_dir(user_id: "str | int" = "default") -> Path:
+def get_qgis_projects_dir(user: "User") -> Path:
     """Get the directory for storing uploaded QGIS projects.
 
     Uses XDG_DATA_HOME/kartoza-cloudbench/qgis-projects/
     """
-    return get_cloudbench_data_path("qgis-projects", user_id)
+    return get_cloudbench_data_path("qgis-projects", user)
 
 
 def get_cache_dir() -> Path:

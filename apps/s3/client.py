@@ -10,7 +10,7 @@ requiring account-wide permissions like ListAllMyBuckets.
 
 import threading
 from dataclasses import dataclass
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 import boto3
 from botocore.config import Config
@@ -18,6 +18,9 @@ from botocore.exceptions import ClientError
 from django.core.exceptions import ValidationError
 
 from .models import S3Connection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -352,12 +355,12 @@ class S3ClientManager:
                     cls._instance._clients = {}
         return cls._instance
 
-    def get_client(self, connection_id: str, user_id: str = "default") -> S3Client:
+    def get_client(self, connection_id: str, user: "User") -> S3Client:
         """Get or create an S3 client for a connection.
 
         Args:
             connection_id: S3 connection ID
-            user_id: User ID the connection is scoped to
+            user: User the connection belongs to
 
         Returns:
             S3Client instance
@@ -365,14 +368,14 @@ class S3ClientManager:
         Raises:
             ValueError: If connection not found
         """
-        cache_key = f"{user_id}:{connection_id}"
+        cache_key = f"{user.pk}:{connection_id}"
         with self._lock:
             if cache_key in self._clients:
                 return self._clients[cache_key]
 
             # Get connection config
             try:
-                conn = S3Connection.objects.filter(owner_id=int(user_id), id=connection_id).first()
+                conn = S3Connection.objects.filter(owner=user, id=connection_id).first()
             except (ValueError, ValidationError):
                 conn = None
             if not conn:
@@ -392,15 +395,15 @@ class S3ClientManager:
             self._clients[cache_key] = client
             return client
 
-    def remove_client(self, connection_id: str, user_id: str = "default") -> None:
+    def remove_client(self, connection_id: str, user: "User") -> None:
         """Remove a cached client.
 
         Args:
             connection_id: Connection ID to remove
-            user_id: User ID the connection is scoped to
+            user: User the connection belongs to
         """
         with self._lock:
-            self._clients.pop(f"{user_id}:{connection_id}", None)
+            self._clients.pop(f"{user.pk}:{connection_id}", None)
 
     def clear_all(self) -> None:
         """Clear all cached clients."""
@@ -408,15 +411,15 @@ class S3ClientManager:
             self._clients.clear()
 
 
-def get_s3_client(connection_id: str, user_id: str = "default") -> S3Client:
+def get_s3_client(connection_id: str, user: "User") -> S3Client:
     """Get an S3 client for a connection.
 
     Args:
         connection_id: S3 connection ID
-        user_id: User ID the connection is scoped to
+        user: User the connection belongs to
 
     Returns:
         S3Client instance
     """
     manager = S3ClientManager()
-    return manager.get_client(connection_id, user_id)
+    return manager.get_client(connection_id, user)

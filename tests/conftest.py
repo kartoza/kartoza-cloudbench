@@ -29,7 +29,7 @@ def setup_test_environment() -> Generator[None, None, None]:
 
     Session-wide safety net so a test that reads/writes per-user config
     (apps.core.utilities.get_data_folder) without its own isolation still
-    can't touch the real ~/<user_id>/config — CLOUDBENCH_DATA_FOLDER, not
+    can't touch the real ~/<username>/config — CLOUDBENCH_DATA_FOLDER, not
     XDG_*, is what that function actually reads.
     """
     # Create temporary directories for testing
@@ -74,7 +74,7 @@ def api_client() -> APIClient:
 def authenticated_api_client(db: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> APIClient:
     """Return a DRF client logged in as a user with an isolated data folder.
 
-    Views resolve per-user config from ``request.user.username`` under
+    Views resolve per-user config from ``request.user`` (by username) under
     CLOUDBENCH_DATA_FOLDER, so each test gets its own empty folder.
     """
     from django.contrib.auth import get_user_model
@@ -103,6 +103,8 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
     """Get a fresh per-user ConfigManager backed by an isolated data folder."""
     from unittest.mock import patch
 
+    from django.contrib.auth import get_user_model
+
     from apps.core.config import Config, ConfigManager
 
     # apps.core.utilities.get_data_folder reads CLOUDBENCH_DATA_FOLDER, not
@@ -118,8 +120,9 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
         },
         clear=False,  # Don't clear other env vars
     ):
-        # ConfigManager isn't a singleton (it's per user_id) - construct fresh.
-        manager = ConfigManager()
+        # ConfigManager isn't a singleton (it's per user) - construct fresh.
+        # Only the username is read, so an unsaved user is enough.
+        manager = ConfigManager(get_user_model()(username="default"))
 
         # Force a fresh config (in case it loaded from wrong path)
         manager._config = Config()
@@ -131,6 +134,8 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
 def providers_manager(tmp_path: Any) -> Generator[Any, None, None]:
     """Get a fresh ProvidersManager for testing with isolated config directory."""
     from unittest.mock import patch
+
+    from django.contrib.auth import get_user_model
 
     from apps.core.providers import ProvidersManager
 
@@ -146,8 +151,9 @@ def providers_manager(tmp_path: Any) -> Generator[Any, None, None]:
             "CLOUDBENCH_DATA_FOLDER": str(tmp_path),
         },
     ):
-        # ProvidersManager isn't a singleton (it's per user_id) - construct fresh.
-        manager = ProvidersManager()
+        # ProvidersManager isn't a singleton (it's per user) - construct fresh.
+        # Only the username is read, so an unsaved user is enough.
+        manager = ProvidersManager(get_user_model()(username="default"))
 
         yield manager
 
@@ -491,9 +497,11 @@ def fake_pg() -> Generator[FakePG, None, None]:
 @pytest.fixture
 def user_config(authenticated_api_client: APIClient) -> Any:
     """ConfigManager for the user behind ``authenticated_api_client``."""
+    from django.contrib.auth import get_user_model
+
     from apps.core.config import get_config
 
-    return get_config("test-user")
+    return get_config(get_user_model().objects.get(username="test-user"))
 
 
 # ============================================================================

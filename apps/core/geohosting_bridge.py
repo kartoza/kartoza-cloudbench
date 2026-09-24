@@ -84,8 +84,7 @@ class GeoHostingInstanceView(APIView):
         is_active = bool(data.get("is_active", False))
         conn_id = _connection_id(instance_id)
 
-        get_user(owner_username)
-        manager = get_config(owner_username)
+        manager = get_config(get_user(owner_username))
         config = manager.config
         changed = False
 
@@ -161,8 +160,7 @@ class GeoHostingInstanceView(APIView):
             )
 
         conn_id = _connection_id(instance_id)
-        get_user(owner_username)
-        manager = get_config(owner_username)
+        manager = get_config(get_user(owner_username))
         config = manager.config
         changed = False
 

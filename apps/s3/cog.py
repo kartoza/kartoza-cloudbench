@@ -89,17 +89,17 @@ def prepare_tiff(uploaded_file, destination):
 
 
 def start_conversion(
-    uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE
+    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE
 ):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     geopackage = is_geopackage(uploaded_file.name)
-    s3_client = get_s3_client(connection_id, owner_id)
+    s3_client = get_s3_client(connection_id, user)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=owner_id,
+        owner_id=user.username,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -142,7 +142,7 @@ def validate_cog(output):
     return output.read(4) in TIFF_MAGIC
 
 
-def start_geopackage_conversion(job_id, owner_id, tables):
+def start_geopackage_conversion(job_id, user, tables):
     """Confirm a raster GeoPackage's tables and start its COG conversion.
 
     The job was created by pmtiles.inspect_geopackage (every GeoPackage is
@@ -155,7 +155,7 @@ def start_geopackage_conversion(job_id, owner_id, tables):
     if not tables:
         raise ValueError("Select at least one raster table.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=owner_id, kind="pmtiles", status="pending", layers__isnull=True
+        pk=job_id, owner_id=user.username, kind="pmtiles", status="pending", layers__isnull=True
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")

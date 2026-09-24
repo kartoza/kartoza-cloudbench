@@ -4,7 +4,7 @@ Provides a comprehensive Python client for the GeoServer REST API.
 """
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -12,6 +12,9 @@ import httpx
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
 from apps.core.managers import make_client
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 class GeoServerClient:
@@ -1058,8 +1061,8 @@ class GeoServerClient:
 class GeoServerClientManager:
     """Manager for GeoServer clients, scoped per user."""
 
-    def __init__(self, user_id: str = "default") -> None:
-        self._user_id = user_id
+    def __init__(self, user: "User") -> None:
+        self._user = user
 
     def get_client(self, connection_id: str) -> GeoServerClient:
         """Get a GeoServer client for the given connection.
@@ -1075,19 +1078,19 @@ class GeoServerClientManager:
         """
         from apps.core.config import get_config
 
-        conn = get_config(self._user_id).get_connection(connection_id)
+        conn = get_config(self._user).get_connection(connection_id)
         if not conn:
             raise ValueError(f"GeoServer connection not found: {connection_id}")
 
         return GeoServerClient(conn)
 
 
-def get_geoserver_client(conn_id: str, user_id: str = "default") -> GeoServerClient:
+def get_geoserver_client(conn_id: str, user: "User") -> GeoServerClient:
     """Get a GeoServer client for a connection.
 
     Args:
         conn_id: Connection ID
-        user_id: User ID for config scoping
+        user: User the connection belongs to
 
     Returns:
         GeoServerClient instance
@@ -1095,5 +1098,5 @@ def get_geoserver_client(conn_id: str, user_id: str = "default") -> GeoServerCli
     Raises:
         GeoServerError: If connection not found
     """
-    manager = GeoServerClientManager(user_id)
+    manager = GeoServerClientManager(user)
     return manager.get_client(conn_id)

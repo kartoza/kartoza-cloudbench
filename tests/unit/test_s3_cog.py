@@ -24,6 +24,12 @@ from apps.s3.pmtiles import inspect_geopackage
 GPKG_MAGIC = b"SQLite format 3\x00"
 
 
+@pytest.fixture
+def owner(django_user_model):
+    """Job owner; run_conversion looks it up by username (CngLiteJob.owner_id)."""
+    return django_user_model.objects.create(username="7")
+
+
 def gpkg_file(name="rasters.gpkg"):
     return SimpleUploadedFile(name, GPKG_MAGIC + b"fixture-bytes", "application/geopackage+sqlite3")
 
@@ -98,7 +104,7 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
     with (
         patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -129,7 +135,7 @@ def test_upload_accepts_chosen_license(settings, tmp_path):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
     with (
         patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -156,7 +162,7 @@ def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
     with patch("apps.s3.views.get_s3_client"):
         response = api.post(
             "/api/s3/upload/s3-one",
@@ -174,7 +180,7 @@ def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
 
 
 @pytest.fixture
-def cog_job(settings, tmp_path):
+def cog_job(settings, tmp_path, owner):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     with (
@@ -182,7 +188,7 @@ def cog_job(settings, tmp_path):
         patch("apps.s3.cog.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
-        return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", "7")
+        return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", owner)
 
 
 @pytest.mark.django_db
@@ -262,7 +268,7 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
 @pytest.mark.django_db
 def test_cog_job_status_reports_formats(cog_job):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
     response = api.get(f"/api/s3/conversion/jobs/{cog_job.id}")
     assert response.status_code == 200
     body = response.json()
@@ -272,7 +278,7 @@ def test_cog_job_status_reports_formats(cog_job):
 
 
 @pytest.fixture
-def raster_gpkg_inspect_job(settings, tmp_path):
+def raster_gpkg_inspect_job(settings, tmp_path, owner):
     """A GeoPackage inspection that finds only raster tables (no vector layers)."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
@@ -291,7 +297,7 @@ def raster_gpkg_inspect_job(settings, tmp_path):
             "http://cloudnativegis/presigned"
         )
         job, layers, raster_tables = inspect_geopackage(
-            gpkg_file(), "folder/rasters.gpkg", "s3-one", "7"
+            gpkg_file(), "folder/rasters.gpkg", "s3-one", owner
         )
     return job, layers, raster_tables
 
@@ -306,14 +312,14 @@ def test_raster_geopackage_inspection_finds_no_vector_layers(raster_gpkg_inspect
 
 @pytest.mark.django_db
 def test_start_geopackage_cog_conversion_reassigns_job_kind(
-    raster_gpkg_inspect_job, settings, tmp_path
+    raster_gpkg_inspect_job, settings, tmp_path, owner
 ):
     job, _, raster_tables = raster_gpkg_inspect_job
     # The staging directory from inspect_geopackage (kind="pmtiles") exists...
     assert (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job.id)).exists()
     with patch("apps.s3.cog.threading.Thread"):
         started = start_geopackage_cog_conversion(
-            job.id, "7", [table["name"] for table in raster_tables]
+            job.id, owner, [table["name"] for table in raster_tables]
         )
     started.refresh_from_db()
     assert started.kind == "cog"
@@ -324,17 +330,17 @@ def test_start_geopackage_cog_conversion_reassigns_job_kind(
 
 
 @pytest.mark.django_db
-def test_start_geopackage_cog_conversion_requires_tables(raster_gpkg_inspect_job):
+def test_start_geopackage_cog_conversion_requires_tables(raster_gpkg_inspect_job, owner):
     job, _, _ = raster_gpkg_inspect_job
     with pytest.raises(ValueError, match="Select at least one"):
-        start_geopackage_cog_conversion(job.id, "7", [])
+        start_geopackage_cog_conversion(job.id, owner, [])
 
 
 @pytest.mark.django_db
 def test_geopackage_convert_endpoint_routes_by_format(raster_gpkg_inspect_job, settings):
     job, _, raster_tables = raster_gpkg_inspect_job
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, is_authenticated=True))
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
     with patch("apps.s3.cog.threading.Thread"):
         response = api.post(
             f"/api/s3/gpkg/convert/{job.id}",

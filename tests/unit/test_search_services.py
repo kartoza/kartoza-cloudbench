@@ -1,10 +1,8 @@
-"""Universal search: S3 connections must be found by the user's username.
+"""Universal search is scoped to the requesting user.
 
-apps.search.views passes request.user.username (matching the file-based
-GeoServer config lookup convention, apps.core.config.get_config) — S3
-connections are a Django model keyed by owner_id (an int), not username,
-so the lookup has to go through the owner relation instead of assuming
-the search service's user_id is already numeric.
+apps.search.views passes request.user; the service hands that same User
+to get_config (file-based GeoServer config, stored by username) and uses
+it directly as the S3Connection owner.
 """
 
 from unittest.mock import Mock, patch
@@ -29,7 +27,7 @@ def test_search_finds_s3_connection_owned_by_the_user(django_user_model):
 
     with patch("apps.search.services.get_config") as get_config:
         get_config.return_value.list_connections.return_value = []
-        results = SearchService(user.username).search("sandbox", types=["connection"])
+        results = SearchService(user).search("sandbox", types=["connection"])
 
     assert [r.source for r in results] == ["s3"]
     assert results[0].name == "sandbox"
@@ -38,7 +36,7 @@ def test_search_finds_s3_connection_owned_by_the_user(django_user_model):
 @pytest.mark.django_db
 def test_search_does_not_find_another_users_s3_connection(django_user_model):
     owner = django_user_model.objects.create(username="alice")
-    django_user_model.objects.create(username="bob")
+    bob = django_user_model.objects.create(username="bob")
     S3Connection.objects.create(
         owner=owner,
         name="sandbox",
@@ -50,27 +48,23 @@ def test_search_does_not_find_another_users_s3_connection(django_user_model):
 
     with patch("apps.search.services.get_config") as get_config:
         get_config.return_value.list_connections.return_value = []
-        results = SearchService("bob").search("sandbox", types=["connection"])
+        results = SearchService(bob).search("sandbox", types=["connection"])
 
     assert results == []
 
 
 @pytest.mark.django_db
-def test_search_service_geoserver_lookup_uses_username_not_int():
-    """Regression guard: don't reintroduce int(self._user_id) here.
-
-    get_config/get_geoserver_client are keyed by username (see every
-    other app's views.py); casting the search service's user_id to int
-    would break this GeoServer branch instead of just leaving it alone.
-    """
+def test_search_service_geoserver_lookup_passes_the_user(django_user_model):
+    """get_config is called with the service's own User, not a derived id."""
+    user = django_user_model.objects.create(username="alice")
     connection = Mock(id="conn-1", url="https://gs.example.com")
     connection.name = (
         "geoserver-conn"  # "name" is a reserved Mock() kwarg, so set it after construction
     )
-    service = SearchService("alice")
+    service = SearchService(user)
     with patch("apps.search.services.get_config") as get_config:
         get_config.return_value.list_connections.return_value = [connection]
         results = service._search_connections("geoserver")
 
-    get_config.assert_called_with("alice")
+    get_config.assert_called_with(user)
     assert [r.source for r in results] == ["geoserver"]

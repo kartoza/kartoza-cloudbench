@@ -2,13 +2,13 @@
 
 import io
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
 from apps.s3 import client as s3
+from apps.s3.models import S3Connection
 
 WHEN = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
 
@@ -168,30 +168,40 @@ class TestS3ClientManager:
         yield
         s3.S3ClientManager._instance = None
 
-    def test_unknown_connection(self, monkeypatch):
-        monkeypatch.setattr(
-            s3, "get_config", lambda: SimpleNamespace(get_s3_connection=lambda _i: None)
-        )
-        with pytest.raises(ValueError, match="not found"):
-            s3.get_s3_client("x")
+    @pytest.fixture
+    def owner(self, django_user_model):
+        return django_user_model.objects.create(username="alice")
 
-    def test_cache_remove_and_clear(self, monkeypatch):
-        conn = SimpleNamespace(
+    @pytest.fixture
+    def conn(self, owner):
+        return S3Connection.objects.create(
+            owner=owner,
+            name="sandbox",
             endpoint="s3.test",
+            bucket="b",
             access_key="k",
             secret_key="s",
-            region="",
-            use_ssl=True,
-            path_style=True,
         )
-        monkeypatch.setattr(
-            s3, "get_config", lambda: SimpleNamespace(get_s3_connection=lambda _i: conn)
-        )
-        first = s3.get_s3_client("c1")
-        assert s3.get_s3_client("c1") is first
+
+    @pytest.mark.django_db
+    def test_unknown_connection(self, owner):
+        with pytest.raises(ValueError, match="not found"):
+            s3.get_s3_client("x", owner)
+
+    @pytest.mark.django_db
+    def test_other_users_connection_is_not_found(self, conn, django_user_model):
+        bob = django_user_model.objects.create(username="bob")
+        with pytest.raises(ValueError, match="not found"):
+            s3.get_s3_client(str(conn.id), bob)
+
+    @pytest.mark.django_db
+    def test_cache_remove_and_clear(self, conn, owner):
+        conn_id = str(conn.id)
+        first = s3.get_s3_client(conn_id, owner)
+        assert s3.get_s3_client(conn_id, owner) is first
         assert first.region == "us-east-1"
-        s3.S3ClientManager().remove_client("c1")
-        second = s3.get_s3_client("c1")
+        s3.S3ClientManager().remove_client(conn_id, owner)
+        second = s3.get_s3_client(conn_id, owner)
         assert second is not first
         s3.S3ClientManager().clear_all()
-        assert s3.get_s3_client("c1") is not second
+        assert s3.get_s3_client(conn_id, owner) is not second

@@ -8,10 +8,13 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from apps.core.config import SyncConfiguration, SyncOptions
 from apps.geoserver.client import get_geoserver_client
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -93,9 +96,9 @@ class SyncJobManager:
 class SyncService:
     """Service for synchronizing GeoServer resources."""
 
-    def __init__(self, user_id: str = "default"):
+    def __init__(self, user: "User"):
         """Initialize sync service."""
-        self._user_id = user_id
+        self._user = user
         self.job_manager = SyncJobManager()
 
     def sync_workspaces(
@@ -114,8 +117,8 @@ class SyncService:
         Returns:
             Sync results
         """
-        source = get_geoserver_client(source_id, self._user_id)
-        dest = get_geoserver_client(dest_id, self._user_id)
+        source = get_geoserver_client(source_id, self._user)
+        dest = get_geoserver_client(dest_id, self._user)
 
         results = {
             "workspaces": {"created": 0, "skipped": 0, "errors": []},
@@ -171,8 +174,8 @@ class SyncService:
         Returns:
             Sync results
         """
-        source = get_geoserver_client(source_id, self._user_id)
-        dest = get_geoserver_client(dest_id, self._user_id)
+        source = get_geoserver_client(source_id, self._user)
+        dest = get_geoserver_client(dest_id, self._user)
 
         results = {
             "styles": {"created": 0, "updated": 0, "skipped": 0, "errors": []},
@@ -267,6 +270,6 @@ class SyncService:
         return results
 
 
-def get_sync_service(user_id: str = "default") -> SyncService:
+def get_sync_service(user: "User") -> SyncService:
     """Get a sync service for the given user."""
-    return SyncService(user_id)
+    return SyncService(user)

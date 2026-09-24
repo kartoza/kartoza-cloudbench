@@ -16,7 +16,7 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
-from apps.core.utilities import get_cloudbench_config_path
+from apps.core.utilities import CONFIG_DIR, get_data_folder
 from apps.s3.models import S3Connection
 
 User = get_user_model()
@@ -30,7 +30,9 @@ class Command(BaseCommand):
         skipped = 0
 
         for user in User.objects.all():
-            config_path = Path(get_cloudbench_config_path("config.json", str(user.id)))
+            # The old S3 views stored their config under the numeric user id,
+            # not the username that get_cloudbench_config_path now uses.
+            config_path = Path(get_data_folder(), str(user.id), CONFIG_DIR, "config.json")
             if not config_path.exists():
                 continue
 

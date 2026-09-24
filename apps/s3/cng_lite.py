@@ -25,14 +25,8 @@ from .models import CngLiteJob, LayerCollection, LayerCollectionItem
 logger = logging.getLogger(__name__)
 
 
-def _provider_name(owner_id):
-    try:
-        user = get_user_model().objects.filter(pk=owner_id).first()
-        if user:
-            return user.get_username() or user.email or f"CloudBench user {owner_id}"
-    except Exception:
-        pass
-    return f"CloudBench user {owner_id}"
+def _provider_name(user):
+    return user.get_username() or user.email or f"CloudBench user {user.pk}"
 
 
 def _create_collection(job, items):
@@ -228,7 +222,9 @@ def run_conversion(
         job = CngLiteJob.objects.get(pk=job_id)
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
         update_job(job.id, status="running", progress=10, message="Submitting to CloudNativeGIS")
-        s3_client = get_s3_client(job.connection_id, job.owner_id)
+        # CngLiteJob.owner_id holds the owner's username.
+        owner = get_user_model().objects.get(username=job.owner_id)
+        s3_client = get_s3_client(job.connection_id, owner)
         extra_payload = build_extra_payload(job) if build_extra_payload else None
         with httpx.Client(
             base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
@@ -261,7 +257,7 @@ def run_conversion(
             layers = group_results(job, results)
             base_prefix = str(PurePosixPath(job.output_key).parent)
             base_prefix = "" if base_prefix in ("", ".") else base_prefix
-            provider_name = _provider_name(job.owner_id)
+            provider_name = _provider_name(owner)
 
             collection_items = []
             output_keys = []

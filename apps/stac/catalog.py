@@ -6,7 +6,7 @@ connection whose bucket has .pmtiles objects, or per GeoServer workspace
 that has layers) -> Item (one per PMTiles object / GeoServer layer).
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
@@ -15,6 +15,9 @@ from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
 from apps.s3.client import get_s3_client
 from apps.s3.models import S3Connection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 STAC_VERSION = "1.0.0"
 
@@ -41,10 +44,10 @@ def parse_collection_id(collection_id: str) -> tuple[str, str, str | None]:
     raise ValueError(f"Unknown collection id: {collection_id}")
 
 
-def _get_owned_s3_connection(user_id: str, conn_id: str) -> "S3Connection | None":
+def _get_owned_s3_connection(user: "User", conn_id: str) -> "S3Connection | None":
     """conn_id is parsed out of a collection id and isn't guaranteed to be a well-formed UUID."""
     try:
-        return S3Connection.objects.filter(owner_id=int(user_id), id=conn_id).first()
+        return S3Connection.objects.filter(owner=user, id=conn_id).first()
     except (ValueError, ValidationError):
         return None
 
@@ -73,11 +76,11 @@ def _list_pmtiles_objects(client) -> list[dict[str, Any]]:
     return found
 
 
-def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
+def _list_s3_collections(user: "User") -> list[dict[str, Any]]:
     results = []
-    for conn in S3Connection.objects.filter(owner_id=int(user_id)):
+    for conn in S3Connection.objects.filter(owner=user):
         try:
-            client = get_s3_client(str(conn.id), user_id)
+            client = get_s3_client(str(conn.id), user)
             objects = _list_pmtiles_objects(client)
         except Exception:
             continue
@@ -93,12 +96,12 @@ def _list_s3_collections(user_id: str) -> list[dict[str, Any]]:
     return results
 
 
-def _list_geoserver_collections(user_id: str) -> list[dict[str, Any]]:
-    config = get_config(user_id)
+def _list_geoserver_collections(user: "User") -> list[dict[str, Any]]:
+    config = get_config(user)
     results = []
     for conn in config.list_connections():
         try:
-            client = get_geoserver_client(conn.id, user_id)
+            client = get_geoserver_client(conn.id, user)
             workspaces = client.list_workspaces()
         except Exception:
             continue
@@ -122,12 +125,12 @@ def _list_geoserver_collections(user_id: str) -> list[dict[str, Any]]:
     return results
 
 
-def list_collections(user_id: str) -> list[dict[str, Any]]:
+def list_collections(user: "User") -> list[dict[str, Any]]:
     """Every non-empty S3 bucket and GeoServer workspace, as STAC collection summaries."""
-    return _list_s3_collections(user_id) + _list_geoserver_collections(user_id)
+    return _list_s3_collections(user) + _list_geoserver_collections(user)
 
 
-def build_root_catalog(request, user_id: str) -> dict[str, Any]:
+def build_root_catalog(request, user: "User") -> dict[str, Any]:
     root_href = request.build_absolute_uri("/api/stac/")
     collections_href = request.build_absolute_uri("/api/stac/collections")
 
@@ -136,7 +139,7 @@ def build_root_catalog(request, user_id: str) -> dict[str, Any]:
         _link("root", root_href),
         _link("data", collections_href),
     ]
-    for collection in list_collections(user_id):
+    for collection in list_collections(user):
         collection_href = request.build_absolute_uri(f"/api/stac/collections/{collection['id']}")
         links.append(_link("child", collection_href, title=collection["title"]))
 
@@ -155,8 +158,8 @@ def build_root_catalog(request, user_id: str) -> dict[str, Any]:
     }
 
 
-def build_collection_json(request, user_id: str, collection_id: str) -> dict[str, Any] | None:
-    match = next((c for c in list_collections(user_id) if c["id"] == collection_id), None)
+def build_collection_json(request, user: "User", collection_id: str) -> dict[str, Any] | None:
+    match = next((c for c in list_collections(user) if c["id"] == collection_id), None)
     if match is None:
         return None
 
@@ -203,13 +206,13 @@ def _wms_preview_url(base_url: str, workspace: str, layer_name: str) -> str:
 
 
 def _s3_item(
-    request, collection_id: str, conn, obj: dict[str, Any], user_id: str
+    request, collection_id: str, conn, obj: dict[str, Any], user: "User"
 ) -> dict[str, Any]:
     key = obj["key"]
     self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items/{key}")
 
     try:
-        asset_href = get_s3_client(conn.id, user_id).generate_presigned_url(
+        asset_href = get_s3_client(conn.id, user).generate_presigned_url(
             key=key, expiration=3600
         )
     except Exception:
@@ -251,7 +254,7 @@ def _s3_item(
 
 
 def _gs_item(
-    request, collection_id: str, conn, workspace: str, layer: dict[str, Any], user_id: str
+    request, collection_id: str, conn, workspace: str, layer: dict[str, Any], user: "User"
 ) -> dict[str, Any]:
     layer_name = layer.get("name", "")
     self_href = request.build_absolute_uri(
@@ -261,7 +264,7 @@ def _gs_item(
     bbox = None
     geometry = None
     try:
-        metadata = get_geoserver_client(conn.id, user_id).get_layer_metadata(workspace, layer_name)
+        metadata = get_geoserver_client(conn.id, user).get_layer_metadata(workspace, layer_name)
         raw_bbox = metadata.get("bbox")
         if raw_bbox:
             minx, miny = float(raw_bbox["minx"]), float(raw_bbox["miny"])
@@ -306,52 +309,52 @@ def _gs_item(
     }
 
 
-def list_items(request, user_id: str, collection_id: str) -> list[dict[str, Any]] | None:
+def list_items(request, user: "User", collection_id: str) -> list[dict[str, Any]] | None:
     """STAC Items for a collection, or None if the collection doesn't exist."""
     kind, conn_id, name = parse_collection_id(collection_id)
 
     if kind == "s3":
-        conn = _get_owned_s3_connection(user_id, conn_id)
+        conn = _get_owned_s3_connection(user, conn_id)
         if conn is None:
             return None
-        client = get_s3_client(conn_id, user_id)
+        client = get_s3_client(conn_id, user)
         objects = _list_pmtiles_objects(client)
-        return [_s3_item(request, collection_id, conn, obj, user_id) for obj in objects]
+        return [_s3_item(request, collection_id, conn, obj, user) for obj in objects]
 
     assert name is not None  # guaranteed by parse_collection_id for kind == "gs"
-    config = get_config(user_id)
+    config = get_config(user)
     gs_conn = config.get_connection(conn_id)
     if gs_conn is None:
         return None
     try:
-        layers = get_geoserver_client(conn_id, user_id).list_layers(name)
+        layers = get_geoserver_client(conn_id, user).list_layers(name)
     except Exception:
         layers = []
     return [
-        _gs_item(request, collection_id, gs_conn, name, layer, user_id)
+        _gs_item(request, collection_id, gs_conn, name, layer, user)
         for layer in layers
         if layer.get("name")
     ]
 
 
-def get_item(request, user_id: str, collection_id: str, item_id: str) -> dict[str, Any] | None:
+def get_item(request, user: "User", collection_id: str, item_id: str) -> dict[str, Any] | None:
     kind, conn_id, name = parse_collection_id(collection_id)
 
     if kind == "s3":
-        conn = _get_owned_s3_connection(user_id, conn_id)
+        conn = _get_owned_s3_connection(user, conn_id)
         if conn is None:
             return None
-        client = get_s3_client(conn_id, user_id)
+        client = get_s3_client(conn_id, user)
         obj = next((o for o in _list_pmtiles_objects(client) if o["key"] == item_id), None)
-        return _s3_item(request, collection_id, conn, obj, user_id) if obj else None
+        return _s3_item(request, collection_id, conn, obj, user) if obj else None
 
     assert name is not None  # guaranteed by parse_collection_id for kind == "gs"
-    config = get_config(user_id)
+    config = get_config(user)
     gs_conn = config.get_connection(conn_id)
     if gs_conn is None:
         return None
     try:
-        layer = get_geoserver_client(conn_id, user_id).get_layer(name, item_id)
+        layer = get_geoserver_client(conn_id, user).get_layer(name, item_id)
     except Exception:
         return None
-    return _gs_item(request, collection_id, gs_conn, name, layer, user_id) if layer else None
+    return _gs_item(request, collection_id, gs_conn, name, layer, user) if layer else None

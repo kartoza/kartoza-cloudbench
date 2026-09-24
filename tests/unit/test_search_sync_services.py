@@ -9,6 +9,9 @@ from apps.core.models import Connection, S3Connection, SyncConfiguration, SyncOp
 from apps.search import services as search
 from apps.sync import services as sync
 
+# Opaque stand-in: get_geoserver_client is mocked, so the user is only passed through.
+USER = SimpleNamespace(pk=1, username="u")
+
 
 @pytest.fixture
 def user(config_manager):
@@ -20,7 +23,7 @@ def user(config_manager):
     config_manager.add_s3_connection(
         S3Connection(id="s31", name="Archive", endpoint="s3.test", access_key="k", secret_key="s")
     )
-    return "test-user"
+    return config_manager._user
 
 
 @pytest.mark.unit
@@ -171,7 +174,7 @@ class TestSyncService:
         dest.create_workspace.side_effect = lambda name: (
             (_ for _ in ()).throw(RuntimeError("nope")) if name == "c" else None
         )
-        result = sync.get_sync_service().sync_workspaces("src", "dst", SyncOptions())
+        result = sync.get_sync_service(USER).sync_workspaces("src", "dst", SyncOptions())
         assert result["workspaces"]["created"] == 1
         assert result["workspaces"]["skipped"] == 1
         assert result["workspaces"]["errors"] == [{"workspace": "c", "error": "nope"}]
@@ -180,7 +183,7 @@ class TestSyncService:
         source, dest = clients
         source.list_workspaces.return_value = [{"name": "a"}, {"name": "b"}]
         dest.list_workspaces.return_value = []
-        result = sync.SyncService().sync_workspaces(
+        result = sync.SyncService(USER).sync_workspaces(
             "src", "dst", SyncOptions(workspace_filter=["b"])
         )
         assert result["workspaces"]["created"] == 1
@@ -193,7 +196,7 @@ class TestSyncService:
         source.get_style.side_effect = lambda name, _ws: (
             (_ for _ in ()).throw(RuntimeError("x")) if name == "bad" else {"name": name}
         )
-        result = sync.SyncService().sync_styles("src", "dst", workspace="ws")
+        result = sync.SyncService(USER).sync_styles("src", "dst", workspace="ws")
         assert result["styles"]["created"] == 1
         assert result["styles"]["updated"] == 1
         assert result["styles"]["errors"] == [{"style": "bad", "error": "x"}]
@@ -204,7 +207,7 @@ class TestSyncService:
         dest.list_workspaces.return_value = []
         source.list_styles.return_value = []
         dest.list_styles.return_value = []
-        service = sync.SyncService()
+        service = sync.SyncService(USER)
         job = service.job_manager.create_job("cfg")
         config = SyncConfiguration(
             name="n",
@@ -218,7 +221,7 @@ class TestSyncService:
         assert job.current_step == "Syncing styles"
 
     def test_run_sync_respects_disabled_options(self, clients):
-        service = sync.SyncService()
+        service = sync.SyncService(USER)
         job = service.job_manager.create_job("cfg")
         config = SyncConfiguration(
             name="n",

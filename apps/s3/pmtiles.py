@@ -152,7 +152,7 @@ def start_conversion(
     uploaded_file,
     key,
     connection_id,
-    owner_id,
+    user,
     companion_files=(),
     license_id=portolan.DEFAULT_LICENSE,
 ):
@@ -164,10 +164,10 @@ def start_conversion(
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
-    s3_client = get_s3_client(connection_id, owner_id)
+    s3_client = get_s3_client(connection_id, user)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=owner_id,
+        owner_id=user.username,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -209,7 +209,7 @@ def start_conversion(
 
 
 def inspect_geopackage(
-    uploaded_file, key, connection_id, owner_id, license_id=portolan.DEFAULT_LICENSE
+    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE
 ):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
@@ -228,10 +228,10 @@ def inspect_geopackage(
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The GeoPackage exceeds the upload size limit.")
 
-    s3_client = get_s3_client(connection_id, owner_id)
+    s3_client = get_s3_client(connection_id, user)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=owner_id,
+        owner_id=user.username,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -278,12 +278,12 @@ def inspect_geopackage(
     return job, layers, raster_tables
 
 
-def start_geopackage_conversion(job_id, owner_id, layers):
+def start_geopackage_conversion(job_id, user, layers):
     """Confirm which layers to include and start a previously-inspected GeoPackage's conversion."""
     if not layers:
         raise ValueError("Select at least one layer.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=owner_id, kind=KIND, status="pending"
+        pk=job_id, owner_id=user.username, kind=KIND, status="pending"
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
@@ -293,7 +293,7 @@ def start_geopackage_conversion(job_id, owner_id, layers):
     return job
 
 
-def cancel_geopackage_inspection(job_id, owner_id):
+def cancel_geopackage_inspection(job_id, user):
     """Discard a previously-inspected GeoPackage job the user didn't confirm.
 
     Removes the raw GeoPackage `inspect_geopackage` already staged in S3,
@@ -303,12 +303,12 @@ def cancel_geopackage_inspection(job_id, owner_id):
     # its background thread gets a chance to move status off "pending" —
     # check it too so a confirmed job can't be cancelled out from under it.
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=owner_id, kind=KIND, status="pending", layers__isnull=True
+        pk=job_id, owner_id=user.username, kind=KIND, status="pending", layers__isnull=True
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
     if job.source_key:
-        s3_client = get_s3_client(job.connection_id, owner_id)
+        s3_client = get_s3_client(job.connection_id, user)
         s3_client.delete_object(job.source_key)
     shutil.rmtree(job_directory(KIND, job.id), ignore_errors=True)
     job.delete()

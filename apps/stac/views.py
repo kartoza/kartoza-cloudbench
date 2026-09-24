@@ -15,18 +15,18 @@ class StacRootView(APIView):
     """STAC landing page / root Catalog."""
 
     def get(self, request):
-        user_id = str(request.user.id)
-        return Response(catalog.build_root_catalog(request, user_id))
+        user = request.user
+        return Response(catalog.build_root_catalog(request, user))
 
 
 class StacCollectionListView(APIView):
     """All STAC Collections (one per non-empty S3 bucket / GeoServer workspace)."""
 
     def get(self, request):
-        user_id = str(request.user.id)
+        user = request.user
         collections = [
-            catalog.build_collection_json(request, user_id, summary["id"])
-            for summary in catalog.list_collections(user_id)
+            catalog.build_collection_json(request, user, summary["id"])
+            for summary in catalog.list_collections(user)
         ]
         return Response(
             {
@@ -51,8 +51,8 @@ class StacCollectionDetailView(APIView):
     """A single STAC Collection."""
 
     def get(self, request, collection_id):
-        user_id = str(request.user.id)
-        result = catalog.build_collection_json(request, user_id, collection_id)
+        user = request.user
+        result = catalog.build_collection_json(request, user, collection_id)
         if result is None:
             return Response({"error": "Collection not found"}, status=404)
         return Response(result)
@@ -62,9 +62,9 @@ class StacItemListView(APIView):
     """Items in a Collection, as a STAC ItemCollection (GeoJSON FeatureCollection)."""
 
     def get(self, request, collection_id):
-        user_id = str(request.user.id)
+        user = request.user
         try:
-            items = catalog.list_items(request, user_id, collection_id)
+            items = catalog.list_items(request, user, collection_id)
         except ValueError:
             return Response({"error": "Collection not found"}, status=404)
         if items is None:
@@ -96,9 +96,9 @@ class StacItemDetailView(APIView):
     """A single STAC Item."""
 
     def get(self, request, collection_id, item_id):
-        user_id = str(request.user.id)
+        user = request.user
         try:
-            item = catalog.get_item(request, user_id, collection_id, item_id)
+            item = catalog.get_item(request, user, collection_id, item_id)
         except ValueError:
             return Response({"error": "Collection not found"}, status=404)
         if item is None:

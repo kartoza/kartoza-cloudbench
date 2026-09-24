@@ -238,7 +238,7 @@ class UploadCompleteView(APIView):
             if publish and session.connection_id and session.workspace:
                 final_store_name = store_name or session.store_name or Path(session.filename).stem
 
-                client = get_geoserver_client(session.connection_id, str(request.user.username))
+                client = get_geoserver_client(session.connection_id, request.user)
 
                 with open(file_path, "rb") as f:
                     data = f.read()
@@ -355,7 +355,7 @@ class SimpleUploadView(APIView):
         final_store_name = store_name or Path(filename).stem
 
         try:
-            client = get_geoserver_client(connection_id, str(request.user.username))
+            client = get_geoserver_client(connection_id, request.user)
             data = uploaded_file.read()
 
             result = {

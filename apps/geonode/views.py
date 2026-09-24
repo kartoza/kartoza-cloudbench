@@ -29,7 +29,7 @@ class GeoNodeConnectionListView(APIView):
 
     def get(self, request):
         """List all GeoNode connections."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         connections = config.list_geonode_connections()
         return Response(
             [
@@ -55,7 +55,7 @@ class GeoNodeConnectionListView(APIView):
             api_key=data.get("apiKey", ""),
         )
 
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         config.add_geonode_connection(conn)
 
         return Response(
@@ -97,7 +97,7 @@ class GeoNodeConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         conn = config.get_geonode_connection(conn_id)
         if not conn:
             return Response(
@@ -118,7 +118,7 @@ class GeoNodeConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         conn = config.get_geonode_connection(conn_id)
         if not conn:
             return Response(
@@ -141,7 +141,7 @@ class GeoNodeConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         if not config.delete_geonode_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
@@ -162,7 +162,7 @@ class GeoNodeResourceListView(APIView):
         owner = request.query_params.get("owner")
 
         try:
-            client = get_geonode_client(conn_id, str(request.user.username))
+            client = get_geonode_client(conn_id, request.user)
             result = client.list_resources(
                 resource_type=resource_type,
                 page=page,
@@ -190,7 +190,7 @@ class GeoNodeResourceDetailView(APIView):
         """Get layer information."""
         resource_type = RESOURCE_TYPE_DETAIL_REQUEST_MAP.get(resource_type, resource_type)
         try:
-            client = get_geonode_client(conn_id, str(request.user.username))
+            client = get_geonode_client(conn_id, request.user)
             resource = client.get_resource(resource_type, int(resource_id))
             return Response({resource_type.rstrip("s"): resource.to_dict()})
         except httpx.HTTPStatusError as e:
@@ -261,7 +261,7 @@ class GeoNodeUploadCompleteView(APIView):
             with open(file_path, "rb") as f:
                 data = f.read()
 
-            client = get_geonode_client(conn_id, str(request.user.username))
+            client = get_geonode_client(conn_id, request.user)
             if upload_type == "document":
                 upload_result = client.upload_document(
                     file=data,
@@ -307,7 +307,7 @@ class GeoNodeRemoteServiceListView(APIView):
     def get(self, request, conn_id):
         """Return all remote services from the GeoNode admin."""
         try:
-            with get_remote_service(conn_id, str(request.user.username)) as svc:
+            with get_remote_service(conn_id, request.user) as svc:
                 services = svc.list_services()
             return Response({"services": [s.to_dict() for s in services]})
         except PermissionError as e:
@@ -338,7 +338,7 @@ class GeoNodeRemoteServiceConnectView(APIView):
         """
         from apps.core.config import get_config as get_core_config
 
-        config = get_core_config(str(request.user.username))
+        config = get_core_config(request.user)
         geoserver_conn = config.get_connection(geoserver_conn_id)
         if not geoserver_conn:
             return Response(
@@ -352,7 +352,7 @@ class GeoNodeRemoteServiceConnectView(APIView):
         service_type = request.data.get("type", "WMS")
 
         try:
-            with get_remote_service(conn_id, str(request.user.username)) as svc:
+            with get_remote_service(conn_id, request.user) as svc:
                 svc.create_service(
                     base_url=wms_url,
                     service_type=service_type,
@@ -376,7 +376,7 @@ class GeoNodeRemoteServiceResourcesView(APIView):
     def get(self, request, conn_id, service_id):
         """Return resources available to import from the harvest page."""
         try:
-            with get_remote_service(conn_id, str(request.user.username)) as svc:
+            with get_remote_service(conn_id, request.user) as svc:
                 resources = svc.list_harvest_resources(int(service_id))
             return Response({"resources": resources})
         except PermissionError as e:
@@ -403,7 +403,7 @@ class GeoNodeRemoteServiceImportView(APIView):
         """Rescan and import resources. Pass resourceIds to import a subset."""
         resource_ids = request.data.get("resourceIds") or None
         try:
-            with get_remote_service(conn_id, str(request.user.username)) as svc:
+            with get_remote_service(conn_id, request.user) as svc:
                 resources = svc.import_resources(int(service_id), resource_ids)
             return Response({"resources": resources})
         except PermissionError as e:
@@ -429,7 +429,7 @@ class GeoNodeRemoteServiceDeleteView(APIView):
     def delete(self, request, conn_id, service_id):
         """Delete a remote service by ID."""
         try:
-            with get_remote_service(conn_id, str(request.user.username)) as svc:
+            with get_remote_service(conn_id, request.user) as svc:
                 svc.delete_service(int(service_id))
             return Response(status=status.HTTP_204_NO_CONTENT)
         except PermissionError as e:
@@ -454,7 +454,7 @@ class GeoNodeTestView(APIView):
 
     def get(self, request, conn_id):
         """Test if a URL is reachable and return its HTTP status."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         conn = config.get_geonode_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -475,7 +475,7 @@ class GeoNodeCategoryListView(APIView):
     def get(self, request, conn_id):
         """List all categories."""
         try:
-            client = get_geonode_client(conn_id, str(request.user.username))
+            client = get_geonode_client(conn_id, request.user)
             categories = client.list_categories()
             return Response({"categories": categories})
         except ValueError as e:

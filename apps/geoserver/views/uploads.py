@@ -88,7 +88,7 @@ class GeoServerUploadStartView(APIView):
             )
 
         try:
-            get_geoserver_client(conn_id, str(request.user.username))
+            get_geoserver_client(conn_id, request.user)
         except Exception:
             return Response(
                 {"error": f"Connection not found: {conn_id}"},
@@ -96,7 +96,7 @@ class GeoServerUploadStartView(APIView):
             )
 
         result = run_geoserver_upload(
-            conn_id, str(request.user.username), workspace, store_name, file_path
+            conn_id, request.user, workspace, store_name, file_path
         )
         if result.get("status") == "completed":
             return Response(

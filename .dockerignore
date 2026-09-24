@@ -24,6 +24,8 @@ media/
 
 # Dev/IDE
 .git/
+# Submodule's .git is a file pointing into the (ignored) parent .git/
+maputnik/.git
 .vscode/
 .idea/
 *.swp
