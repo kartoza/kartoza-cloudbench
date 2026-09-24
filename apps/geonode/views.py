@@ -11,7 +11,6 @@ import uuid
 from pathlib import Path
 
 import httpx
-import requests
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -461,10 +460,10 @@ class GeoNodeTestView(APIView):
 
         url_check = request.data.get("url", conn.url)
         try:
-            response = requests.head(url_check, allow_redirects=True)
+            response = httpx.head(url_check, follow_redirects=True, timeout=10)
             if response.status_code in [200]:
                 return Response({"status": response.status_code, "ok": True})
-        except requests.exceptions.ConnectionError:
+        except httpx.TransportError:
             pass
         return Response({"error": "Url can't be reached"}, status=status.HTTP_404_NOT_FOUND)
 
