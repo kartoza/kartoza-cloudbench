@@ -6,6 +6,7 @@ import { API_BASE, handleResponse } from './common'
 import type {
   S3Connection,
   S3ConnectionCreate,
+  S3ConnectionTestRequest,
   S3ConnectionTestResult,
   S3Object,
   S3UploadResult,
@@ -60,7 +61,7 @@ export async function testS3Connection(id: string): Promise<S3ConnectionTestResu
   return handleResponse<S3ConnectionTestResult>(response)
 }
 
-export async function testS3ConnectionDirect(conn: S3ConnectionCreate): Promise<S3ConnectionTestResult> {
+export async function testS3ConnectionDirect(conn: S3ConnectionTestRequest): Promise<S3ConnectionTestResult> {
   const response = await fetch(`${API_BASE}/s3/connections/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

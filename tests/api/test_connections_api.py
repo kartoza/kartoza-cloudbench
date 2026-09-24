@@ -3,10 +3,14 @@
 Note: URL patterns in this project do NOT use trailing slashes.
 """
 
+from unittest.mock import patch
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
+
+from apps.s3.models import S3Connection
 
 
 @pytest.fixture
@@ -203,6 +207,57 @@ class TestS3ConnectionsAPI:
         # Delete
         response = api_client.delete(f"/api/s3/connections/{conn_id}")
         assert response.status_code == status.HTTP_204_NO_CONTENT
+
+    def test_test_connection_falls_back_to_saved_keys(self, api_client: APIClient) -> None:
+        """Testing an edited connection may omit the keys: the saved ones are used."""
+        conn_id = api_client.post(
+            "/api/s3/connections",
+            {
+                "name": "Test MinIO",
+                "endpoint": "localhost:9000",
+                "bucket": "test-bucket",
+                "accessKey": "saved-key",
+                "secretKey": "saved-secret",
+            },
+            format="json",
+        ).json()["id"]
+
+        with patch("apps.s3.views.S3Client") as client_cls:
+            client_cls.return_value.test_connection.return_value = (True, "ok")
+            response = api_client.post(
+                "/api/s3/connections/test",
+                {
+                    "connectionId": conn_id,
+                    "endpoint": "localhost:9001",
+                    "bucket": "other-bucket",
+                    "secretKey": "retyped-secret",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        kwargs = client_cls.call_args.kwargs
+        # Edited fields are tested as typed; only the omitted key comes from the DB.
+        assert (kwargs["endpoint"], kwargs["bucket"]) == ("localhost:9001", "other-bucket")
+        assert (kwargs["access_key"], kwargs["secret_key"]) == ("saved-key", "retyped-secret")
+
+    def test_test_connection_rejects_another_users_connection(self, api_client: APIClient) -> None:
+        """connectionId can't be used to borrow someone else's saved keys."""
+        other = get_user_model().objects.create_user(username="someone-else", password="x")
+        conn = S3Connection.objects.create(
+            owner=other,
+            name="theirs",
+            endpoint="localhost:9000",
+            bucket="b",
+            access_key="k",
+            secret_key="s",
+        )
+        response = api_client.post(
+            "/api/s3/connections/test",
+            {"connectionId": str(conn.id), "endpoint": "localhost:9000", "bucket": "b"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.django_db
