@@ -841,6 +841,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#s3-cloud-native-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3 Cloud-Native Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#geopackage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1451,6 +1462,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#s3-cloud-native-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3 Cloud-Native Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#geopackage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1609,6 +1631,33 @@
 <li><code>.dbf</code> - Attributes</li>
 <li><code>.prj</code> - Projection (recommended)</li>
 </ul>
+<h2 id="s3-cloud-native-options">S3 Cloud-Native Options</h2>
+<p>For S3 uploads, selecting a <code>.shp</code> file or a zipped shapefile (<code>.zip</code>) shows
+<strong>PMTiles</strong> under <strong>Convert to Cloud-Native</strong> when CloudNativeGIS
+is reachable. Cloudbench checks the service from Django using
+<code>CLOUDNATIVEGIS_URL</code>; an unreachable service hides the option without blocking
+normal uploads.</p>
+<p>PMTiles is the default recommendation when available, replacing GeoParquet
+for shapefile uploads. Select or drag the matching <code>.shp</code>, <code>.shx</code>, and <code>.dbf</code>
+files together; include <code>.prj</code> for the projection. Cloudbench creates the ZIP
+automatically before sending it to CloudNativeGIS. A lone <code>.shp</code> is not enough:
+the browser cannot automatically read companion files you have not selected.
+You can also supply an existing ZIP with exactly one shapefile. Nested shapefile
+folders in ZIPs are flattened before forwarding. With conversion switched off,
+selected shapefile components are uploaded to S3 as a ZIP instead.</p>
+<p>Cloudbench uploads the layer to CloudNativeGIS, waits for the import to succeed
+and the PMTiles file to be ready, then downloads it and uploads it to the selected
+S3 bucket. The original ZIP is not uploaded to S3. The object key keeps its prefix
+and replaces <code>.zip</code> or <code>.shp.zip</code> with <code>.pmtiles</code>. The dialog reports each stage,
+refreshes the S3 listing on completion, and displays conversion errors.</p>
+<p>If the CloudNativeGIS instance requires one, its bearer token is configured
+server-side via <code>CLOUDNATIVEGIS_API_TOKEN</code>. The default conversion wait timeout is 30 minutes,
+configurable with <code>CLOUDNATIVEGIS_CONVERSION_TIMEOUT</code>; polling defaults to 5 seconds
+via <code>CLOUDNATIVEGIS_POLL_INTERVAL</code>.</p>
+<p>Conversion continues if the dialog is closed. Cloudbench tracks jobs in its Django
+database, but the background thread does not survive a Django restart; interrupted
+jobs eventually report failure and must be retried. Local temporary files are
+removed after processing. The created layer remains in CloudNativeGIS for inspection.</p>
 <h2 id="geopackage">GeoPackage</h2>
 <p>GeoPackage files can contain:</p>
 <ul>
