@@ -183,19 +183,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      minio:
-        image: minio/minio
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
 
@@ -214,9 +201,6 @@ jobs:
         run: pytest tests/integration -v --tb=short -m "integration"
         env:
           DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
-          S3_ENDPOINT: http://localhost:9000
-          S3_ACCESS_KEY: minioadmin
-          S3_SECRET_KEY: minioadmin
 
   # E2E tests (pull requests and pushes to main)
   test-e2e:

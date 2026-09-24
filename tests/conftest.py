@@ -32,6 +32,15 @@ def setup_test_environment() -> Generator[None, None, None]:
     can't touch the real ~/<username>/config — CLOUDBENCH_DATA_FOLDER, not
     XDG_*, is what that function actually reads.
     """
+    # Playwright resolves its browser cache from XDG_CACHE_HOME, so pin it to
+    # where `playwright install` put the browsers before redirecting XDG_*.
+    os.environ.setdefault(
+        "PLAYWRIGHT_BROWSERS_PATH",
+        os.path.join(
+            os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "ms-playwright"
+        ),
+    )
+
     # Create temporary directories for testing
     with tempfile.TemporaryDirectory(prefix="cloudbench-test-") as tmpdir:
         os.environ["XDG_CONFIG_HOME"] = tmpdir
