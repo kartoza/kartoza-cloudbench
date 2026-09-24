@@ -231,7 +231,7 @@ export default function S3ConnectionDialog() {
       <ModalContent borderRadius="xl" overflow="hidden" maxH="90vh">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #c06c00 0%, #e08900 50%, #f0a020 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>

@@ -188,7 +188,7 @@ export default function GeoNodeConnectionDialog() {
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #0d7377 0%, #14919b 50%, #2dc2c9 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>

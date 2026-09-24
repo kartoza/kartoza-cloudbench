@@ -106,7 +106,7 @@ export function SettingsDialog({
       <ModalOverlay backdropFilter="blur(4px)" />
       <ModalContent maxH="90vh">
         <ModalHeader
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           color="white"
           borderTopRadius="md"
         >

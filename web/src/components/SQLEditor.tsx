@@ -496,20 +496,20 @@ export const SQLEditor: React.FC<SQLEditorProps> = ({
       padding: '0 8px',
     },
     '.cm-gutters': {
-      backgroundColor: '#f7f7f7',
-      borderRight: '1px solid #e0e0e0',
+      backgroundColor: '#F5F5F2',
+      borderRight: '1px solid #D1D1D1',
     },
     '&.cm-focused .cm-cursor': {
-      borderLeftColor: '#3b82f6',
+      borderLeftColor: '#54A2CC',
     },
     '.cm-placeholder': {
-      color: '#9ca3af',
+      color: '#8A8B8B',
     },
     '.cm-tooltip.cm-tooltip-autocomplete': {
       backgroundColor: '#fff',
-      border: '1px solid #e5e7eb',
-      borderRadius: '6px',
-      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+      border: '1px solid #D1D1D1',
+      borderRadius: '3px',
+      boxShadow: 'none',
     },
     '.cm-tooltip.cm-tooltip-autocomplete > ul': {
       fontFamily: 'inherit',
@@ -518,7 +518,7 @@ export const SQLEditor: React.FC<SQLEditorProps> = ({
       padding: '4px 8px',
     },
     '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-      backgroundColor: '#3b82f6',
+      backgroundColor: '#54A2CC',
       color: '#fff',
     },
     '.cm-completionIcon': {
@@ -526,22 +526,22 @@ export const SQLEditor: React.FC<SQLEditorProps> = ({
       marginRight: '0.5em',
     },
     '.cm-completionIcon-keyword': {
-      '&::after': { content: '"K"', color: '#9333ea' },
+      '&::after': { content: '"K"', color: '#383939' },
     },
     '.cm-completionIcon-function': {
-      '&::after': { content: '"ƒ"', color: '#2563eb' },
+      '&::after': { content: '"ƒ"', color: '#54A2CC' },
     },
     '.cm-completionIcon-class': {
-      '&::after': { content: '"T"', color: '#059669' },
+      '&::after': { content: '"T"', color: '#3C7D54' },
     },
     '.cm-completionIcon-property': {
-      '&::after': { content: '"c"', color: '#d97706' },
+      '&::after': { content: '"c"', color: '#EEB348' },
     },
     '.cm-completionIcon-namespace': {
-      '&::after': { content: '"S"', color: '#dc2626' },
+      '&::after': { content: '"S"', color: '#B0473C' },
     },
     '.cm-completionIcon-type': {
-      '&::after': { content: '"t"', color: '#6366f1' },
+      '&::after': { content: '"t"', color: '#8A8B8B' },
     },
   }), []);
 

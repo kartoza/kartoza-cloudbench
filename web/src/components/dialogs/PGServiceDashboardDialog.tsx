@@ -182,7 +182,7 @@ function getMarkerPosition(host: string): { x: string; y: string } {
 // World map component with marker
 function ServerLocationMap({ host }: { host: string }) {
   const mapBg = useColorModeValue('blue.50', 'blue.900')
-  const landColor = useColorModeValue('#94a3b8', '#475569')
+  const landColor = useColorModeValue('#D1D1D1', '#676869')
   const dotColor = useColorModeValue('red.500', 'red.400')
   const pulseColor = useColorModeValue('red.300', 'red.600')
   const textBg = useColorModeValue('gray.100', 'gray.700')
@@ -320,7 +320,6 @@ export default function PGServiceDashboardDialog() {
   const [error, setError] = useState<string | null>(null)
 
   // Colors
-  const headerBg = useColorModeValue('linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)', 'linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)')
   const bodyBg = useColorModeValue('gray.50', 'gray.900')
 
   useEffect(() => {
@@ -359,7 +358,7 @@ export default function PGServiceDashboardDialog() {
         bg={bodyBg}
       >
         <ModalHeader
-          bgGradient={headerBg}
+          bg="surface.header"
           color="white"
           py={6}
           px={6}
@@ -384,7 +383,7 @@ export default function PGServiceDashboardDialog() {
                     fontSize="xs"
                     px={2}
                     py={1}
-                    borderRadius="full"
+                    borderRadius="sm"
                   >
                     <HStack spacing={1}>
                       <Icon as={FiCheckCircle} boxSize={3} />
@@ -478,7 +477,7 @@ export default function PGServiceDashboardDialog() {
                   <Progress
                     value={stats.connection_percent}
                     colorScheme={stats.connection_percent > 80 ? 'red' : stats.connection_percent > 60 ? 'orange' : 'green'}
-                    borderRadius="full"
+                    borderRadius="sm"
                     size="lg"
                   />
                 </Box>
@@ -645,7 +644,7 @@ export default function PGServiceDashboardDialog() {
                             <Tag
                               size="md"
                               colorScheme={ext === 'postgis' ? 'green' : ext === 'plpgsql' ? 'blue' : 'gray'}
-                              borderRadius="full"
+                              borderRadius="sm"
                             >
                               {ext}
                             </Tag>

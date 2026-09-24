@@ -73,13 +73,13 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
           <Icon as={FiTable} color="blue.500" />
           <Text fontWeight="600">Results</Text>
           {result && (
-            <Badge colorScheme="blue" borderRadius="full">
+            <Badge colorScheme="blue" borderRadius="sm">
               {result.rows.length}
               {result.total_count ? ` / ${result.total_count}` : ''} rows
             </Badge>
           )}
           {result && (
-            <Badge colorScheme="gray" borderRadius="full">
+            <Badge colorScheme="gray" borderRadius="sm">
               {(result.duration_ms ?? 0).toFixed(2)}ms
             </Badge>
           )}

@@ -87,8 +87,8 @@ const rotateSyncKeyframes = keyframes`
 `
 
 const glowPulseKeyframes = keyframes`
-  0%, 100% { box-shadow: 0 0 5px rgba(56, 178, 172, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(56, 178, 172, 0.6); }
+  0%, 100% { box-shadow: 0 0 5px rgba(84, 162, 204, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(84, 162, 204, 0.6); }
 `
 
 interface SourceServerProps {
@@ -266,7 +266,7 @@ function DestinationServer({ connection, isRunning, task, onRemove, onStop }: De
               value={progress}
               size="sm"
               colorScheme={task?.status === 'failed' ? 'red' : task?.status === 'completed' ? 'green' : 'blue'}
-              borderRadius="full"
+              borderRadius="sm"
               hasStripe={isRunning}
               isAnimated={isRunning}
             />
@@ -778,7 +778,7 @@ export function SyncDialog() {
       <ModalOverlay backdropFilter="blur(4px)" />
       <ModalContent maxH="90vh">
         <ModalHeader
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           color="white"
           borderTopRadius="md"
         >

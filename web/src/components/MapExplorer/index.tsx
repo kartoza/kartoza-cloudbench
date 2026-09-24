@@ -35,7 +35,7 @@ import {
 import { clearNodeUrlParamQuietly } from '../../utils/nodeUrl'
 import './styles.css'
 
-const LAYER_COLORS = ['#2d7d9b', '#E8A331', '#7c5cbf', '#3f9142', '#c2434f', '#3a8fa6']
+const LAYER_COLORS = ['#54A2CC', '#EEB348', '#3C7D54', '#B0473C', '#8A8B8B', '#383939']
 
 const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
@@ -423,7 +423,6 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         py={3}
         borderBottom="1px solid"
         borderBottomColor="gray.100"
-        boxShadow="0 1px 3px rgba(0,0,0,0.04)"
         flexShrink={0}
       >
         <IconButton
@@ -439,10 +438,10 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         </Text>
         <Box flex={1} textAlign="center">
         </Box>
-        <HStack spacing={0} bg="gray.100" borderRadius="full" p={1}>
+        <HStack spacing={0} bg="gray.100" borderRadius="sm" p={1}>
           <Button
             size="sm"
-            borderRadius="full"
+            borderRadius="sm"
             variant={view === 'catalogue' ? 'solid' : 'ghost'}
             colorScheme={view === 'catalogue' ? 'kartoza' : 'gray'}
             onClick={() => setView('catalogue')}
@@ -451,7 +450,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
           </Button>
           <Button
             size="sm"
-            borderRadius="full"
+            borderRadius="sm"
             variant={view === 'map' ? 'solid' : 'ghost'}
             colorScheme={view === 'map' ? 'kartoza' : 'gray'}
             onClick={() => setView('map')}
@@ -498,7 +497,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                       color="accent.600"
                       px={2}
                       py={0.5}
-                      borderRadius="full"
+                      borderRadius="sm"
                     >
                       <FiClock size={11} />
                       <Text fontSize="10px" fontWeight="700" textTransform="uppercase" letterSpacing="0.03em">
@@ -507,8 +506,8 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                     </HStack>
                   </HStack>
                   <VStack spacing={2} align="stretch" mb={3}>
-                    <Box h="6px" bg="gray.200" borderRadius="full" />
-                    <Box h="6px" bg="gray.200" borderRadius="full" w="70%" />
+                    <Box h="6px" bg="gray.200" borderRadius="sm" />
+                    <Box h="6px" bg="gray.200" borderRadius="sm" w="70%" />
                   </VStack>
                   <Tooltip label="Scenario selection is coming soon">
                     <Button
@@ -550,7 +549,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                     bg="orange.50"
                     border="1px solid"
                     borderColor="orange.300"
-                    borderRadius="full"
+                    borderRadius="sm"
                     px={4}
                     py={2}
                     spacing={2}

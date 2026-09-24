@@ -106,7 +106,7 @@ export default function LayerPanel({
   return (
     <VStack spacing={6} align="stretch">
       <Card
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+        bg="surface.header"
         color="white"
       >
         <CardBody py={8} px={6}>

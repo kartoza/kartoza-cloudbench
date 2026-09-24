@@ -269,7 +269,7 @@ export default function GeoNodeUploadDialog() {
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         <Box
-          bg="linear-gradient(135deg, #0d7377 0%, #14919b 50%, #2dc2c9 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>
@@ -437,7 +437,7 @@ export default function GeoNodeUploadDialog() {
                           value={overallPct}
                           size="sm"
                           colorScheme={isPaused ? 'yellow' : 'teal'}
-                          borderRadius="full"
+                          borderRadius="sm"
                           hasStripe={!isPaused}
                           isAnimated={!isPaused}
                         />
@@ -452,7 +452,7 @@ export default function GeoNodeUploadDialog() {
                             value={chunkProgress}
                             size="xs"
                             colorScheme="blue"
-                            borderRadius="full"
+                            borderRadius="sm"
                             opacity={0.7}
                           />
                         </Box>
@@ -481,7 +481,7 @@ export default function GeoNodeUploadDialog() {
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>
                         Sending to GeoNode…
                       </Text>
-                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="full" />
+                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>
                   )}
 

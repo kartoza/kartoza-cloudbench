@@ -88,7 +88,7 @@ function Sparkline({
                      data,
                      width = 80,
                      height = 20,
-                     color = '#38B2AC'
+                     color = '#3C7D54'
                    }: SparklineProps) {
   if (data.length < 2) return null
 
@@ -467,7 +467,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
                   value={server.memoryUsedPct}
                   size="sm"
                   colorScheme={server.memoryUsedPct > 80 ? 'red' : server.memoryUsedPct > 60 ? 'yellow' : 'green'}
-                  borderRadius="full"
+                  borderRadius="sm"
                 />
               </Box>
             )}
@@ -478,7 +478,7 @@ function ServerCard({ server, isAlert = false }: ServerCardProps) {
               <Text>Response: {server.responseTimeMs}ms</Text>
               {pingHistory.length >= 2 && (
                 <Sparkline data={pingHistory} width={60} height={16}
-                           color="#38B2AC"/>
+                           color="#3C7D54"/>
               )}
             </HStack>
           </>
@@ -720,10 +720,10 @@ export default function Dashboard() {
             <Box w="100%">
               <HStack spacing={2} mb={4} justify="center">
                 <Box
-                  bg="#417d9b"
+                  bg="#54A2CC"
                   px={4}
                   py={2}
-                  borderRadius="full"
+                  borderRadius="md"
                   display="flex"
                   alignItems="center"
                   gap={2}
@@ -774,10 +774,10 @@ export default function Dashboard() {
             <Box w="100%">
               <HStack spacing={2} mb={4} justify="center">
                 <Box
-                  bg="#336699"
+                  bg="#54A2CC"
                   px={4}
                   py={2}
-                  borderRadius="full"
+                  borderRadius="md"
                   display="flex"
                   alignItems="center"
                   gap={2}

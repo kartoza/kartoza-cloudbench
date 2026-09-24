@@ -522,7 +522,7 @@ export default function S3LayerPreview({
         type: 'fill',
         source: 's3-layer',
         paint: {
-          'fill-color': '#0080ff',
+          'fill-color': '#54A2CC',
           'fill-opacity': 0.4,
         },
         filter: ['==', '$type', 'Polygon'],
@@ -534,7 +534,7 @@ export default function S3LayerPreview({
         type: 'line',
         source: 's3-layer',
         paint: {
-          'line-color': '#0060c0',
+          'line-color': '#316E90',
           'line-width': 2,
         },
         filter: ['any', ['==', '$type', 'LineString'], ['==', '$type', 'Polygon']],
@@ -547,7 +547,7 @@ export default function S3LayerPreview({
         source: 's3-layer',
         paint: {
           'circle-radius': 6,
-          'circle-color': '#0080ff',
+          'circle-color': '#54A2CC',
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff',
         },
@@ -589,7 +589,7 @@ export default function S3LayerPreview({
       type: 'fill',
       source: 's3-layer',
       paint: {
-        'fill-color': '#0080ff',
+        'fill-color': '#54A2CC',
         'fill-opacity': 0.4,
       },
       filter: ['==', '$type', 'Polygon'],
@@ -601,7 +601,7 @@ export default function S3LayerPreview({
       type: 'line',
       source: 's3-layer',
       paint: {
-        'line-color': '#0060c0',
+        'line-color': '#316E90',
         'line-width': 2,
       },
       filter: ['any', ['==', '$type', 'LineString'], ['==', '$type', 'Polygon']],
@@ -614,7 +614,7 @@ export default function S3LayerPreview({
       source: 's3-layer',
       paint: {
         'circle-radius': 6,
-        'circle-color': '#0080ff',
+        'circle-color': '#54A2CC',
         'circle-stroke-width': 2,
         'circle-stroke-color': '#ffffff',
       },
@@ -1007,7 +1007,7 @@ export default function S3LayerPreview({
     return (
       <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
         <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           color="white"
           px={4}
           py={3}
@@ -1047,7 +1047,7 @@ export default function S3LayerPreview({
     return (
       <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
         <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           color="white"
           px={4}
           py={3}
@@ -1099,7 +1099,7 @@ export default function S3LayerPreview({
     return (
       <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
         <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           color="white"
           px={4}
           py={3}
@@ -1228,7 +1228,7 @@ export default function S3LayerPreview({
     <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
       {/* Header */}
       <Box
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+        bg="surface.header"
         color="white"
         px={4}
         py={3}

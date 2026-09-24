@@ -80,7 +80,7 @@ export default function GeoNodeAddRemoteServiceDialog() {
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Header */}
-        <Box bg="linear-gradient(135deg, #0d9488 0%, #14b8a6 50%, #2dd4bf 100%)" p={4}>
+        <Box bg="surface.header" p={4}>
           <HStack spacing={3}>
             <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
               <Icon as={FiGlobe} boxSize={5} color="white" />

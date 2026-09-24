@@ -320,7 +320,7 @@ export default function Globe3DPreview({
     <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
       {/* Header - matches MapPreview */}
       <Box
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+        bg="surface.header"
         color="white"
         px={4}
         py={3}

@@ -288,12 +288,6 @@ export default function ConnectionDialog() {
     }
   }
 
-  const getHeaderGradient = () => {
-    return connectionType === 'geoserver'
-      ? 'linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)'
-      : 'linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)'
-  }
-
   const getHeaderIcon = () => {
     return connectionType === 'geoserver' ? FiServer : FiDatabase
   }
@@ -314,12 +308,8 @@ export default function ConnectionDialog() {
     <Modal isOpen={isOpen} onClose={closeDialog} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
-        {/* Animated Gradient Header */}
-        <motion.div
-          animate={{ background: getHeaderGradient() }}
-          transition={{ duration: 0.3 }}
-          style={{ padding: '16px 24px' }}
-        >
+        {/* Flat header */}
+        <Box bg="surface.header" px={6} py={4}>
           <HStack spacing={3}>
             <motion.div
               key={connectionType}
@@ -354,7 +344,7 @@ export default function ConnectionDialog() {
               </motion.div>
             </Box>
           </HStack>
-        </motion.div>
+        </Box>
         <ModalCloseButton color="white" />
 
         <ModalBody py={6}>
