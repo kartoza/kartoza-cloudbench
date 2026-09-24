@@ -11,49 +11,30 @@ web/src/api/common.ts) — this class verifies it.
 """
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core import signing
 from rest_framework.authentication import BaseAuthentication
 
 _SSO_TOKEN_SALT = "cloudbench-sso"
 
 
-class TrustedHeaderUser:
-    """Minimal stand-in for a Django user, identified only by id.
-
-    CloudBench has no user database of its own — its config storage is
-    keyed by a plain user id string — so this needs to satisfy the
-    ``request.user`` surface that existing views rely on.
-    """
-
-    is_authenticated = True
-    is_anonymous = False
-    is_active = True
-    is_staff = False
-    is_superuser = False
-
-    def __init__(self, user_id: str) -> None:
-        self.id = user_id
-        self.pk = user_id
-        self.username = user_id
-
-    def __str__(self) -> str:
-        return self.id
-
-
-def sign_sso_token(user_id: str) -> str:
-    """Mint a signed, time-limited SSO token for the given user id."""
+def sign_sso_token(username: str) -> str:
+    """Mint a signed, time-limited SSO token for the given username."""
     return signing.TimestampSigner(
         salt=_SSO_TOKEN_SALT, key=settings.CLOUDBENCH_SERVICE_TOKEN
-    ).sign(user_id)
+    ).sign(username)
 
 
 class SignedSSOTokenAuthentication(BaseAuthentication):
     """Authenticate requests carrying a signed SSO token.
 
     Reads ``Authorization: Token <value>``, verifies the signature and
-    expiry, and resolves it to a ``TrustedHeaderUser``. Returns ``None``
-    (rather than raising) on a missing/invalid/expired token, so DRF falls
-    through to the next authenticator instead of hard-failing.
+    expiry, and resolves it to the Django user with that username — the
+    bridge (geohosting_bridge.get_user) creates it before any token for it
+    is minted, so SSO requests get the same ``request.user`` as a normal
+    login. Returns ``None`` (rather than raising) on a missing/invalid/
+    expired token, or one whose user no longer exists or is inactive, so
+    DRF falls through to the next authenticator instead of hard-failing.
     """
 
     def authenticate(self, request):
@@ -69,8 +50,11 @@ class SignedSSOTokenAuthentication(BaseAuthentication):
             salt=_SSO_TOKEN_SALT, key=settings.CLOUDBENCH_SERVICE_TOKEN
         )
         try:
-            user_id = signer.unsign(token, max_age=settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE)
+            username = signer.unsign(token, max_age=settings.CLOUDBENCH_SSO_TOKEN_MAX_AGE)
         except signing.BadSignature:
             return None
 
-        return TrustedHeaderUser(user_id), None
+        user = get_user_model().objects.filter(username=username, is_active=True).first()
+        if user is None:
+            return None
+        return user, None

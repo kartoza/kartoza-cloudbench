@@ -267,4 +267,4 @@ class TestGeoHostingSSOTokenView:
 
         request = RequestFactory().get("/", HTTP_AUTHORIZATION=f"Token {token}")
         user, _ = SignedSSOTokenAuthentication().authenticate(request)
-        assert user.id == "42"
+        assert user.username == "42"
