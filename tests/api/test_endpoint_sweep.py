@@ -22,8 +22,8 @@ from apps.core.models import (
     MerginMapsConnection,
     PGService,
     QFieldCloudConnection,
-    S3Connection,
 )
+from apps.s3.models import S3Connection
 
 METHODS = ("get", "post", "put", "patch", "delete")
 BODY = {
@@ -78,14 +78,25 @@ def _routes() -> list[tuple[str, str]]:
 
 @pytest.fixture
 def seeded_client(authenticated_api_client: APIClient, user_config: Any) -> APIClient:
-    """Logged-in client whose user owns one connection of every type, id ``c1``."""
+    """Logged-in client whose user owns one connection of every type, id ``c1``.
+
+    Except S3: those are DB rows keyed by UUID, so S3 routes hit with ``c1``
+    exercise the not-found path.
+    """
+    from django.contrib.auth import get_user_model
+
     from apps.core.models import Connection
 
     user_config.add_connection(
         Connection(id="c1", name="GS", url="http://gs.test/geoserver", username="a", password="b")
     )
-    user_config.add_s3_connection(
-        S3Connection(id="c1", name="S3", endpoint="s3.test", access_key="k", secret_key="s")
+    S3Connection.objects.create(
+        owner=get_user_model().objects.get(username="test-user"),
+        name="S3",
+        endpoint="s3.test",
+        bucket="b",
+        access_key="k",
+        secret_key="s",
     )
     user_config.add_geonode_connection(
         GeoNodeConnection(id="c1", name="GN", url="http://gn.test", username="a", password="b")

@@ -15,7 +15,7 @@ WHEN = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 @pytest.fixture
 def s3client():
-    client = s3.S3Client("minio.test:9000", "key", "secret", use_ssl=False)
+    client = s3.S3Client("minio.test:9000", "bkt", "key", "secret", use_ssl=False)
     with Stubber(client.client) as stubber:
         client.stubber = stubber
         yield client
@@ -25,42 +25,33 @@ def s3client():
 @pytest.mark.unit
 class TestS3Client:
     def test_endpoint_scheme(self):
-        plain = s3.S3Client("minio.test:9000", "k", "s", use_ssl=False)
+        plain = s3.S3Client("minio.test:9000", "b", "k", "s", use_ssl=False)
         assert plain.client.meta.endpoint_url == "http://minio.test:9000"
-        secure = s3.S3Client("s3.test", "k", "s", use_ssl=True, path_style=False)
+        assert plain.bucket == "b"
+        secure = s3.S3Client("s3.test", "b", "k", "s", use_ssl=True, path_style=False)
         assert secure.client.meta.endpoint_url == "https://s3.test"
-        explicit = s3.S3Client("http://explicit.test", "k", "s")
+        explicit = s3.S3Client("http://explicit.test", "b", "k", "s")
         assert explicit.client.meta.endpoint_url == "http://explicit.test"
 
     def test_dataclasses(self):
         obj = s3.S3Object("k", 1, "t", "e", is_directory=True)
         assert obj.to_dict()["isDirectory"] is True
-        assert s3.S3Bucket("b").to_dict() == {"name": "b", "creationDate": None}
 
     def test_test_connection_ok(self, s3client):
-        s3client.stubber.add_response("list_buckets", {"Buckets": []})
+        s3client.stubber.add_response("head_bucket", {}, {"Bucket": "bkt"})
         assert s3client.test_connection() == (True, "Connection successful")
 
     def test_test_connection_client_error(self, s3client):
-        s3client.stubber.add_client_error("list_buckets", "AccessDenied")
+        s3client.stubber.add_client_error("head_bucket", "AccessDenied")
         ok, msg = s3client.test_connection()
         assert not ok and "AccessDenied" in msg
 
     def test_test_connection_other_error(self, monkeypatch):
-        client = s3.S3Client("x.test", "k", "s")
+        client = s3.S3Client("x.test", "b", "k", "s")
         monkeypatch.setattr(
-            client.client, "list_buckets", lambda: (_ for _ in ()).throw(OSError("net"))
+            client.client, "head_bucket", lambda **_kw: (_ for _ in ()).throw(OSError("net"))
         )
         assert client.test_connection() == (False, "net")
-
-    def test_list_buckets(self, s3client):
-        s3client.stubber.add_response(
-            "list_buckets",
-            {"Buckets": [{"Name": "a", "CreationDate": WHEN}, {"Name": "b"}]},
-        )
-        buckets = s3client.list_buckets()
-        assert buckets[0].creation_date == WHEN.isoformat()
-        assert buckets[1].creation_date is None
 
     def test_list_objects(self, s3client):
         s3client.stubber.add_response(
@@ -83,7 +74,7 @@ class TestS3Client:
                 "ContinuationToken": "tok",
             },
         )
-        result = s3client.list_objects("bkt", prefix="dir/", max_keys=10, continuation_token="tok")
+        result = s3client.list_objects(prefix="dir/", max_keys=10, continuation_token="tok")
         assert result["objects"][0]["etag"] == "abc"
         assert result["objects"][1]["lastModified"] == ""
         assert result["prefixes"] == ["dir/sub/"]
@@ -92,15 +83,15 @@ class TestS3Client:
 
     def test_list_objects_minimal_params(self, s3client):
         s3client.stubber.add_response("list_objects_v2", {}, {"Bucket": "bkt", "MaxKeys": 1000})
-        assert s3client.list_objects("bkt", delimiter="")["objects"] == []
+        assert s3client.list_objects(delimiter="")["objects"] == []
 
     def test_get_object_and_stream(self, s3client):
         for _ in range(2):
             s3client.stubber.add_response(
-                "get_object", {"Body": _body(b"hello")}, {"Bucket": "b", "Key": "k"}
+                "get_object", {"Body": _body(b"hello")}, {"Bucket": "bkt", "Key": "k"}
             )
-        assert s3client.get_object("b", "k") == b"hello"
-        assert s3client.get_object_stream("b", "k").read() == b"hello"
+        assert s3client.get_object("k") == b"hello"
+        assert s3client.get_object_stream("k").read() == b"hello"
 
     def test_get_object_info(self, s3client):
         s3client.stubber.add_response(
@@ -112,8 +103,9 @@ class TestS3Client:
                 "ETag": '"e"',
                 "Metadata": {"a": "b"},
             },
+            {"Bucket": "bkt", "Key": "k"},
         )
-        info = s3client.get_object_info("b", "k")
+        info = s3client.get_object_info("k")
         assert info == {
             "contentLength": 3,
             "contentType": "text/plain",
@@ -127,31 +119,52 @@ class TestS3Client:
             "put_object",
             {"ETag": '"e"', "VersionId": "v1"},
             {
-                "Bucket": "b",
+                "Bucket": "bkt",
                 "Key": "k",
                 "Body": b"x",
                 "ContentType": "text/plain",
                 "Metadata": {"a": "b"},
             },
         )
-        result = s3client.put_object("b", "k", b"x", content_type="text/plain", metadata={"a": "b"})
+        result = s3client.put_object("k", b"x", content_type="text/plain", metadata={"a": "b"})
         assert result == {"etag": "e", "versionId": "v1"}
 
     def test_delete_and_copy(self, s3client):
-        s3client.stubber.add_response("delete_object", {}, {"Bucket": "b", "Key": "k"})
-        assert s3client.delete_object("b", "k") is True
-        s3client.stubber.add_response("copy_object", {"CopyObjectResult": {"ETag": '"c"'}})
-        assert s3client.copy_object("b", "k", "b2", "k2") == {"etag": "c"}
+        s3client.stubber.add_response("delete_object", {}, {"Bucket": "bkt", "Key": "k"})
+        assert s3client.delete_object("k") is True
+        s3client.stubber.add_response(
+            "copy_object",
+            {"CopyObjectResult": {"ETag": '"c"'}},
+            {"CopySource": {"Bucket": "bkt", "Key": "k"}, "Bucket": "bkt", "Key": "k2"},
+        )
+        assert s3client.copy_object("k", "k2") == {"etag": "c"}
+
+    def test_delete_prefix(self, s3client):
+        s3client.stubber.add_response(
+            "list_objects_v2",
+            {"Contents": [{"Key": "dir/a"}, {"Key": "dir/sub/b"}]},
+            {"Bucket": "bkt", "Prefix": "dir/"},
+        )
+        s3client.stubber.add_response(
+            "delete_objects",
+            {},
+            {"Bucket": "bkt", "Delete": {"Objects": [{"Key": "dir/a"}, {"Key": "dir/sub/b"}]}},
+        )
+        assert s3client.delete_prefix("dir/") == 2
+
+    def test_delete_prefix_refuses_empty_prefix(self, s3client):
+        with pytest.raises(ValueError, match="empty prefix"):
+            s3client.delete_prefix("")
 
     def test_presigned_url(self):
-        client = s3.S3Client("s3.test", "k", "s")
-        url = client.generate_presigned_url("b", "key.txt", expiration=60)
+        client = s3.S3Client("s3.test", "b", "k", "s")
+        url = client.generate_presigned_url("key.txt", expiration=60)
         assert url.startswith("https://s3.test/b/key.txt") and "X-Amz-Signature" in url
 
     def test_client_errors_propagate(self, s3client):
         s3client.stubber.add_client_error("delete_object", "NoSuchKey")
         with pytest.raises(ClientError):
-            s3client.delete_object("b", "k")
+            s3client.delete_object("k")
 
 
 def _body(data: bytes):
