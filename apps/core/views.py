@@ -3,6 +3,7 @@
 import os
 
 from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,6 +25,10 @@ class FrontendConfigView(APIView):
     request time instead lets a deployment set/change them via .env + a
     container restart — see web/src/config/env.ts.
     """
+
+    # Read by main.tsx before the app renders, i.e. before the user has
+    # logged in — so it must not require auth. It only exposes public URLs.
+    permission_classes = [AllowAny]
 
     def get(self, _request):
         """Return the "Add <type>" external-URL overrides, if configured."""

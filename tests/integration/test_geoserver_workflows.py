@@ -263,40 +263,64 @@ class TestGeoServerUploadWorkflow:
 
     @pytest.fixture
     def mock_geoserver_for_uploads(self):
-        """Mock GeoServerClient for upload operations."""
-        with patch("apps.geoserver.views.uploads.get_geoserver_client") as mock:
-            client = MagicMock()
-            client.upload_shapefile.return_value = None
-            client.upload_geotiff.return_value = None
-            client.upload_geopackage.return_value = None
-            mock.return_value = client
+        """Mock GeoServerClient for upload operations.
+
+        Patched in both places: the view checks the connection, and the
+        upload task imports get_geoserver_client from the client module.
+        """
+        client = MagicMock()
+        client.upload_shapefile.return_value = None
+        client.upload_geotiff.return_value = None
+        client.upload_geopackage.return_value = None
+        with (
+            patch("apps.geoserver.views.uploads.get_geoserver_client", return_value=client),
+            patch("apps.geoserver.client.get_geoserver_client", return_value=client),
+        ):
             yield client
 
-    def test_shapefile_upload_missing_name(
+    def test_upload_complete_requires_session(
         self, api_client: APIClient, setup_test_connection, mock_geoserver_for_uploads
     ) -> None:
-        """Test shapefile upload fails without name."""
+        """Assembling a chunked upload fails without a session, or an unknown one."""
         conn_id = setup_test_connection
-        response = api_client.post(
-            f"/api/upload/shapefile/{conn_id}/test",
-            {},
-            format="multipart",
-        )
+        response = api_client.post(f"/api/upload/complete/{conn_id}/test", {}, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "name is required" in response.json()["error"]
+        assert "sessionId is required" in response.json()["error"]
 
-    def test_geotiff_upload_missing_file(
-        self, api_client: APIClient, setup_test_connection, mock_geoserver_for_uploads
+        response = api_client.post(
+            f"/api/upload/complete/{conn_id}/test", {"sessionId": "nope"}, format="json"
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "Upload session not found" in response.json()["error"]
+
+    def test_upload_start_requires_file_and_store(
+        self, api_client: APIClient, setup_test_connection, mock_geoserver_for_uploads, tmp_path
     ) -> None:
-        """Test GeoTIFF upload fails without file."""
+        """Pushing an assembled file to GeoServer validates its inputs first."""
         conn_id = setup_test_connection
         response = api_client.post(
-            f"/api/upload/geotiff/{conn_id}/test",
-            {"name": "test_raster"},
-            format="multipart",
+            f"/api/upload/start/{conn_id}/test", {"storeName": "raster"}, format="json"
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "file is required" in response.json()["error"]
+        assert "filePath and storeName are required" in response.json()["error"]
+
+        response = api_client.post(
+            f"/api/upload/start/{conn_id}/test",
+            {"filePath": str(tmp_path / "missing.tif"), "storeName": "raster"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "File not found" in response.json()["error"]
+
+        upload = tmp_path / "raster.tif"
+        upload.write_bytes(b"II*\x00")
+        response = api_client.post(
+            f"/api/upload/start/{conn_id}/test",
+            {"filePath": str(upload), "storeName": "raster"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["storeType"] == "geotiff"
 
 
 @pytest.mark.integration

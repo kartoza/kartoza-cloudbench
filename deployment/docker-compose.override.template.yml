@@ -43,6 +43,7 @@ services:
       dockerfile: deployment/docker/Dockerfile-dev
       args:
         BASE_IMAGE: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
+    env_file: .env
     image: kartoza/cloudbench:dev
     environment:
       - DJANGO_SETTINGS_MODULE=cloudbench.settings.development

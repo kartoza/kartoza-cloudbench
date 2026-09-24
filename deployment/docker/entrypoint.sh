@@ -15,6 +15,8 @@ python manage.py collectstatic --noinput
 
 if [ -n "$ADMIN_USERNAME" ] && [ -n "$ADMIN_PASSWORD" ]; then
     echo "Creating admin user..."
+    echo "  ADMIN_USERNAME=[${ADMIN_USERNAME}] (length ${#ADMIN_USERNAME})"
+    echo "  ADMIN_PASSWORD length ${#ADMIN_PASSWORD}, sha256 $(printf '%s' "$ADMIN_PASSWORD" | sha256sum | cut -c1-12)"
     python manage.py shell -c "
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -26,8 +28,10 @@ if user is None:
     print(f'Superuser {username!r} created.')
 else:
     user.set_password(password)
-    user.save(update_fields=['password'])
-    print(f'Superuser {username!r} already exists, password updated.')
+    user.is_superuser = True
+    user.is_staff = True
+    user.save(update_fields=['password', 'is_superuser', 'is_staff'])
+    print(f'Superuser {username!r} already exists, password and superuser status updated.')
 "
 else
     echo "Skipping admin user creation (ADMIN_USERNAME/ADMIN_PASSWORD not set)."

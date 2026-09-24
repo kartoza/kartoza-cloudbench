@@ -29,7 +29,9 @@ def api_client_as(isolated_user_config):
 
 
 class TestFrontendConfigView:
-    def test_returns_none_for_unset_overrides(self, api_client_as):
+    def test_returns_none_for_unset_overrides(self, api_client_as, monkeypatch):
+        for name in ("GEOSERVER", "POSTGIS", "GEONODE"):
+            monkeypatch.delenv(f"VITE_CREATE_{name}_URL", raising=False)
         response = api_client_as().get("/api/frontend-config/")
         assert response.status_code == 200
         assert response.data == {
@@ -37,6 +39,11 @@ class TestFrontendConfigView:
             "createPostgisUrl": None,
             "createGeoNodeUrl": None,
         }
+
+    def test_is_readable_before_login(self):
+        """main.tsx loads it before rendering the login screen, so it must not require auth."""
+        response = APIClient().get("/api/frontend-config/")
+        assert response.status_code == 200
 
     def test_reads_overrides_from_environment(self, api_client_as):
         with patch.dict("os.environ", {"VITE_CREATE_GEOSERVER_URL": "https://example.com/add"}):

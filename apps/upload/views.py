@@ -13,6 +13,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -29,7 +30,11 @@ User = get_user_model()
 
 
 def _get_session(session_id: str) -> UploadSession | None:
-    return UploadSession.objects.filter(session_id=session_id).first()
+    """Look up an upload session; a malformed (non-UUID) id is just not found."""
+    try:
+        return UploadSession.objects.filter(session_id=session_id).first()
+    except (ValueError, ValidationError):
+        return None
 
 
 def _assemble_file(session: UploadSession) -> Path:

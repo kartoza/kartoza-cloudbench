@@ -122,6 +122,20 @@ describe('API sweep', () => {
     expect(reload).toHaveBeenCalled()
   })
 
+  it('handleResponse rejects a 401 without reloading when there is no token', async () => {
+    const { handleResponse } = await import('./common')
+    const reload = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, reload },
+      writable: true,
+    })
+    localStorage.removeItem('token')
+    await expect(
+      handleResponse(new Response(JSON.stringify({ detail: 'Not logged in' }), { status: 401 })),
+    ).rejects.toThrow('Not logged in')
+    expect(reload).not.toHaveBeenCalled()
+  })
+
   it('injects the auth token into API requests only', async () => {
     vi.resetModules()
     const original = window.fetch
