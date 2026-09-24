@@ -107,44 +107,74 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
   if (isIframe) {
     return (
       <Box
-        bg="white"
-        px={4}
-        py={2}
-        borderBottom="1px solid"
-        borderBottomColor="gray.100"
-        boxShadow="0 1px 3px rgba(0, 0, 0, 0.04)"
+          px={4}
+          py={2}
+          display="flex"
+          width={"100%"}
+          bg="white"
+          borderBottom="1px solid"
+          borderBottomColor="gray.100"
+          gap={"4px"}
+          boxShadow="0 1px 3px rgba(0, 0, 0, 0.04)"
       >
-        <Box w="100%" onClick={onSearchClick} cursor="pointer">
-          <InputGroup size="sm">
-            <InputLeftElement pointerEvents="none">
-              <FiSearch color="#9E9E9E" />
-            </InputLeftElement>
-            <Input
-              placeholder="Search..."
-              bg="gray.50"
-              border="1px solid"
-              borderColor="gray.200"
-              color="gray.700"
-              _placeholder={{ color: 'gray.400' }}
-              _hover={{ borderColor: 'gray.300', bg: 'gray.100' }}
-              _focus={{ borderColor: 'kartoza.500', bg: 'white' }}
-              borderRadius="full"
-              readOnly
-              cursor="pointer"
-            />
-            <HStack
-              position="absolute"
-              right={3}
-              top="50%"
-              transform="translateY(-50%)"
-              spacing={1}
-            >
-              <Kbd size="xs" bg="gray.100" color="gray.500" borderColor="gray.200" fontSize="10px">
-                ⌘K
-              </Kbd>
-            </HStack>
-          </InputGroup>
+        <Box flexGrow={1}>
+          <Box w="100%" onClick={onSearchClick} cursor="pointer">
+            <InputGroup size="sm">
+              <InputLeftElement pointerEvents="none">
+                <FiSearch color="#9E9E9E" />
+              </InputLeftElement>
+              <Input
+                placeholder="Search..."
+                bg="gray.50"
+                border="1px solid"
+                borderColor="gray.200"
+                color="gray.700"
+                _placeholder={{ color: 'gray.400' }}
+                _hover={{ borderColor: 'gray.300', bg: 'gray.100' }}
+                _focus={{ borderColor: 'kartoza.500', bg: 'white' }}
+                borderRadius="full"
+                readOnly
+                cursor="pointer"
+              />
+              <HStack
+                position="absolute"
+                right={3}
+                top="50%"
+                transform="translateY(-50%)"
+                spacing={1}
+              >
+                <Kbd size="xs" bg="gray.100" color="gray.500" borderColor="gray.200" fontSize="10px">
+                  ⌘K
+                </Kbd>
+              </HStack>
+            </InputGroup>
+          </Box>
         </Box>
+        {/* Action Icons */}
+        <HStack spacing={1}>
+          <Tooltip label="Map Explorer" placement="bottom">
+            <IconButton
+              aria-label="Map Explorer"
+              icon={<FiMap size={18} />}
+              variant="ghost"
+              color="gray.600"
+              _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
+              onClick={onMapClick}
+              size="sm"
+            />
+          </Tooltip>
+          <Tooltip label="Settings" placement="bottom">
+            <IconButton
+              aria-label="Settings"
+              icon={<FiSettings size={18} />}
+              variant="ghost"
+              color="gray.600"
+              _hover={{ bg: 'gray.100', color: 'kartoza.500' }}
+              onClick={() => openDialog('settings')}
+              size="sm"
+            />
+          </Tooltip>
+        </HStack>
       </Box>
     )
   }
