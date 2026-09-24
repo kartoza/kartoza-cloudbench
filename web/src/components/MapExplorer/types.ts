@@ -13,6 +13,14 @@ export interface MapLayerState {
   sourceLayer?: string
   hasCustomStyle?: boolean
   styleMode?: 'default' | 'custom'
+  /** Legend entries derived from the saved custom style, when there is one. */
+  customLegend?: LegendItem[]
+}
+
+export interface LegendItem {
+  label: string
+  color: string
+  kind: 'fill' | 'line' | 'circle'
 }
 
 /** A layer discovered across any connected S3 bucket that can be searched for and added to the map. */

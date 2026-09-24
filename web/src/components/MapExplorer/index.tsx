@@ -15,6 +15,7 @@ import {
 import StacCataloguePage from './StacCataloguePage'
 import type { MapTarget } from './StacCataloguePage'
 import LayersPanel from './LayersPanel'
+import LegendPanel from './LegendPanel'
 import type { LayerSearchOption, MapLayerState } from './types'
 import {
   isRenderedIdFor,
@@ -23,6 +24,7 @@ import {
   loadLayerOntoMap,
   layerNameFromKey,
   layerIdFor,
+  legendItemsFromStyle,
 } from './layerLoader'
 import {
   getMapExplorerLayersUrlParam,
@@ -221,7 +223,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         getPmtilesStyle(option.connectionId, option.key).then((style) => {
           if (!style) return
           customStylesRef.current.set(id, style)
-          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'custom' } : l)))
+          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'custom', customLegend: legendItemsFromStyle(style) } : l)))
           applyPmtilesVectorStyle(mapInstance, id, sourceLayer ?? 'default', newLayer.color, newLayer.opacity, style)
         })
       })
@@ -535,6 +537,8 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
                   onStyleModeChange={handleStyleModeChange}
                   dragConstraintsRef={overlayContainer}
                 />
+
+                <LegendPanel layers={layers} dragConstraintsRef={overlayContainer} />
 
                 {/* Failed-sources banner */}
                 {failedCount > 0 && (
