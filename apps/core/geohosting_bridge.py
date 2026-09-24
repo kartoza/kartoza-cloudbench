@@ -73,7 +73,7 @@ class GeoHostingInstanceView(APIView):
         product = (data.get("product") or "").lower()
         if not owner_username or not instance_id or not product:
             return Response(
-                {"detail": ("owner_username, instance_id and product are " "required.")},
+                {"detail": ("owner_username, instance_id and product are required.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -84,8 +84,7 @@ class GeoHostingInstanceView(APIView):
         is_active = bool(data.get("is_active", False))
         conn_id = _connection_id(instance_id)
 
-        get_user(owner_username)
-        manager = get_config(owner_username)
+        manager = get_config(get_user(owner_username))
         config = manager.config
         changed = False
 
@@ -161,8 +160,7 @@ class GeoHostingInstanceView(APIView):
             )
 
         conn_id = _connection_id(instance_id)
-        get_user(owner_username)
-        manager = get_config(owner_username)
+        manager = get_config(get_user(owner_username))
         config = manager.config
         changed = False
 

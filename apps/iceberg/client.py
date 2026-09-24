@@ -6,11 +6,14 @@ for managing data lake tables.
 
 import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from apps.core.config import get_config
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -358,11 +361,12 @@ class IcebergClientManager:
                     cls._instance._clients: dict[str, IcebergClient] = {}
         return cls._instance
 
-    def get_client(self, connection_id: str) -> IcebergClient:
+    def get_client(self, connection_id: str, user: "User") -> IcebergClient:
         """Get or create an Iceberg client.
 
         Args:
             connection_id: Connection ID
+            user: User the connection belongs to
 
         Returns:
             IcebergClient instance
@@ -370,11 +374,12 @@ class IcebergClientManager:
         Raises:
             ValueError: If connection not found
         """
+        cache_key = f"{user.pk}:{connection_id}"
         with self._lock:
-            if connection_id in self._clients:
-                return self._clients[connection_id]
+            if cache_key in self._clients:
+                return self._clients[cache_key]
 
-            config = get_config()
+            config = get_config(user)
             conn = config.get_iceberg_connection(connection_id)
             if not conn:
                 raise ValueError(f"Iceberg connection not found: {connection_id}")
@@ -393,16 +398,16 @@ class IcebergClientManager:
                 credentials=credentials,
             )
 
-            self._clients[connection_id] = client
+            self._clients[cache_key] = client
             return client
 
-    def remove_client(self, connection_id: str) -> None:
+    def remove_client(self, connection_id: str, user: "User") -> None:
         """Remove a cached client."""
         with self._lock:
-            self._clients.pop(connection_id, None)
+            self._clients.pop(f"{user.pk}:{connection_id}", None)
 
 
-def get_iceberg_client(connection_id: str) -> IcebergClient:
+def get_iceberg_client(connection_id: str, user: "User") -> IcebergClient:
     """Get an Iceberg client for a connection."""
     manager = IcebergClientManager()
-    return manager.get_client(connection_id)
+    return manager.get_client(connection_id, user)

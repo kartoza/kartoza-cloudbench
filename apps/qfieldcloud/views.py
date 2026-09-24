@@ -22,7 +22,7 @@ class QFieldCloudConnectionListView(APIView):
 
     def get(self, request):
         """List all QFieldCloud connections."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         connections = config.list_qfieldcloud_connections()
         return Response(
             [
@@ -48,7 +48,7 @@ class QFieldCloudConnectionListView(APIView):
             token=data.get("token", ""),
         )
 
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         config.add_qfieldcloud_connection(conn)
 
         return Response(
@@ -73,7 +73,6 @@ class QFieldCloudConnectionTestView(APIView):
             username=data.get("username", ""),
             password=data.get("password"),
             token=data.get("token"),
-            user_id=str(request.user.username),
         )
 
         success, message = client.test_connection()
@@ -91,7 +90,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get connection details."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -112,7 +111,7 @@ class QFieldCloudConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         conn = config.get_qfieldcloud_connection(conn_id)
         if not conn:
             return Response(
@@ -131,20 +130,20 @@ class QFieldCloudConnectionDetailView(APIView):
 
         config.update_qfieldcloud_connection(conn)
 
-        QFieldCloudClientManager().remove_client(conn_id)
+        QFieldCloudClientManager().remove_client(conn_id, request.user)
 
         return Response({"status": "updated"})
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         if not config.delete_qfieldcloud_connection(conn_id):
             return Response(
                 {"error": "Connection not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        QFieldCloudClientManager().remove_client(conn_id)
+        QFieldCloudClientManager().remove_client(conn_id, request.user)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -152,10 +151,10 @@ class QFieldCloudConnectionDetailView(APIView):
 class QFieldCloudProjectListView(APIView):
     """List projects for a connection."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """List all projects."""
         try:
-            client = get_qfieldcloud_client(conn_id)
+            client = get_qfieldcloud_client(conn_id, request.user)
             projects = client.list_projects()
             return Response({"projects": [p.to_dict() for p in projects]})
         except ValueError as e:
@@ -173,10 +172,10 @@ class QFieldCloudProjectListView(APIView):
 class QFieldCloudProjectDetailView(APIView):
     """Get project details."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """Get project information."""
         try:
-            client = get_qfieldcloud_client(conn_id)
+            client = get_qfieldcloud_client(conn_id, request.user)
             project = client.get_project(project_id)
 
             if not project:
@@ -201,10 +200,10 @@ class QFieldCloudProjectDetailView(APIView):
 class QFieldCloudProjectFilesView(APIView):
     """List project files."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """List files in a project."""
         try:
-            client = get_qfieldcloud_client(conn_id)
+            client = get_qfieldcloud_client(conn_id, request.user)
             files = client.list_project_files(project_id)
             return Response({"files": files})
         except ValueError as e:
@@ -222,10 +221,10 @@ class QFieldCloudProjectFilesView(APIView):
 class QFieldCloudProjectStatusView(APIView):
     """Get project sync status."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """Get project status."""
         try:
-            client = get_qfieldcloud_client(conn_id)
+            client = get_qfieldcloud_client(conn_id, request.user)
             status_info = client.get_project_status(project_id)
             return Response({"status": status_info})
         except ValueError as e:

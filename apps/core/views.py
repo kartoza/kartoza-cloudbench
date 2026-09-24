@@ -2,11 +2,19 @@
 
 import os
 
+from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .config import get_config
 from .providers import get_providers_manager
+
+
+class LoginView(ObtainAuthToken):
+    """Username/password -> DRF auth token, independent of any existing session."""
+
+    authentication_classes = []
 
 
 class FrontendConfigView(APIView):
@@ -17,6 +25,10 @@ class FrontendConfigView(APIView):
     request time instead lets a deployment set/change them via .env + a
     container restart — see web/src/config/env.ts.
     """
+
+    # Read by main.tsx before the app renders, i.e. before the user has
+    # logged in — so it must not require auth. It only exposes public URLs.
+    permission_classes = [AllowAny]
 
     def get(self, _request):
         """Return the "Add <type>" external-URL overrides, if configured."""
@@ -37,7 +49,7 @@ class ProvidersView(APIView):
 
         Returns list of providers with their enabled/experimental status.
         """
-        providers = get_providers_manager(request.user.username).list_providers()
+        providers = get_providers_manager(request.user).list_providers()
         return Response(
             {
                 "providers": [
@@ -66,7 +78,7 @@ class ProvidersView(APIView):
         """
         data = request.data
         providers_updates = data.get("providers", [])
-        manager = get_providers_manager(request.user.username)
+        manager = get_providers_manager(request.user)
 
         for update in providers_updates:
             provider_id = update.get("id")
@@ -100,7 +112,7 @@ class SettingsView(APIView):
 
         Returns theme, ping interval, and other app-wide settings.
         """
-        config = get_config(request.user.username).config
+        config = get_config(request.user).config
         return Response(
             {
                 "theme": config.theme,
@@ -120,7 +132,7 @@ class SettingsView(APIView):
         }
         """
         data = request.data
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
 
         if "theme" in data:
             config_manager.config.theme = data["theme"]

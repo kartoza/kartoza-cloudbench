@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { uploadFile, uploadFileForImport, uploadQGISProject } from './client'
-import { uploadS3Object, uploadToS3 } from './s3'
+import { uploadToS3 } from './s3'
 
 type Listener = (event?: unknown) => void
 
@@ -119,45 +119,31 @@ describe('XHR upload helpers', () => {
     await expect(uploadQGISProject(file)).rejects.toThrow('Network error')
   })
 
-  it('uploadS3Object sends the object key and optional flags', async () => {
-    FakeXHR.next = { status: 200, body: '{"key":"p/a.gpkg"}' }
-    const onProgress = vi.fn()
-    await expect(
-      uploadS3Object('c1', 'bkt', file, 'p/', { convert: true, subfolder: true }, onProgress),
-    ).resolves.toEqual({ key: 'p/a.gpkg' })
-    const xhr = FakeXHR.instances[0]
-    const form = xhr.sent as FormData
-    expect(form.get('key')).toBe('p/a.gpkg')
-    expect(form.get('convert')).toBe('true')
-    expect(form.get('subfolder')).toBe('true')
-    expect(xhr.url).toContain('/s3/connections/c1/buckets/bkt/objects')
-    expect(onProgress).toHaveBeenCalledWith(25)
-
-    FakeXHR.next = { status: 500, body: '{"error":"denied"}' }
-    await expect(uploadS3Object('c1', 'bkt', file, '')).rejects.toThrow('denied')
-    FakeXHR.next = { status: 500, body: '{}' }
-    await expect(uploadS3Object('c1', 'bkt', file, '')).rejects.toThrow('Upload failed')
-    FakeXHR.next = 'error'
-    await expect(uploadS3Object('c1', 'bkt', file, '')).rejects.toThrow('Network error')
-  })
-
   it('uploadToS3 sends only the options that were provided', async () => {
     FakeXHR.next = { status: 200, body: '{"ok":true}' }
-    await uploadToS3('c1', 'bkt', file, 'k', false, 'parquet', vi.fn(), true, 'pre/')
-    let form = FakeXHR.instances[0].sent as FormData
+    const onProgress = vi.fn()
+    await expect(
+      uploadToS3('c1', file, 'k', false, 'parquet', onProgress, true, 'pre/'),
+    ).resolves.toEqual({ ok: true })
+    const xhr = FakeXHR.instances[0]
+    let form = xhr.sent as FormData
     expect(form.get('key')).toBe('k')
     expect(form.get('convert')).toBe('false')
     expect(form.get('targetFormat')).toBe('parquet')
     expect(form.get('subfolder')).toBe('true')
     expect(form.get('prefix')).toBe('pre/')
+    expect(xhr.url).toContain('/s3/upload/c1')
+    expect(onProgress).toHaveBeenCalledWith(25)
 
-    await uploadToS3('c1', 'bkt', file)
+    await uploadToS3('c1', file)
     form = FakeXHR.instances[1].sent as FormData
     expect([...form.keys()]).toEqual(['file'])
 
     FakeXHR.next = { status: 400, body: '{"error":"bad"}' }
-    await expect(uploadToS3('c1', 'bkt', file)).rejects.toThrow('bad')
+    await expect(uploadToS3('c1', file)).rejects.toThrow('bad')
+    FakeXHR.next = { status: 500, body: '{}' }
+    await expect(uploadToS3('c1', file)).rejects.toThrow('Upload failed')
     FakeXHR.next = 'error'
-    await expect(uploadToS3('c1', 'bkt', file)).rejects.toThrow('Network error')
+    await expect(uploadToS3('c1', file)).rejects.toThrow('Network error')
   })
 })

@@ -6,6 +6,8 @@ Tests the ProvidersManager and provider enablement/disablement.
 import json
 import os
 
+from django.contrib.auth.models import User
+
 from apps.core.providers import (
     DEFAULT_PROVIDERS,
     ProviderConfig,
@@ -111,13 +113,14 @@ class TestDefaultProviders:
 
 
 class TestProvidersManager:
-    """Tests for the per-user ProvidersManager."""
+    """Tests for ProvidersManager, one per user (not a singleton)."""
 
-    def test_users_are_isolated(self, providers_manager: ProvidersManager) -> None:
-        """Test that each user gets their own providers config."""
-        providers_manager.set_provider_enabled("s3", True)
-        assert ProvidersManager("test-user").is_provider_enabled("s3") is True
-        assert ProvidersManager("other-user").is_provider_enabled("s3") is False
+    def test_scoped_per_user(self, providers_manager: ProvidersManager) -> None:
+        """Different users must not see each other's provider settings."""
+        providers_manager.set_provider_enabled("iceberg", True)
+
+        other_manager = ProvidersManager(User(username="other-user"))
+        assert other_manager.is_provider_enabled("iceberg") is False
 
     def test_list_providers(self, providers_manager: ProvidersManager) -> None:
         """Test listing all providers."""
@@ -148,7 +151,7 @@ class TestProvidersManager:
     def test_is_provider_enabled(self, providers_manager: ProvidersManager) -> None:
         """Test checking if provider is enabled."""
         assert providers_manager.is_provider_enabled("geoserver") is True
-        assert providers_manager.is_provider_enabled("s3") is False
+        assert providers_manager.is_provider_enabled("iceberg") is False
 
     def test_set_provider_enabled(self, providers_manager: ProvidersManager) -> None:
         """Test enabling/disabling a provider."""
@@ -172,7 +175,7 @@ class TestProvidersManager:
         enabled_ids = providers_manager.get_enabled_provider_ids()
         assert isinstance(enabled_ids, set)
         assert "geoserver" in enabled_ids
-        assert "s3" not in enabled_ids
+        assert "iceberg" not in enabled_ids
 
     def test_config_persistence(self, providers_manager: ProvidersManager) -> None:
         """Test that config is persisted to disk."""
@@ -193,8 +196,9 @@ class TestProvidersManager:
         # Modify and save
         providers_manager.set_provider_enabled("s3", True)
 
-        # A new manager for the same user loads what was saved to disk
-        new_manager = ProvidersManager("test-user")
+        # Reset singleton and reload
+        ProvidersManager._instance = None
+        new_manager = ProvidersManager(providers_manager._user)
         assert new_manager.is_provider_enabled("s3") is True
 
     def test_new_providers_merged(self, providers_manager: ProvidersManager) -> None:
@@ -218,7 +222,9 @@ class TestProvidersManager:
         with open(config_path, "w") as f:
             json.dump(truncated_config, f)
 
-        new_manager = ProvidersManager("test-user")
+        # Reset and reload
+        ProvidersManager._instance = None
+        new_manager = ProvidersManager(providers_manager._user)
 
         # Should have all default providers merged in
         providers = new_manager.list_providers()
@@ -230,14 +236,19 @@ class TestProvidersManager:
 class TestProviderHelperFunctions:
     """Tests for provider helper functions."""
 
-    def test_get_providers_manager(self, providers_manager: ProvidersManager) -> None:
-        """Test get_providers_manager returns a manager for the requested user."""
-        manager = get_providers_manager("test-user")
-        assert isinstance(manager, ProvidersManager)
-        assert manager._user_id == "test-user"
+    def test_get_providers_manager(self, temp_config_dir: str) -> None:
+        """get_providers_manager returns a manager scoped to the given user."""
+        manager1 = get_providers_manager(User(username="alice"))
+        manager1.set_provider_enabled("iceberg", True)
+
+        # Same user -> sees the persisted change; another user doesn't.
+        manager2 = get_providers_manager(User(username="alice"))
+        assert manager2.is_provider_enabled("iceberg") is True
+        other = get_providers_manager(User(username="bob"))
+        assert other.is_provider_enabled("iceberg") is False
 
     def test_is_provider_enabled_helper(self, providers_manager: ProvidersManager) -> None:
         """Test is_provider_enabled helper."""
-        assert is_provider_enabled("geoserver") is True
-        assert is_provider_enabled("s3") is False
-        assert is_provider_enabled("nonexistent") is False
+        assert is_provider_enabled("geoserver", providers_manager._user) is True
+        assert is_provider_enabled("iceberg", providers_manager._user) is False
+        assert is_provider_enabled("nonexistent", providers_manager._user) is False

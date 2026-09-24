@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "apps.geonode",
     "apps.iceberg",
     "apps.qgis",
+    "apps.stac",
 ]
 
 MIDDLEWARE = [
@@ -149,7 +150,6 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.FormParser",
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
         # Must come before TokenAuthentication: it returns None (falls
         # through) on a token that isn't a valid signed SSO token, whereas
         # TokenAuthentication *raises* AuthenticationFailed on a token that
@@ -195,15 +195,29 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 COOP_COEP_ENABLED = False
 
 # CloudBench specific settings
+CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8000").rstrip("/")
+CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800"))
+)
+CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
+# Shared secret sent as `Authorization: Bearer <token>` on every request to
+# CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no
+# auth of its own otherwise. A static token that never expires for now;
+# left blank, no Authorization header is sent (matches a lite instance that
+# hasn't set LITE_API_TOKEN either).
+CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
+
 CLOUDBENCH_CONFIG_DIR = os.environ.get(
     "CLOUDBENCH_CONFIG_DIR",
     os.path.expanduser("~/.config/kartoza-cloudbench"),
 )
 
-# Encryption settings for credential storage
+# Encrypts connection credentials (S3 access/secret keys, etc. — see
+# apps/core/fields.py) at rest.
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-CLOUDBENCH_ENCRYPTION_KEY = os.environ.get("CLOUDBENCH_ENCRYPTION_KEY", "")
-CLOUDBENCH_ENCRYPTION_SALT = os.environ.get("CLOUDBENCH_ENCRYPTION_SALT", "cloudbench-v1")
+CLOUDBENCH_ENCRYPTION_KEY = os.environ.get("CLOUDBENCH_ENCRYPTION_KEY")
+if not CLOUDBENCH_ENCRYPTION_KEY and DEBUG:
+    CLOUDBENCH_ENCRYPTION_KEY = "xA5fV3Lnlk9DldyIWpklAVsr1vWQ-1tQ7TsiDQJ6Ou8="
 CLOUDBENCH_CONFIG_FILE = os.path.join(CLOUDBENCH_CONFIG_DIR, "config.json")
 CLOUDBENCH_DATA_DIR = os.environ.get(
     "CLOUDBENCH_DATA_DIR",
@@ -256,8 +270,6 @@ LOGGING = {
         },
     },
 }
-
-CLOUDBENCH_MUST_AUTHENTICATED = False
 
 # The one shared secret between GeoHosting and CloudBench. Used two ways:
 # - GeoHosting sends it as "Authorization: Bearer <token>" when calling

@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 
 from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
+from apps.s3.models import S3Connection
 
 
 class DashboardView(APIView):
@@ -25,7 +26,7 @@ class DashboardView(APIView):
         """Get dashboard summary with server status."""
         import time
 
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         servers = []
         online_count = 0
         offline_count = 0
@@ -55,7 +56,7 @@ class DashboardView(APIView):
             }
 
             try:
-                client = get_geoserver_client(conn.id, str(request.user.username))
+                client = get_geoserver_client(conn.id, request.user)
 
                 # Get workspace count as connectivity check
                 workspaces = client.list_workspaces()
@@ -142,13 +143,13 @@ class DashboardConnectionsView(APIView):
 
     def get(self, request):
         """Get status of all connections."""
-        config = get_config(request.user.username)
+        config = get_config(request.user)
         connections = []
 
         # Check GeoServer connections
         for conn in config.list_connections():
             try:
-                client = get_geoserver_client(conn.id, str(request.user.username))
+                client = get_geoserver_client(conn.id, request.user)
                 # Try to get version as health check
                 about = client.get_about()
                 connections.append(
@@ -174,14 +175,15 @@ class DashboardConnectionsView(APIView):
                 )
 
         # S3 connections
-        for conn in config.list_s3_connections():
+        for conn in S3Connection.objects.filter(owner=request.user):
             connections.append(
                 {
-                    "id": conn.id,
+                    "id": str(conn.id),
                     "name": conn.name,
                     "type": "s3",
                     "endpoint": conn.endpoint,
-                    "status": "unknown",  # Would need to test each
+                    "bucket": conn.bucket,
+                    "status": "unknown",
                 }
             )
 
@@ -199,7 +201,7 @@ class DashboardGeoServerView(APIView):
     def get(self, request, conn_id):
         """Get GeoServer statistics."""
         try:
-            client = get_geoserver_client(conn_id, str(request.user.username))
+            client = get_geoserver_client(conn_id, request.user)
 
             # Get counts
             workspaces = client.list_workspaces()

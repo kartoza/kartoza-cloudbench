@@ -3,13 +3,16 @@
 Provides operations for tile cache management including seeding and truncation.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
 from apps.core.managers import make_client
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 class GWCClient:
@@ -320,11 +323,12 @@ class GWCClient:
         return {"status": "truncated"}
 
 
-def get_gwc_client(conn_id: str) -> GWCClient:
+def get_gwc_client(conn_id: str, user: "User") -> GWCClient:
     """Get a GWC client for a connection.
 
     Args:
         conn_id: Connection ID
+        user: User the connection belongs to
 
     Returns:
         GWCClient instance
@@ -332,9 +336,9 @@ def get_gwc_client(conn_id: str) -> GWCClient:
     Raises:
         GeoServerError: If connection not found
     """
-    from apps.core.config import config_manager
+    from apps.core.config import get_config
 
-    conn = config_manager.get_connection(conn_id)
+    conn = get_config(user).get_connection(conn_id)
     if not conn:
         raise GeoServerError(f"Connection not found: {conn_id}", status_code=404)
 

@@ -1,18 +1,26 @@
 """S3/MinIO client for storage operations.
 
 Provides a unified interface for S3-compatible object storage
-including AWS S3, MinIO, and other compatible services.
+including AWS S3, MinIO, and other compatible services. Each client
+is scoped to exactly one bucket, matching the one-connection-per-bucket
+model (see S3Connection) — most S3-compatible providers issue
+credentials scoped to a single bucket anyway, so this also avoids
+requiring account-wide permissions like ListAllMyBuckets.
 """
 
 import threading
 from dataclasses import dataclass
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from django.core.exceptions import ValidationError
 
-from apps.core.config import get_config
+from .models import S3Connection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -38,37 +46,24 @@ class S3Object:
         }
 
 
-@dataclass
-class S3Bucket:
-    """S3 bucket information."""
-
-    name: str
-    creation_date: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "name": self.name,
-            "creationDate": self.creation_date,
-        }
-
-
 class S3Client:
-    """Client for S3-compatible object storage."""
+    """Client for a single S3-compatible bucket."""
 
     def __init__(
         self,
         endpoint: str,
+        bucket: str,
         access_key: str,
         secret_key: str,
         region: str = "us-east-1",
         use_ssl: bool = True,
         path_style: bool = True,
     ):
-        """Initialize S3 client.
+        """Initialize the S3 client for one bucket.
 
         Args:
             endpoint: S3 endpoint URL
+            bucket: The bucket this client operates on
             access_key: Access key ID
             secret_key: Secret access key
             region: AWS region (default: us-east-1)
@@ -76,6 +71,7 @@ class S3Client:
             path_style: Use path-style addressing (required for MinIO)
         """
         self.endpoint = endpoint
+        self.bucket = bucket
         self.region = region
 
         # Configure boto3 for S3-compatible storage
@@ -109,49 +105,32 @@ class S3Client:
         )
 
     def test_connection(self) -> tuple[bool, str]:
-        """Test the S3 connection.
+        """Test that this client's bucket is reachable.
+
+        Uses head_bucket rather than list_buckets, since bucket-scoped
+        credentials often can't call the account-wide ListAllMyBuckets.
 
         Returns:
             Tuple of (success, message)
         """
         try:
-            self.client.list_buckets()
+            self.client.head_bucket(Bucket=self.bucket)
             return True, "Connection successful"
         except ClientError as e:
             return False, str(e)
         except Exception as e:
             return False, str(e)
 
-    def list_buckets(self) -> list[S3Bucket]:
-        """List all accessible buckets.
-
-        Returns:
-            List of S3Bucket objects
-        """
-        response = self.client.list_buckets()
-        buckets = []
-        for bucket in response.get("Buckets", []):
-            creation_date = bucket.get("CreationDate")
-            buckets.append(
-                S3Bucket(
-                    name=bucket["Name"],
-                    creation_date=creation_date.isoformat() if creation_date else None,
-                )
-            )
-        return buckets
-
     def list_objects(
         self,
-        bucket: str,
         prefix: str = "",
         delimiter: str = "/",
         max_keys: int = 1000,
         continuation_token: str | None = None,
     ) -> dict[str, Any]:
-        """List objects in a bucket with optional prefix.
+        """List objects in this client's bucket with optional prefix.
 
         Args:
-            bucket: Bucket name
             prefix: Key prefix to filter
             delimiter: Delimiter for virtual directories
             max_keys: Maximum keys to return
@@ -161,7 +140,7 @@ class S3Client:
             Dictionary with objects, prefixes, and pagination info
         """
         params = {
-            "Bucket": bucket,
+            "Bucket": self.bucket,
             "MaxKeys": max_keys,
         }
         if prefix:
@@ -199,43 +178,40 @@ class S3Client:
             "keyCount": response.get("KeyCount", 0),
         }
 
-    def get_object(self, bucket: str, key: str) -> bytes:
+    def get_object(self, key: str) -> bytes:
         """Get object content.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             Object content as bytes
         """
-        response = self.client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        return cast(bytes, response["Body"].read())
 
-    def get_object_stream(self, bucket: str, key: str) -> BinaryIO:
+    def get_object_stream(self, key: str) -> BinaryIO:
         """Get object content as a stream.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             StreamingBody for the object
         """
-        response = self.client.get_object(Bucket=bucket, Key=key)
-        return response["Body"]
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        return cast(BinaryIO, response["Body"])
 
-    def get_object_info(self, bucket: str, key: str) -> dict[str, Any]:
+    def get_object_info(self, key: str) -> dict[str, Any]:
         """Get object metadata.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             Object metadata dictionary
         """
-        response = self.client.head_object(Bucket=bucket, Key=key)
+        response = self.client.head_object(Bucket=self.bucket, Key=key)
         last_modified = response.get("LastModified")
         return {
             "contentLength": response.get("ContentLength", 0),
@@ -247,7 +223,6 @@ class S3Client:
 
     def put_object(
         self,
-        bucket: str,
         key: str,
         body: bytes | BinaryIO,
         content_type: str | None = None,
@@ -256,7 +231,6 @@ class S3Client:
         """Upload an object.
 
         Args:
-            bucket: Bucket name
             key: Object key
             body: Object content
             content_type: Content type header
@@ -266,7 +240,7 @@ class S3Client:
             Upload response
         """
         params: dict[str, Any] = {
-            "Bucket": bucket,
+            "Bucket": self.bucket,
             "Key": key,
             "Body": body,
         }
@@ -281,22 +255,46 @@ class S3Client:
             "versionId": response.get("VersionId"),
         }
 
-    def delete_object(self, bucket: str, key: str) -> bool:
+    def delete_object(self, key: str) -> bool:
         """Delete an object.
 
         Args:
-            bucket: Bucket name
             key: Object key
 
         Returns:
             True if deleted successfully
         """
-        self.client.delete_object(Bucket=bucket, Key=key)
+        self.client.delete_object(Bucket=self.bucket, Key=key)
         return True
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under a "folder" prefix, recursively.
+
+        A "folder" in S3 is just a shared key prefix (see list_objects'
+        CommonPrefixes) — there's no real folder object to delete, so this
+        lists and batch-deletes everything under it instead.
+
+        Args:
+            prefix: Key prefix, e.g. "myfolder/"
+
+        Returns:
+            Number of objects deleted
+        """
+        if not prefix:
+            raise ValueError("Refusing to delete an empty prefix (would clear the whole bucket).")
+
+        deleted = 0
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            for i in range(0, len(keys), 1000):
+                batch = keys[i : i + 1000]
+                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+                deleted += len(batch)
+        return deleted
 
     def generate_presigned_url(
         self,
-        bucket: str,
         key: str,
         expiration: int = 3600,
         method: str = "get_object",
@@ -304,7 +302,6 @@ class S3Client:
         """Generate a presigned URL.
 
         Args:
-            bucket: Bucket name
             key: Object key
             expiration: URL expiration in seconds
             method: S3 method (get_object, put_object)
@@ -312,34 +309,29 @@ class S3Client:
         Returns:
             Presigned URL
         """
-        return self.client.generate_presigned_url(
-            method,
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expiration,
+        return cast(
+            str,
+            self.client.generate_presigned_url(
+                method,
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=expiration,
+            ),
         )
 
-    def copy_object(
-        self,
-        source_bucket: str,
-        source_key: str,
-        dest_bucket: str,
-        dest_key: str,
-    ) -> dict[str, Any]:
-        """Copy an object.
+    def copy_object(self, source_key: str, dest_key: str) -> dict[str, Any]:
+        """Copy an object within this client's bucket.
 
         Args:
-            source_bucket: Source bucket name
             source_key: Source object key
-            dest_bucket: Destination bucket name
             dest_key: Destination object key
 
         Returns:
             Copy response
         """
-        copy_source = {"Bucket": source_bucket, "Key": source_key}
+        copy_source = {"Bucket": self.bucket, "Key": source_key}
         response = self.client.copy_object(
             CopySource=copy_source,
-            Bucket=dest_bucket,
+            Bucket=self.bucket,
             Key=dest_key,
         )
         return {
@@ -352,6 +344,7 @@ class S3ClientManager:
 
     _instance: "S3ClientManager | None" = None
     _lock = threading.RLock()
+    _clients: dict[str, S3Client]
 
     def __new__(cls) -> "S3ClientManager":
         """Ensure singleton instance."""
@@ -359,14 +352,15 @@ class S3ClientManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._clients: dict[str, S3Client] = {}
+                    cls._instance._clients = {}
         return cls._instance
 
-    def get_client(self, connection_id: str) -> S3Client:
+    def get_client(self, connection_id: str, user: "User") -> S3Client:
         """Get or create an S3 client for a connection.
 
         Args:
             connection_id: S3 connection ID
+            user: User the connection belongs to
 
         Returns:
             S3Client instance
@@ -374,19 +368,23 @@ class S3ClientManager:
         Raises:
             ValueError: If connection not found
         """
+        cache_key = f"{user.pk}:{connection_id}"
         with self._lock:
-            if connection_id in self._clients:
-                return self._clients[connection_id]
+            if cache_key in self._clients:
+                return self._clients[cache_key]
 
             # Get connection config
-            config = get_config()
-            conn = config.get_s3_connection(connection_id)
+            try:
+                conn = S3Connection.objects.filter(owner=user, id=connection_id).first()
+            except (ValueError, ValidationError):
+                conn = None
             if not conn:
                 raise ValueError(f"S3 connection not found: {connection_id}")
 
             # Create client
             client = S3Client(
                 endpoint=conn.endpoint,
+                bucket=conn.bucket,
                 access_key=conn.access_key,
                 secret_key=conn.secret_key,
                 region=conn.region or "us-east-1",
@@ -394,17 +392,18 @@ class S3ClientManager:
                 path_style=conn.path_style,
             )
 
-            self._clients[connection_id] = client
+            self._clients[cache_key] = client
             return client
 
-    def remove_client(self, connection_id: str) -> None:
+    def remove_client(self, connection_id: str, user: "User") -> None:
         """Remove a cached client.
 
         Args:
             connection_id: Connection ID to remove
+            user: User the connection belongs to
         """
         with self._lock:
-            self._clients.pop(connection_id, None)
+            self._clients.pop(f"{user.pk}:{connection_id}", None)
 
     def clear_all(self) -> None:
         """Clear all cached clients."""
@@ -412,14 +411,15 @@ class S3ClientManager:
             self._clients.clear()
 
 
-def get_s3_client(connection_id: str) -> S3Client:
+def get_s3_client(connection_id: str, user: "User") -> S3Client:
     """Get an S3 client for a connection.
 
     Args:
         connection_id: S3 connection ID
+        user: User the connection belongs to
 
     Returns:
         S3Client instance
     """
     manager = S3ClientManager()
-    return manager.get_client(connection_id)
+    return manager.get_client(connection_id, user)

@@ -6,47 +6,10 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import type { S3ObjectNodeProps } from '../types'
+import { isMapExplorerFormat, isMapPreviewable, isQueryable } from '../../../utils/s3ObjectFormat'
 
-// Helper to format file size
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
-// Helper to get file extension
-function getFileExtension(key: string): string {
-  const parts = key.split('.')
-  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : ''
-}
-
-// Helper to determine if file is a cloud-native format
-function isCloudNativeFormat(key: string): boolean {
-  const ext = getFileExtension(key)
-  return ['cog', 'copc', 'parquet', 'geoparquet'].includes(ext) ||
-    key.endsWith('.copc.laz') ||
-    key.endsWith('.copc.las')
-}
-
-// Helper to determine if file is previewable in the map viewer
-function isMapPreviewable(key: string): boolean {
-  const ext = getFileExtension(key)
-  const keyLower = key.toLowerCase()
-  // COG and GeoTIFF (raster)
-  if (['tif', 'tiff', 'cog', 'gtiff', 'geotiff'].includes(ext)) return true
-  // Point clouds
-  if (['las', 'laz', 'copc'].includes(ext) || keyLower.endsWith('.copc.laz') || keyLower.endsWith('.copc.las')) return true
-  // Vector formats
-  if (['geojson', 'parquet', 'geoparquet', 'json', 'gpkg'].includes(ext)) return true
-  return false
-}
-
-// Helper to determine if file can be queried with DuckDB
-function isQueryable(key: string): boolean {
-  const ext = getFileExtension(key)
-  return ['parquet', 'geoparquet'].includes(ext)
+function isReadme(key: string): boolean {
+  return /^readme\.md$/i.test(key.split('/').filter(Boolean).pop() || '')
 }
 
 export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps) {
@@ -57,14 +20,17 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
   const setS3Preview = useUIStore((state) => state.setS3Preview)
+  const setS3MapPreview = useUIStore((state) => state.setS3MapPreview)
+  const setS3TextPreview = useUIStore((state) => state.setS3TextPreview)
   const setDuckDBQuery = useUIStore((state) => state.setDuckDBQuery)
+  const clearPreviews = useUIStore((state) => state.clearPreviews)
   const toast = useToast()
   const queryClient = useQueryClient()
 
   // If this is a folder, fetch children when expanded
   const { data: children, isLoading } = useQuery({
-    queryKey: ['s3objects', connectionId, bucket, object.key],
-    queryFn: () => api.getS3Objects(connectionId, bucket, object.key),
+    queryKey: ['s3objects', connectionId, object.key],
+    queryFn: () => api.getS3Objects(connectionId, object.key),
     enabled: object.isFolder && isExpanded,
     staleTime: 30000,
   })
@@ -80,16 +46,67 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
     s3Bucket: bucket,
     s3Key: object.key,
     s3Size: object.size,
-    s3ContentType: object.contentType,
     s3IsFolder: object.isFolder,
   }
 
   const isSelected = selectedNode?.id === nodeId
 
-  const handleClick = () => {
+  const handleFolderClick = async () => {
     selectNode(node)
+    toggleNode(nodeId)
+
+    // A folder with its own README.md shows that instead of the listing —
+    // same idea as a GitHub repo folder.
+    try {
+      const items = await queryClient.fetchQuery({
+        queryKey: ['s3objects', connectionId, object.key],
+        queryFn: () => api.getS3Objects(connectionId, object.key),
+        staleTime: 30000,
+      })
+      const readme = items.find((item) => !item.isFolder && isReadme(item.key))
+      if (readme) {
+        setS3TextPreview({
+          connectionId,
+          objectKey: readme.key,
+          title: `${displayName} - README`,
+          size: readme.size,
+          lastModified: readme.lastModified,
+        })
+      } else {
+        clearPreviews()
+      }
+    } catch {
+      clearPreviews()
+    }
+  }
+
+  const handleFileClick = () => {
+    selectNode(node)
+    if (isMapExplorerFormat(object.key)) {
+      setS3MapPreview({
+        connectionId,
+        bucketName: bucket,
+        objectKey: object.key,
+        format: object.key.toLowerCase().endsWith('.pmtiles') ? 'pmtiles' : 'cog',
+      })
+    } else if (isMapPreviewable(object.key)) {
+      setS3Preview({ connectionId, bucketName: bucket, objectKey: object.key })
+    } else {
+      setS3TextPreview({
+        connectionId,
+        objectKey: object.key,
+        title: displayName,
+        size: object.size,
+        lastModified: object.lastModified,
+      })
+    }
+  }
+
+  const handleClick = () => {
     if (object.isFolder) {
-      toggleNode(nodeId)
+      handleFolderClick()
+    } else {
+      handleFileClick()
     }
   }
 
@@ -101,34 +118,14 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
       message: object.isFolder
         ? `Are you sure you want to delete folder "${displayName}" and all its contents?`
         : `Are you sure you want to delete "${displayName}"?`,
-      data: { s3ConnectionId: connectionId, s3BucketName: bucket, s3ObjectKey: object.key },
+      data: { s3ConnectionId: connectionId, s3ObjectKey: object.key },
     })
-  }
-
-  const handlePreview = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      // Use the integrated S3LayerPreview component for map-previewable formats
-      setS3Preview({
-        connectionId,
-        bucketName: bucket,
-        objectKey: object.key,
-      })
-    } catch (err) {
-      toast({
-        title: 'Preview Failed',
-        description: (err as Error).message,
-        status: 'error',
-        duration: 5000,
-      })
-    }
   }
 
   const handleDownloadData = async (e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      const result = await api.getS3PresignedURL(connectionId, bucket, object.key, 60)
-      // Create a temporary link and trigger download
+      const result = await api.getS3PresignedURL(connectionId, object.key)
       const link = document.createElement('a')
       link.href = result.url
       link.download = displayName
@@ -147,17 +144,16 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
 
   const handleRefresh = (e: React.MouseEvent) => {
     e.stopPropagation()
-    queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, bucket, object.key] })
+    queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, object.key] })
   }
 
   const handleQuery = (e: React.MouseEvent) => {
     e.stopPropagation()
-    // Show DuckDB query panel in right panel (like map preview)
     setDuckDBQuery({
       connectionId,
       bucketName: bucket,
       objectKey: object.key,
-      displayName: displayName,
+      displayName,
     })
   }
 
@@ -170,7 +166,6 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
         isLoading={isLoading}
         onClick={handleClick}
         onDelete={handleDelete}
-        onPreview={!object.isFolder && isMapPreviewable(object.key) ? handlePreview : undefined}
         onQuery={!object.isFolder && isQueryable(object.key) ? handleQuery : undefined}
         onDownloadData={!object.isFolder ? handleDownloadData : undefined}
         downloadDataLabel={displayName}
@@ -179,20 +174,6 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
         isLeaf={!object.isFolder}
         count={object.isFolder && children ? children.length : undefined}
       />
-      {/* Show metadata for files */}
-      {isSelected && !object.isFolder && (
-        <Box pl={10} py={1}>
-          <Text fontSize="xs" color="gray.500">
-            Size: {formatFileSize(object.size)} | Modified: {new Date(object.lastModified).toLocaleString()}
-            {isCloudNativeFormat(object.key) && (
-              <Text as="span" color="green.500" ml={2}>
-                Cloud-Native
-              </Text>
-            )}
-          </Text>
-        </Box>
-      )}
-      {/* Show folder children */}
       {object.isFolder && isExpanded && children && (
         <>
           {children.length === 0 ? (
@@ -203,13 +184,7 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
             </Box>
           ) : (
             children.map((child) => (
-              <S3ObjectNode
-                key={child.key}
-                connectionId={connectionId}
-                bucket={bucket}
-                object={child}
-                prefix={object.key}
-              />
+              <S3ObjectNode key={child.key} connectionId={connectionId} bucket={bucket} object={child} />
             ))
           )}
         </>

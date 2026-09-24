@@ -4,59 +4,50 @@ Tests complex interactions with PostgreSQL services using mocks.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import DEFAULT, MagicMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.core.models import PGService
+from apps.postgres.client import PGServiceClient
+
 
 @pytest.fixture
-def mock_pg_service():
-    """Mock PostgreSQL service functions."""
-    with (
-        patch("apps.postgres.views.list_services") as mock_list,
-        patch("apps.postgres.views.get_service") as mock_get,
-        patch("apps.postgres.views.write_service") as mock_write,
-        patch("apps.postgres.views.delete_service") as mock_delete,
-    ):
-        # Mock list_services
-        mock_list.return_value = ["test_service", "another_service"]
-
-        # Mock get_service
-        mock_service = MagicMock()
-        mock_service.name = "test_service"
-        mock_service.host = "localhost"
-        mock_service.port = 5432
-        mock_service.dbname = "testdb"
-        mock_service.user = "testuser"
-        mock_service.password = "testpass"
-        mock_service.sslmode = "prefer"
-        mock_service.connection_string.return_value = (
-            "postgresql://testuser:testpass@localhost:5432/testdb"
+def mock_pg_service(user_config):
+    """Two saved PostgreSQL services in the logged-in user's real config."""
+    user_config.add_pg_service(
+        PGService(
+            name="test_service",
+            host="localhost",
+            port=5432,
+            dbname="testdb",
+            user="testuser",
+            password="testpass",
+            sslmode="prefer",
         )
-        mock_get.return_value = mock_service
-
-        # Mock write_service to not fail
-        mock_write.return_value = None
-
-        # Mock delete_service to return True
-        mock_delete.return_value = True
-
-        yield {
-            "list": mock_list,
-            "get": mock_get,
-            "write": mock_write,
-            "delete": mock_delete,
-            "service": mock_service,
-        }
+    )
+    user_config.add_pg_service(PGService(name="another_service", host="db.test", dbname="db"))
+    return user_config
 
 
 @pytest.fixture
 def mock_pg_schema():
-    """Mock PostgreSQL schema functions."""
-    with patch("apps.postgres.views.schema") as mock_schema:
+    """Stub the PGServiceClient methods that would talk to a real database."""
+    methods = (
+        "list_schemas",
+        "list_tables",
+        "get_table_columns",
+        "get_table_row_count",
+        "get_table_data",
+        "execute_query",
+        "test_connection",
+    )
+    with patch.multiple(PGServiceClient, **dict.fromkeys(methods, DEFAULT)) as mocks:
+        mock_schema = SimpleNamespace(**mocks)
         # Mock list_schemas
         mock_schema.list_schemas.return_value = ["public", "postgis", "test_schema"]
 
@@ -134,7 +125,7 @@ class TestPostgresServiceWorkflow:
     """Test PostgreSQL service management workflows."""
 
     def test_list_pg_services(self, api_client: APIClient, mock_pg_service) -> None:
-        """Test listing PostgreSQL services from pg_service.conf."""
+        """Test listing the user's saved PostgreSQL services."""
         response = api_client.get("/api/pg/services")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -144,9 +135,6 @@ class TestPostgresServiceWorkflow:
 
     def test_create_pg_service(self, api_client: APIClient, mock_pg_service) -> None:
         """Test creating a new PostgreSQL service."""
-        # Mock get_service to return None for new service check
-        mock_pg_service["get"].return_value = None
-
         response = api_client.post(
             "/api/pg/services",
             {
@@ -186,13 +174,13 @@ class TestPostgresServiceWorkflow:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        mock_pg_service["write"].assert_called_once()
+        assert mock_pg_service.reload().pg_services[0].host == "newhost"
 
     def test_delete_pg_service(self, api_client: APIClient, mock_pg_service) -> None:
         """Test deleting a service."""
         response = api_client.delete("/api/pg/services/test_service")
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        mock_pg_service["delete"].assert_called_once_with("test_service")
+        assert [s.name for s in mock_pg_service.reload().pg_services] == ["another_service"]
 
     def test_pg_service_connection_test(
         self, api_client: APIClient, mock_pg_service, mock_pg_schema
@@ -248,9 +236,10 @@ class TestPostgresQueryWorkflow:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "columns" in data
-        assert "rows" in data
+        result = response.json()["result"]
+        assert "columns" in result
+        assert "rows" in result
+        assert result["row_count"] == 1
 
     def test_execute_query_missing_query(self, api_client: APIClient, mock_pg_service) -> None:
         """Test executing without query fails."""
@@ -305,8 +294,6 @@ class TestPostgresImportWorkflow:
 
     def test_import_service_not_found(self, api_client: APIClient, mock_pg_service) -> None:
         """Test import fails for non-existent service."""
-        mock_pg_service["get"].return_value = None
-
         response = api_client.post(
             "/api/pg/import",
             {"serviceName": "nonexistent", "filePath": "/tmp/test.gpkg"},

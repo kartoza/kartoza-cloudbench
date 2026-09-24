@@ -93,9 +93,13 @@ def app_server() -> Generator[str, None, None]:
     server_process.wait(timeout=5)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def base_url(app_server: str) -> str:
-    """Return the base URL for the application."""
+    """Return the base URL for the application.
+
+    Session-scoped to match the pytest-base-url fixture it overrides, whose
+    session-scoped _verify_url depends on it.
+    """
     return app_server
 
 

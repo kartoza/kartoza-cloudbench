@@ -10,8 +10,11 @@ import pytest
 
 from apps.ai import engine as ai
 from apps.s3 import duckdb as ddb
+from apps.s3.models import S3Connection
 
 OLLAMA = "http://ollama.test:11434"
+# Opaque stand-in: these tests only check the user is passed through.
+USER = SimpleNamespace(username="alice")
 
 
 @pytest.mark.unit
@@ -156,18 +159,22 @@ class TestDuckDBEngine:
 
     def test_execute_query_configures_s3_when_connection_given(self, engine, monkeypatch):
         seen = []
-        monkeypatch.setattr(engine, "configure_s3", seen.append)
-        engine.execute_query("SELECT 1", connection_id="c1")
-        assert seen == ["c1"]
+        monkeypatch.setattr(engine, "configure_s3", lambda cid, user: seen.append((cid, user)))
+        engine.execute_query("SELECT 1", connection_id="c1", user=USER)
+        assert seen == [("c1", USER)]
 
     def test_query_builders(self, engine, monkeypatch):
         captured = []
         monkeypatch.setattr(
-            engine, "execute_query", lambda q, _cid, _limit: captured.append(q) or {"rows": []}
+            engine,
+            "execute_query",
+            lambda q, _cid, _limit, **_kwargs: captured.append(q) or {"rows": []},
         )
-        engine.query_parquet("s3://b/a.parquet", "c", columns=["a", "b"], where="a > 1", limit=5)
-        engine.query_csv("s3://b/a.csv", "c", header=False, delimiter=";")
-        engine.query_json("s3://b/a.json", "c", where="x = 1")
+        engine.query_parquet(
+            "s3://b/a.parquet", "c", USER, columns=["a", "b"], where="a > 1", limit=5
+        )
+        engine.query_csv("s3://b/a.csv", "c", USER, header=False, delimiter=";")
+        engine.query_json("s3://b/a.json", "c", USER, where="x = 1")
         assert (
             captured[0] == "SELECT a, b FROM read_parquet('s3://b/a.parquet') WHERE a > 1 LIMIT 5"
         )
@@ -176,18 +183,22 @@ class TestDuckDBEngine:
 
     def test_parquet_schema_and_metadata(self, engine, monkeypatch):
         rows = [{"column_name": "a", "column_type": "INTEGER", "null": "YES"}]
-        monkeypatch.setattr(engine, "execute_query", lambda _q, _cid, _limit=1000: {"rows": rows})
-        assert engine.get_parquet_schema("p", "c") == {
+        monkeypatch.setattr(
+            engine, "execute_query", lambda _q, _cid, _limit=1000, **_kwargs: {"rows": rows}
+        )
+        assert engine.get_parquet_schema("p", "c", USER) == {
             "columns": [{"name": "a", "type": "INTEGER", "nullable": True}]
         }
-        assert engine.get_parquet_metadata("p", "c") == rows[0]
-        monkeypatch.setattr(engine, "execute_query", lambda _q, _cid, _limit=1000: {"rows": []})
-        assert engine.get_parquet_metadata("p", "c") == {}
+        assert engine.get_parquet_metadata("p", "c", USER) == rows[0]
+        monkeypatch.setattr(
+            engine, "execute_query", lambda _q, _cid, _limit=1000, **_kwargs: {"rows": []}
+        )
+        assert engine.get_parquet_metadata("p", "c", USER) == {}
 
     def test_geoparquet_features(self, engine, monkeypatch):
         captured = []
 
-        def fake(query, cid, limit):
+        def fake(query, cid, limit, user):
             captured.append(query)
             return {
                 "rows": [
@@ -197,44 +208,48 @@ class TestDuckDBEngine:
             }
 
         monkeypatch.setattr(engine, "execute_query", fake)
-        result = engine.query_geoparquet("p", "c", bbox=(0, 1, 2, 3), limit=9)
+        result = engine.query_geoparquet("p", "c", USER, bbox=(0, 1, 2, 3), limit=9)
         assert "ST_MakeEnvelope(0, 1, 2, 3)" in captured[0] and "LIMIT 9" in captured[0]
         assert [f["properties"] for f in result["features"]] == [{"name": "a"}, {"name": "b"}]
         assert result["features"][0]["geometry"] == {"type": "Point"}
 
-    def test_configure_s3(self, engine, monkeypatch):
+    @pytest.mark.django_db
+    def test_configure_s3(self, engine, django_user_model):
         engine.conn = MagicMock()
-        conns = {
-            "plain": SimpleNamespace(
-                endpoint="http://minio:9000",
+        owner = django_user_model.objects.create(username="alice")
+
+        def make(endpoint, region, use_ssl):
+            conn = S3Connection.objects.create(
+                owner=owner,
+                name=endpoint,
+                endpoint=endpoint,
+                bucket="b",
                 access_key="k",
                 secret_key="s",
-                region="",
-                use_ssl=True,
-            ),
-            "tls": SimpleNamespace(
-                endpoint="https://s3.test",
-                access_key="k",
-                secret_key="s",
-                region="eu",
-                use_ssl=False,
-            ),
-            "bare": SimpleNamespace(
-                endpoint="s3.test", access_key="k", secret_key="s", region=None, use_ssl=False
-            ),
-        }
-        monkeypatch.setattr(ddb, "get_config", lambda: SimpleNamespace(get_s3_connection=conns.get))
-        engine.configure_s3("plain")
+                region=region,
+                use_ssl=use_ssl,
+            )
+            return str(conn.id)
+
+        plain = make("http://minio:9000", "", True)
+        tls = make("https://s3.test", "eu", False)
+        bare = make("s3.test", "", False)
+
+        engine.configure_s3(plain, owner)
         statements = [c.args[0] for c in engine.conn.execute.call_args_list]
         assert "SET s3_endpoint='minio:9000'" in statements
         assert "SET s3_use_ssl=false" in statements
         assert "SET s3_region='us-east-1'" in statements
         engine.conn.reset_mock()
-        engine.configure_s3("tls")
+        engine.configure_s3(tls, owner)
         assert "SET s3_use_ssl=true" in [c.args[0] for c in engine.conn.execute.call_args_list]
-        engine.configure_s3("bare")
+        engine.configure_s3(bare, owner)
         with pytest.raises(ValueError, match="not found"):
-            engine.configure_s3("missing")
+            engine.configure_s3("missing", owner)
+        # Another user's connection is not visible.
+        bob = django_user_model.objects.create(username="bob")
+        with pytest.raises(ValueError, match="not found"):
+            engine.configure_s3(plain, bob)
 
     def test_init_loads_extensions(self, monkeypatch):
         ddb.DuckDBQueryEngine._instance = None

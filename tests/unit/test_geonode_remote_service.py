@@ -157,6 +157,7 @@ class TestFactory:
         config_manager.add_geonode_connection(
             GeoNodeConnection(id="g1", name="GN", url=GN, username="a", password="b")
         )
-        assert isinstance(rs.get_remote_service("g1", "test-user"), rs.GeoNodeRemoteService)
+        service = rs.get_remote_service("g1", config_manager._user)
+        assert isinstance(service, rs.GeoNodeRemoteService)
         with pytest.raises(ValueError):
-            rs.get_remote_service("missing", "test-user")
+            rs.get_remote_service("missing", config_manager._user)

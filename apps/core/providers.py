@@ -6,10 +6,13 @@ Uses a separate JSON config file for provider settings.
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .models import ProviderConfig, ProvidersConfig
 from .utilities import file_lock
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 # Provider configuration file name
 PROVIDERS_FILE = "providers.json"
@@ -41,7 +44,7 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "id": "s3",
         "name": "S3 Storage",
         "description": "S3-compatible object storage (MinIO, AWS S3, etc.)",
-        "enabled": False,
+        "enabled": True,
         "experimental": True,
     },
     {
@@ -81,9 +84,9 @@ class ProvidersManager:
     Manages provider enablement/disablement settings.
     """
 
-    def __init__(self, user_id: str = "default") -> None:
+    def __init__(self, user: "User") -> None:
         """Initialise manager for the given user."""
-        self._user_id = user_id
+        self._user = user
         self._config: ProvidersConfig | None = None
 
     @property
@@ -116,7 +119,7 @@ class ProvidersManager:
         """Get the path to the providers config file."""
         from .utilities import get_cloudbench_config_path
 
-        return get_cloudbench_config_path(PROVIDERS_FILE, self._user_id)
+        return get_cloudbench_config_path(PROVIDERS_FILE, self._user)
 
     def _load(self) -> ProvidersConfig:
         """Load providers configuration from disk with file locking."""
@@ -180,11 +183,11 @@ class ProvidersManager:
         return {p.id for p in self.config.providers if p.enabled}
 
 
-def get_providers_manager(user_id: "str | int" = "default") -> ProvidersManager:
+def get_providers_manager(user: "User") -> ProvidersManager:
     """Get the ProvidersManager for the given user."""
-    return ProvidersManager(str(user_id))
+    return ProvidersManager(user)
 
 
-def is_provider_enabled(provider_id: str, user_id: "str | int" = "default") -> bool:
+def is_provider_enabled(provider_id: str, user: "User") -> bool:
     """Check if a provider is enabled for the given user."""
-    return get_providers_manager(user_id).is_provider_enabled(provider_id)
+    return get_providers_manager(user).is_provider_enabled(provider_id)

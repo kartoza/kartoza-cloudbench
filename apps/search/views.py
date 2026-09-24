@@ -31,7 +31,7 @@ class SearchView(APIView):
 
         types = types_param.split(",") if types_param else None
 
-        service = get_search_service(str(request.user.username))
+        service = get_search_service(request.user)
         results = service.search(query, types=types, limit=limit)
 
         return Response(
@@ -59,7 +59,7 @@ class SearchSuggestionsView(APIView):
         if not query or len(query) < 2:
             return Response({"suggestions": [], "query": query})
 
-        service = get_search_service(str(request.user.username))
+        service = get_search_service(request.user)
         suggestions = service.get_suggestions(query, limit=limit)
 
         return Response(

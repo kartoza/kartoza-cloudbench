@@ -10,7 +10,8 @@
       "django": true,
       "justMyCode": true,
       "env": {
-        "DJANGO_SETTINGS_MODULE": "cloudbench.settings.development"
+        "DJANGO_SETTINGS_MODULE": "cloudbench.settings.development",
+        "CLOUDNATIVEGIS_URL": "http://127.0.0.1:8100"
       }
     },
     {
@@ -18,7 +19,10 @@
       "type": "node-terminal",
       "request": "launch",
       "command": "npm run dev -- --host 0.0.0.0",
-      "cwd": "${workspaceFolder}/web"
+      "cwd": "${workspaceFolder}/web",
+      "env": {
+        "VITE_API_PROXY_TARGET": "http://127.0.0.1:8080"
+      }
     }
   ],
   "compounds": [

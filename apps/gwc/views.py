@@ -20,13 +20,13 @@ from .client import get_gwc_client
 class GWCLayerListView(APIView):
     """List all GWC layers for a connection."""
 
-    def get(self, _request, conn_id, workspace):
+    def get(self, request, conn_id, workspace):
         """List cached layers.
 
         Filters layers by workspace prefix.
         """
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layers = client.list_layers()
 
             # Filter by workspace if provided
@@ -44,10 +44,10 @@ class GWCLayerListView(APIView):
 class GWCLayerDetailView(APIView):
     """Get GWC layer details."""
 
-    def get(self, _request, conn_id, workspace, layer):
+    def get(self, request, conn_id, workspace, layer):
         """Get cached layer configuration."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layer_name = f"{workspace}:{layer}"
             layer_info = client.get_layer(layer_name)
             return Response({"layer": layer_info})
@@ -74,7 +74,7 @@ class GWCSeedView(APIView):
         }
         """
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layer_name = f"{workspace}:{layer}"
 
             grid_set = request.data.get("gridSet", "EPSG:4326")
@@ -100,10 +100,10 @@ class GWCSeedView(APIView):
                 {"error": e.message}, status=e.status_code or status.HTTP_502_BAD_GATEWAY
             )
 
-    def get(self, _request, conn_id, workspace, layer):
+    def get(self, request, conn_id, workspace, layer):
         """Get seed task status for a layer."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layer_name = f"{workspace}:{layer}"
             tasks = client.get_seed_status(layer_name)
 
@@ -128,10 +128,10 @@ class GWCSeedView(APIView):
                 {"error": e.message}, status=e.status_code or status.HTTP_502_BAD_GATEWAY
             )
 
-    def delete(self, _request, conn_id, workspace, layer):
+    def delete(self, request, conn_id, workspace, layer):
         """Kill all running seed tasks for a layer."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layer_name = f"{workspace}:{layer}"
             result = client.kill_seed_tasks(layer_name)
             return Response(result)
@@ -154,7 +154,7 @@ class GWCTruncateView(APIView):
         - format: Optional tile format
         """
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             layer_name = f"{workspace}:{layer}"
 
             grid_set = request.query_params.get("gridSet")
@@ -180,10 +180,10 @@ class GWCTruncateView(APIView):
 class GWCGridSetListView(APIView):
     """List all available grid sets."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """List grid sets."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             gridsets = client.list_gridsets()
             return Response({"gridSets": gridsets})
         except GeoServerError as e:
@@ -195,10 +195,10 @@ class GWCGridSetListView(APIView):
 class GWCGridSetDetailView(APIView):
     """Get grid set details."""
 
-    def get(self, _request, conn_id, gridset):
+    def get(self, request, conn_id, gridset):
         """Get grid set configuration."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             gs = client.get_gridset(gridset)
             return Response({"gridSet": gs})
         except GeoServerError as e:
@@ -210,10 +210,10 @@ class GWCGridSetDetailView(APIView):
 class GWCDiskQuotaView(APIView):
     """Get disk quota information."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """Get disk quota configuration and usage."""
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             quota = client.get_disk_quota()
             return Response({"diskQuota": quota})
         except GeoServerError as e:
@@ -235,7 +235,7 @@ class GWCMassTruncateView(APIView):
         }
         """
         try:
-            client = get_gwc_client(conn_id)
+            client = get_gwc_client(conn_id, request.user)
             workspace = request.data.get("workspace")
             layer = request.data.get("layer")
 

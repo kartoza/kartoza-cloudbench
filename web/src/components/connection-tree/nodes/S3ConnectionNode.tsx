@@ -1,13 +1,16 @@
 import { Box, Text } from '@chakra-ui/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
-import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
+import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
-import { S3BucketNode } from './S3BucketNode'
+import { S3ObjectNode } from './S3ObjectNode'
 import type { S3ConnectionNodeProps } from '../types'
 
+// A connection is scoped to one bucket. Selecting it opens the full bucket
+// browser in the main panel; expanding it browses the bucket's contents
+// right here in the tree (see S3ObjectNode for per-item behavior).
 export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
   const nodeId = generateNodeId('s3connection', connection.id)
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
@@ -15,12 +18,11 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
   const selectNode = useTreeStore((state) => state.selectNode)
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const openDialog = useUIStore((state) => state.openDialog)
-  const queryClient = useQueryClient()
+  const clearPreviews = useUIStore((state) => state.clearPreviews)
 
-  // Fetch buckets when expanded
-  const { data: buckets, isLoading } = useQuery({
-    queryKey: ['s3buckets', connection.id],
-    queryFn: () => api.getS3Buckets(connection.id),
+  const { data: children, isLoading } = useQuery({
+    queryKey: ['s3objects', connection.id, ''],
+    queryFn: () => api.getS3Objects(connection.id, ''),
     enabled: isExpanded,
     staleTime: 30000,
   })
@@ -36,6 +38,7 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
 
   const handleClick = () => {
     selectNode(node)
+    clearPreviews()
     toggleNode(nodeId)
   }
 
@@ -65,13 +68,6 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
     })
   }
 
-  const handleRefresh = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    queryClient.invalidateQueries({ queryKey: ['s3buckets', connection.id] })
-  }
-
-  const subtitle = connection.endpoint
-
   return (
     <Box>
       <TreeNodeRow
@@ -83,28 +79,20 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onUpload={handleUpload}
-        onRefresh={handleRefresh}
         level={2}
-        count={buckets?.length}
+        count={children ? children.length : undefined}
       />
-      {isExpanded && (
+      {isExpanded && children && (
         <>
-          {!buckets || buckets.length === 0 ? (
-            <Box px={2} py={2} ml={3 * 4}>
-              <Text fontSize="xs" color="gray.500">
-                {subtitle}
-              </Text>
-              <Text fontSize="xs" color="gray.400" mt={1}>
-                No buckets found. Create one to start uploading.
+          {children.length === 0 ? (
+            <Box px={2} py={1} ml={5 * 3}>
+              <Text fontSize="xs" color="gray.400">
+                Empty bucket
               </Text>
             </Box>
           ) : (
-            buckets.map((bucket) => (
-              <S3BucketNode
-                key={bucket.name}
-                connectionId={connection.id}
-                bucket={bucket}
-              />
+            children.map((child) => (
+              <S3ObjectNode key={child.key} connectionId={connection.id} bucket={connection.bucket} object={child} />
             ))
           )}
         </>

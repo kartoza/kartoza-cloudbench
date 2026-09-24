@@ -67,7 +67,7 @@ class ConnectionListView(APIView):
 
     def get(self, request):
         """List all GeoServer connections."""
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         connections = config_manager.config.connections
         serializer = ConnectionResponseSerializer(connections, many=True)
         return Response(serializer.data)
@@ -75,7 +75,7 @@ class ConnectionListView(APIView):
     def post(self, request):
         """Create a new GeoServer connection."""
         serializer = ConnectionSerializer(data=request.data)
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         if serializer.is_valid():
             conn = serializer.create(serializer.validated_data)
             config_manager.add_connection(conn)
@@ -125,7 +125,7 @@ class ConnectionDetailView(APIView):
 
     def get(self, request, conn_id):
         """Get a specific connection by ID."""
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -135,7 +135,7 @@ class ConnectionDetailView(APIView):
 
     def put(self, request, conn_id):
         """Update a connection."""
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -152,7 +152,7 @@ class ConnectionDetailView(APIView):
 
     def delete(self, request, conn_id):
         """Delete a connection."""
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -166,7 +166,7 @@ class ConnectionTestExistingView(APIView):
     """Test an existing saved connection."""
 
     def _test(self, request, conn_id):
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -190,7 +190,7 @@ class ConnectionInfoView(APIView):
 
     def get(self, request, conn_id):
         """Get GeoServer server information."""
-        config_manager = get_config(request.user.username)
+        config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)

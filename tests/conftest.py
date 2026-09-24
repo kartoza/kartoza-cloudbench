@@ -25,7 +25,22 @@ from rest_framework.test import APIClient
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment() -> Generator[None, None, None]:
-    """Set up test environment before any tests run."""
+    """Set up test environment before any tests run.
+
+    Session-wide safety net so a test that reads/writes per-user config
+    (apps.core.utilities.get_data_folder) without its own isolation still
+    can't touch the real ~/<username>/config — CLOUDBENCH_DATA_FOLDER, not
+    XDG_*, is what that function actually reads.
+    """
+    # Playwright resolves its browser cache from XDG_CACHE_HOME, so pin it to
+    # where `playwright install` put the browsers before redirecting XDG_*.
+    os.environ.setdefault(
+        "PLAYWRIGHT_BROWSERS_PATH",
+        os.path.join(
+            os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "ms-playwright"
+        ),
+    )
+
     # Create temporary directories for testing
     with tempfile.TemporaryDirectory(prefix="cloudbench-test-") as tmpdir:
         os.environ["XDG_CONFIG_HOME"] = tmpdir
@@ -68,7 +83,7 @@ def api_client() -> APIClient:
 def authenticated_api_client(db: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> APIClient:
     """Return a DRF client logged in as a user with an isolated data folder.
 
-    Views resolve per-user config from ``request.user.username`` under
+    Views resolve per-user config from ``request.user`` (by username) under
     CLOUDBENCH_DATA_FOLDER, so each test gets its own empty folder.
     """
     from django.contrib.auth import get_user_model
@@ -97,12 +112,28 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
     """Get a fresh per-user ConfigManager backed by an isolated data folder."""
     from unittest.mock import patch
 
+    from django.contrib.auth import get_user_model
+
     from apps.core.config import Config, ConfigManager
 
-    with patch.dict(os.environ, {"CLOUDBENCH_DATA_FOLDER": str(tmp_path)}):
-        manager = ConfigManager("test-user")
+    # apps.core.utilities.get_data_folder reads CLOUDBENCH_DATA_FOLDER, not
+    # XDG_* — those are set for parity with the session-wide fixture but do
+    # nothing here on their own.
+    with patch.dict(
+        os.environ,
+        {
+            "XDG_CONFIG_HOME": str(tmp_path),
+            "XDG_DATA_HOME": str(tmp_path),
+            "XDG_CACHE_HOME": str(tmp_path),
+            "CLOUDBENCH_DATA_FOLDER": str(tmp_path),
+        },
+        clear=False,  # Don't clear other env vars
+    ):
+        # ConfigManager isn't a singleton (it's per user) - construct fresh.
+        # Only the username is read, so an unsaved user is enough.
+        manager = ConfigManager(get_user_model()(username="default"))
 
-        # Start from an empty config regardless of what is on disk
+        # Force a fresh config (in case it loaded from wrong path)
         manager._config = Config()
 
         yield manager
@@ -113,10 +144,27 @@ def providers_manager(tmp_path: Any) -> Generator[Any, None, None]:
     """Get a fresh ProvidersManager for testing with isolated config directory."""
     from unittest.mock import patch
 
+    from django.contrib.auth import get_user_model
+
     from apps.core.providers import ProvidersManager
 
-    with patch.dict(os.environ, {"CLOUDBENCH_DATA_FOLDER": str(tmp_path)}):
-        yield ProvidersManager("test-user")
+    # apps.core.utilities.get_data_folder reads CLOUDBENCH_DATA_FOLDER, not
+    # XDG_* — those are set for parity with the session-wide fixture but do
+    # nothing here on their own.
+    with patch.dict(
+        os.environ,
+        {
+            "XDG_CONFIG_HOME": str(tmp_path),
+            "XDG_DATA_HOME": str(tmp_path),
+            "XDG_CACHE_HOME": str(tmp_path),
+            "CLOUDBENCH_DATA_FOLDER": str(tmp_path),
+        },
+    ):
+        # ProvidersManager isn't a singleton (it's per user) - construct fresh.
+        # Only the username is read, so an unsaved user is enough.
+        manager = ProvidersManager(get_user_model()(username="default"))
+
+        yield manager
 
 
 # ============================================================================
@@ -135,23 +183,6 @@ def sample_connection() -> Any:
         url="http://localhost:8080/geoserver",
         username="admin",
         password="geoserver",
-        is_active=False,
-    )
-
-
-@pytest.fixture
-def sample_s3_connection() -> Any:
-    """Create a sample S3 connection for testing."""
-    from apps.core.config import S3Connection
-
-    return S3Connection(
-        id="test-s3-001",
-        name="Test MinIO",
-        endpoint="localhost:9000",
-        access_key="minioadmin",
-        secret_key="minioadmin",
-        use_ssl=False,
-        path_style=True,
         is_active=False,
     )
 
@@ -475,9 +506,11 @@ def fake_pg() -> Generator[FakePG, None, None]:
 @pytest.fixture
 def user_config(authenticated_api_client: APIClient) -> Any:
     """ConfigManager for the user behind ``authenticated_api_client``."""
+    from django.contrib.auth import get_user_model
+
     from apps.core.config import get_config
 
-    return get_config("test-user")
+    return get_config(get_user_model().objects.get(username="test-user"))
 
 
 # ============================================================================
@@ -594,25 +627,3 @@ def temp_pg_service_file(sample_pg_service_conf: str) -> Generator[str, None, No
 def anyio_backend() -> str:
     """Return the async backend to use."""
     return "asyncio"
-
-
-# ============================================================================
-# Cleanup Fixtures
-# ============================================================================
-
-
-@pytest.fixture(autouse=True)
-def reset_singletons() -> Generator[None, None, None]:
-    """Reset all singletons before and after each test."""
-    # Reset BEFORE test
-    from apps.core.config import ConfigManager
-    from apps.core.providers import ProvidersManager
-
-    ConfigManager._instance = None
-    ProvidersManager._instance = None
-
-    yield
-
-    # Reset AFTER test
-    ConfigManager._instance = None
-    ProvidersManager._instance = None

@@ -7,12 +7,12 @@ services:
       dockerfile: deployment/docker/Dockerfile
       target: prod
     volumes:
-      - ../apps:/app/apps
-      - ../cloudbench:/app/cloudbench
-      - ../tui:/app/tui
-      - ../manage.py:/app/manage.py
-      - ./volumes/static:/app/staticfiles
-      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - ../apps:/app/apps:z
+      - ../cloudbench:/app/cloudbench:z
+      - ../tui:/app/tui:z
+      - ../manage.py:/app/manage.py:z
+      - ./volumes/static:/app/staticfiles:z
+      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}:z
     ports:
       - "${HTTP_PORT:-8000}:8000"
 
@@ -21,7 +21,7 @@ services:
     image: node:20-alpine
     working_dir: /app/web
     volumes:
-      - ../web:/app/web
+      - ../web:/app/web:z
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     environment:
       - VITE_API_PROXY_TARGET=http://dev:8080
@@ -43,18 +43,25 @@ services:
       dockerfile: deployment/docker/Dockerfile-dev
       args:
         BASE_IMAGE: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
+    env_file: .env
     image: kartoza/cloudbench:dev
     environment:
       - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
       - DJANGO_DEBUG=true
       - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - CLOUDNATIVEGIS_URL=${CLOUDNATIVEGIS_URL:-http://host.docker.internal:${CLOUDNATIVEGIS_PORT:-8100}}
+      - CLOUDNATIVEGIS_CONVERSION_TIMEOUT=${CLOUDNATIVEGIS_CONVERSION_TIMEOUT:-1800}
+      - CLOUDNATIVEGIS_POLL_INTERVAL=${CLOUDNATIVEGIS_POLL_INTERVAL:-5}
+      - CLOUDNATIVEGIS_API_TOKEN=${CLOUDNATIVEGIS_API_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ../apps:/app/apps
-      - ../cloudbench:/app/cloudbench
-      - ../tui:/app/tui
-      - ../manage.py:/app/manage.py
-      - ./volumes/static:/app/staticfiles
-      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
+      - ../apps:/app/apps:z
+      - ../cloudbench:/app/cloudbench:z
+      - ../tui:/app/tui:z
+      - ../manage.py:/app/manage.py:z
+      - ./volumes/static:/app/staticfiles:z
+      - ./volumes/data:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}:z
     ports:
       - "8091:22"
       - "8090:8080"

@@ -27,6 +27,7 @@ export * from './style'
 export * from './layergroup'
 export * from './s3'
 export * from './iceberg'
+export * from './mapExplorer'
 
 // Re-export everything from the main client file for backward compatibility
 // This includes APIs that haven't been split yet: GWC, Sync, Dashboard, Search, PostgreSQL, QGIS, GeoNode

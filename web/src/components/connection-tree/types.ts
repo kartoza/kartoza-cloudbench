@@ -104,6 +104,7 @@ export interface TreeNodeRowProps {
   ableToEdit?: boolean
   ableToDelete?: boolean
   onPreview?: (e: React.MouseEvent) => void
+  onOpenInMap?: (e: React.MouseEvent) => void
   onTerria?: (e: React.MouseEvent) => void
   onOpenAdmin?: (e: React.MouseEvent) => void
   onQuery?: (e: React.MouseEvent) => void
@@ -119,21 +120,13 @@ export interface TreeNodeRowProps {
   count?: number
 }
 
-// S3 Storage types
+// S3 Storage types — a connection is scoped to exactly one bucket
 export interface S3ConnectionNodeProps {
   connection: {
     id: string
     name: string
     endpoint: string
-    isActive: boolean
-  }
-}
-
-export interface S3BucketNodeProps {
-  connectionId: string
-  bucket: {
-    name: string
-    creationDate: string
+    bucket: string
   }
 }
 
@@ -144,10 +137,8 @@ export interface S3ObjectNodeProps {
     key: string
     size: number
     lastModified: string
-    contentType?: string
     isFolder: boolean
   }
-  prefix?: string
 }
 
 // Iceberg types

@@ -20,7 +20,10 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
 }
 
 export async function handleResponse<T>(response: Response): Promise<T> {
-  if ([401, 403].includes(response.status)) {
+  // Only a stale token is worth reloading for: dropping it lands on the login
+  // screen. With no token there is nothing to drop, and reloading would just
+  // re-send the same unauthenticated request forever.
+  if ([401, 403].includes(response.status) && localStorage.getItem('token')) {
     localStorage.removeItem('token')
     window.location.reload()
     // Reload is already underway — never resolve, so callers don't race

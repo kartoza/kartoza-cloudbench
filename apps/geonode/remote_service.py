@@ -3,13 +3,16 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from lxml import html
 
 from apps.core.config import get_config
 from apps.core.models import GeoNodeConnection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -335,9 +338,9 @@ def _raise_if_form_errors(content: bytes) -> None:
     )
 
 
-def get_remote_service(connection_id: str, user_id: str = "default") -> GeoNodeRemoteService:
+def get_remote_service(connection_id: str, user: "User") -> GeoNodeRemoteService:
     """Build a GeoNodeRemoteService from a saved connection."""
-    conn = get_config(user_id).get_geonode_connection(connection_id)
+    conn = get_config(user).get_geonode_connection(connection_id)
     if not conn:
         raise ValueError(f"GeoNode connection not found: {connection_id}")
     return GeoNodeRemoteService(conn)

@@ -5,8 +5,10 @@ import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from django.conf import settings
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 # Config directory name — kept here to avoid circular imports with config.py
 CONFIG_DIR = "config"
@@ -14,46 +16,33 @@ DATA_DIR = "data"
 CACHE_DIR = "cache"
 
 
-def get_data_folder(user_id: str = "default") -> str:
-    """Build a data folder path for the given user."""
-
-    if settings.CLOUDBENCH_MUST_AUTHENTICATED and user_id in ["default", None, "None"]:
-        raise ValueError("User ID is required for authenticated access.")
-
+def get_data_folder() -> str:
+    """Root folder that per-user data folders live under."""
     return os.environ.get("CLOUDBENCH_DATA_FOLDER") or os.path.join(str(Path.home()))
 
 
-def get_cloudbench_config_path(filename: str, user_id: str = "default") -> str:
+def get_cloudbench_config_path(filename: str, user: "User") -> str:
     """Build an XDG-compliant config file path for the given user.
 
-    Path: ${CLOUDBENCH_DATA_FOLDER}/<user_id>/config/<filename>
-
-    Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
-    user_id is still "default" (i.e., no authenticated user on the thread).
+    Path: ${CLOUDBENCH_DATA_FOLDER}/<username>/config/<filename>
     """
-    return os.path.join(get_data_folder(user_id), user_id, CONFIG_DIR, filename)
+    return os.path.join(get_data_folder(), user.username, CONFIG_DIR, filename)
 
 
-def get_cloudbench_data_path(filename: str, user_id: str = "default") -> str:
-    """Build an XDG-compliant config file path for the given user.
+def get_cloudbench_data_path(filename: str, user: "User") -> str:
+    """Build an XDG-compliant data file path for the given user.
 
-    Path: ${CLOUDBENCH_DATA_FOLDER}/<user_id>/data/<filename>
-
-    Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
-    user_id is still "default" (i.e., no authenticated user on the thread).
+    Path: ${CLOUDBENCH_DATA_FOLDER}/<username>/data/<filename>
     """
-    return os.path.join(get_data_folder(user_id), user_id, DATA_DIR, filename)
+    return os.path.join(get_data_folder(), user.username, DATA_DIR, filename)
 
 
-def get_cloudbench_cache_path(filename: str, user_id: str = "default") -> str:
-    """Build an XDG-compliant config file path for the given user.
+def get_cloudbench_cache_path(filename: str, user: "User") -> str:
+    """Build an XDG-compliant cache file path for the given user.
 
-    Path: ${CLOUDBENCH_DATA_FOLDER}/cache/<user_id>/cache/<filename>
-
-    Raises ValueError when CLOUDBENCH_MUST_AUTHENTICATED is True and
-    user_id is still "default" (i.e., no authenticated user on the thread).
+    Path: ${CLOUDBENCH_DATA_FOLDER}/<username>/cache/<filename>
     """
-    return os.path.join(get_data_folder(user_id), user_id, CACHE_DIR, filename)
+    return os.path.join(get_data_folder(), user.username, CACHE_DIR, filename)
 
 
 @contextmanager

@@ -210,7 +210,7 @@ export default function DuckDBQueryPanel({
       setError(null)
 
       try {
-        const info = await api.getDuckDBTableInfo(connectionId, bucketName, objectKey)
+        const info = await api.getDuckDBTableInfo(connectionId, objectKey)
         setTableInfo(info)
         // Set default SQL
         setSql(info.sampleQueries?.[0] || "SELECT * FROM data LIMIT 100")
@@ -243,7 +243,7 @@ export default function DuckDBQueryPanel({
 
     try {
       const currentOffset = appendResults ? offset : 0
-      const response = await api.executeDuckDBQuery(connectionId, bucketName, objectKey, {
+      const response = await api.executeDuckDBQuery(connectionId, objectKey, {
         sql,
         limit: limit,
         offset: currentOffset,
@@ -284,7 +284,7 @@ export default function DuckDBQueryPanel({
         // If spatial, also fetch GeoJSON
         if (response.geometryColumn && !appendResults) {
           try {
-            const geojson = await api.executeDuckDBQueryAsGeoJSON(connectionId, bucketName, objectKey, {
+            const geojson = await api.executeDuckDBQueryAsGeoJSON(connectionId, objectKey, {
               sql,
               limit: 1000,
             })

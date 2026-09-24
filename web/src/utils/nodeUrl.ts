@@ -15,6 +15,17 @@ export function clearNodeUrlParam(): void {
   window.history.pushState({}, '', url.toString())
 }
 
+// Same as clearNodeUrlParam, but via replaceState so it doesn't add a
+// browser-back stop. For callers (e.g. Map Explorer, which no longer
+// tracks a single selected connection) that want to silently drop stale
+// tree-selection context without disturbing history navigation.
+export function clearNodeUrlParamQuietly(): void {
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has(URL_PARAM)) return
+  url.searchParams.delete(URL_PARAM)
+  window.history.replaceState(window.history.state, '', url.toString())
+}
+
 export function getNodeUrlParam(): string | null {
   return new URLSearchParams(window.location.search).get(URL_PARAM)
 }

@@ -24,7 +24,10 @@ class GeoServerUploadCompleteView(APIView):
     """Assemble a chunked upload for GeoServer (file kept for the background task)."""
 
     def post(
-        self, request, conn_id, workspace  # noqa: ARG002 - must match the URL path converters
+        self,
+        request,
+        conn_id,  # noqa: ARG002 - must match the URL path converters
+        workspace,  # noqa: ARG002 - must match the URL path converters
     ):
         session_id = request.data.get("sessionId")
         store_name = request.data.get("storeName")
@@ -88,16 +91,14 @@ class GeoServerUploadStartView(APIView):
             )
 
         try:
-            get_geoserver_client(conn_id, str(request.user.username))
+            get_geoserver_client(conn_id, request.user)
         except Exception:
             return Response(
                 {"error": f"Connection not found: {conn_id}"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        result = run_geoserver_upload(
-            conn_id, str(request.user.username), workspace, store_name, file_path
-        )
+        result = run_geoserver_upload(conn_id, request.user, workspace, store_name, file_path)
         if result.get("status") == "completed":
             return Response(
                 {

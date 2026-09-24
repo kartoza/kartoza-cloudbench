@@ -1,3 +1,17 @@
+# Maputnik style editor (git submodule at ./maputnik) — built separately
+# since vanilla Maputnik needs Node 22+, newer than the main frontend
+# requires. Its output is copied into web/public/maputnik/ below, so
+# Vite's own build bundles it into ./static/ same-origin as the app (see
+# web/src/components/MapExplorer/StyleEditorDialog.tsx). Requires the
+# submodule to be checked out on the host before `docker build` runs:
+#   git submodule update --init maputnik
+FROM node:22-bookworm AS maputnik-build
+WORKDIR /src
+COPY maputnik/ ./
+COPY deployment/maputnik-patches/cloudbench.patch /tmp/cloudbench.patch
+RUN git apply /tmp/cloudbench.patch
+RUN npm install && npm run build
+
 FROM python:3.12-slim-bookworm AS prod
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,6 +51,7 @@ RUN pip install --upgrade pip && pip install -r /requirements.txt
 # afterward: only the compiled static/ output is needed at runtime, and
 # keeping node_modules around would bloat the image for no reason.
 COPY web/ ./web/
+COPY --from=maputnik-build /src/dist ./web/public/maputnik
 ENV VITE_API_BASE=/api
 RUN cd web && npm install && npm run build && cd .. && rm -rf web
 

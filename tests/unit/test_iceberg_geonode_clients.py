@@ -9,6 +9,9 @@ from apps.core.models import GeoNodeConnection
 from apps.geonode import client as geonode
 from apps.iceberg import client as iceberg
 
+# Managers only read .pk (cache key) and pass the user on to get_config.
+USER = SimpleNamespace(pk=1, username="u")
+OTHER_USER = SimpleNamespace(pk=2, username="v")
 ICE = "https://ice.test"
 GN = "https://gn.test"
 
@@ -114,23 +117,28 @@ class TestIcebergClientManager:
 
     def test_unknown(self, monkeypatch):
         monkeypatch.setattr(
-            iceberg, "get_config", lambda: SimpleNamespace(get_iceberg_connection=lambda _i: None)
+            iceberg,
+            "get_config",
+            lambda _user: SimpleNamespace(get_iceberg_connection=lambda _i: None),
         )
         with pytest.raises(ValueError):
-            iceberg.get_iceberg_client("x")
+            iceberg.get_iceberg_client("x", USER)
 
     def test_builds_client_with_credentials_and_caches(self, monkeypatch):
         conn = SimpleNamespace(
             url=ICE, warehouse="wh", token=None, client_id="i", client_secret="s"
         )
         monkeypatch.setattr(
-            iceberg, "get_config", lambda: SimpleNamespace(get_iceberg_connection=lambda _i: conn)
+            iceberg,
+            "get_config",
+            lambda _user: SimpleNamespace(get_iceberg_connection=lambda _i: conn),
         )
-        first = iceberg.get_iceberg_client("c1")
+        first = iceberg.get_iceberg_client("c1", USER)
         assert first.credentials == {"client_id": "i", "client_secret": "s"}
-        assert iceberg.get_iceberg_client("c1") is first
-        iceberg.IcebergClientManager().remove_client("c1")
-        assert iceberg.get_iceberg_client("c1") is not first
+        assert iceberg.get_iceberg_client("c1", USER) is first
+        assert iceberg.get_iceberg_client("c1", OTHER_USER) is not first  # cached per user
+        iceberg.IcebergClientManager().remove_client("c1", USER)
+        assert iceberg.get_iceberg_client("c1", USER) is not first
 
 
 @pytest.mark.unit
@@ -226,6 +234,7 @@ class TestGeoNodeClient:
         config_manager.add_geonode_connection(
             GeoNodeConnection(id="g1", name="GN", url=GN, api_key="k")
         )
-        assert isinstance(geonode.get_geonode_client("g1", "test-user"), geonode.GeoNodeClient)
+        client = geonode.get_geonode_client("g1", config_manager._user)
+        assert isinstance(client, geonode.GeoNodeClient)
         with pytest.raises(ValueError):
-            geonode.get_geonode_client("nope", "test-user")
+            geonode.get_geonode_client("nope", config_manager._user)

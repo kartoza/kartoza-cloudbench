@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-tui build-frontend clean clean-all dev dev-web dev-tui \
+.PHONY: all build build-web build-tui build-frontend build-maputnik clean clean-all dev dev-web dev-tui \
         install test lint format shell migrate kill-server redeploy help
 
 # Version from git tag or commit
@@ -20,12 +20,27 @@ build-web: build-frontend
 	$(PYTHON) manage.py collectstatic --noinput
 
 # Build the React frontend
-build-frontend:
+build-frontend: build-maputnik
 	@echo "Building React frontend..."
 	cd web && npm install && npm run build
 	@echo "Copying frontend to static directory..."
 	rm -rf static/*
 	cp -r internal/webserver/static/* static/ 2>/dev/null || cp -r web/dist/* static/ 2>/dev/null || true
+
+# Build the self-hosted Maputnik style editor (git submodule) into
+# web/public/maputnik/
+#
+# Applies deployment/maputnik-patches/cloudbench.patch before building
+build-maputnik:
+	@echo "Building maputnik (git submodule)..."
+	git submodule update --init maputnik
+	git -C maputnik apply ../deployment/maputnik-patches/cloudbench.patch
+	docker run --rm -v $(CURDIR)/maputnik:/app -w /app node:22-bookworm \
+		sh -c "npm install && npm run build"
+	git -C maputnik checkout -- src/components/AppToolbar.tsx src/libs/store/style-store-factory.ts
+	rm -rf web/public/maputnik
+	mkdir -p web/public/maputnik
+	cp -r maputnik/dist/* web/public/maputnik/
 
 # Run Django development server
 dev-web:
@@ -205,6 +220,17 @@ build-go-tui:
 build-go-web:
 	@echo "Building Go Web server..."
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/kartoza-cloudbench-web-go ./cmd/web
+
+.PHONY: deploy-up deploy-up-prod deploy-down
+
+deploy-up:
+	$(MAKE) -C deployment up
+
+deploy-up-prod:
+	$(MAKE) -C deployment up-prod
+
+deploy-down:
+	$(MAKE) -C deployment down
 
 # === Help ===
 

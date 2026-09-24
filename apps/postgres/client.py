@@ -4,12 +4,15 @@ Provides an object-oriented client for PostgreSQL operations,
 wrapping psycopg2 connections via pg_service.conf entries.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psycopg2
 
 from apps.core.config import get_config
 from apps.core.models import PGService
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 class PGServiceClient:
@@ -30,7 +33,7 @@ class PGServiceClient:
     def list_databases(self) -> list[str]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT datname FROM pg_database " "WHERE datistemplate = false ORDER BY datname"
+                "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
             )
             return [row[0] for row in cur.fetchall()]
 
@@ -647,25 +650,25 @@ class PGServiceClient:
             }
 
 
-def get_pg_client(service_name: str, user_id: str = "default") -> PGServiceClient:
+def get_pg_client(service_name: str, user: "User") -> PGServiceClient:
     """Get a PGServiceClient for a named service."""
-    service = get_config(user_id).get_pg_service(service_name)
+    service = get_config(user).get_pg_service(service_name)
     if not service:
         raise ValueError(f"PostgreSQL service not found: {service_name}")
     return PGServiceClient(service)
 
 
-def list_pg_services(user_id: str = "default"):
-    return get_config(user_id).list_pg_services()
+def list_pg_services(user: "User"):
+    return get_config(user).list_pg_services()
 
 
-def add_pg_service(service: PGService, user_id: str = "default") -> None:
-    get_config(user_id).add_pg_service(service)
+def add_pg_service(service: PGService, user: "User") -> None:
+    get_config(user).add_pg_service(service)
 
 
-def update_pg_service(service: PGService, user_id: str = "default") -> None:
-    get_config(user_id).update_pg_service(service)
+def update_pg_service(service: PGService, user: "User") -> None:
+    get_config(user).update_pg_service(service)
 
 
-def delete_pg_service(service_name: str, user_id: str = "default") -> bool:
-    return get_config(user_id).delete_pg_service(service_name)
+def delete_pg_service(service_name: str, user: "User") -> bool:
+    return get_config(user).delete_pg_service(service_name)

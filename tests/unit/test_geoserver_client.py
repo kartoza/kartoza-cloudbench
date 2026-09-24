@@ -371,10 +371,10 @@ class TestClientManager:
         config_manager.add_connection(
             Connection(id="c1", name="GS", url=BASE, username="a", password="b")
         )
-        client = GeoServerClientManager("test-user").get_client("c1")
+        client = GeoServerClientManager(config_manager._user).get_client("c1")
         assert isinstance(client, GeoServerClient)
-        assert isinstance(get_geoserver_client("c1", "test-user"), GeoServerClient)
+        assert isinstance(get_geoserver_client("c1", config_manager._user), GeoServerClient)
 
     def test_unknown_connection_raises(self, config_manager):
         with pytest.raises(ValueError, match="not found"):
-            GeoServerClientManager("test-user").get_client("nope")
+            GeoServerClientManager(config_manager._user).get_client("nope")

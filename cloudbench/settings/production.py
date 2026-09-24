@@ -2,6 +2,8 @@
 
 import os
 
+from django.core.exceptions import ImproperlyConfigured
+
 from .base import *  # noqa: F401, F403
 
 DEBUG = False
@@ -9,6 +11,13 @@ DEBUG = False
 # Security settings
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]  # Required in production
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+
+CLOUDBENCH_ENCRYPTION_KEY = os.environ.get("CLOUDBENCH_ENCRYPTION_KEY")
+if not CLOUDBENCH_ENCRYPTION_KEY:
+    raise ImproperlyConfigured(
+        "CLOUDBENCH_ENCRYPTION_KEY must be set in production "
+        '(generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")'
+    )
 
 # HTTPS settings
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() in ("true", "1", "yes")

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import {
   Modal,
   ModalOverlay,
@@ -15,10 +16,13 @@ import {
   Box,
   Icon,
   Divider,
+  Badge,
+  Spinner,
 } from '@chakra-ui/react'
-import { FiSettings, FiEye } from 'react-icons/fi'
+import { FiSettings, FiEye, FiToggleRight } from 'react-icons/fi'
 import { SiPostgresql } from 'react-icons/si'
 import { useUIStore } from '../../stores/uiStore'
+import { useProvidersStore } from '../../stores/providersStore'
 
 export default function AppSettingsDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
@@ -26,7 +30,18 @@ export default function AppSettingsDialog() {
   const settings = useUIStore((state) => state.settings)
   const setShowHiddenPGServices = useUIStore((state) => state.setShowHiddenPGServices)
 
+  const providers = useProvidersStore((state) => state.providers)
+  const isProvidersLoading = useProvidersStore((state) => state.isLoading)
+  const fetchProviders = useProvidersStore((state) => state.fetchProviders)
+  const updateProviders = useProvidersStore((state) => state.updateProviders)
+
   const isOpen = activeDialog === 'settings'
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchProviders()
+    }
+  }, [isOpen, fetchProviders])
 
   return (
     <Modal isOpen={isOpen} onClose={closeDialog} size="md" isCentered>
@@ -56,6 +71,57 @@ export default function AppSettingsDialog() {
 
         <ModalBody py={6}>
           <VStack spacing={6} align="stretch">
+            {/* Providers Section */}
+            <Box>
+              <HStack spacing={2} mb={4}>
+                <Icon as={FiToggleRight} color="gray.600" />
+                <Text fontWeight="600" color="gray.700">
+                  Data Source Providers
+                </Text>
+                {isProvidersLoading && <Spinner size="xs" color="gray.400" />}
+              </HStack>
+
+              <VStack spacing={3} align="stretch">
+                {providers.map((provider) => (
+                  <FormControl
+                    key={provider.id}
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="space-between"
+                  >
+                    <HStack spacing={2}>
+                      <Box>
+                        <HStack spacing={2}>
+                          <FormLabel htmlFor={`provider-${provider.id}`} mb={0} cursor="pointer">
+                            {provider.name}
+                          </FormLabel>
+                          {provider.experimental && (
+                            <Badge colorScheme="orange" fontSize="2xs">
+                              Experimental
+                            </Badge>
+                          )}
+                        </HStack>
+                        <Text fontSize="xs" color="gray.500">
+                          {provider.description}
+                        </Text>
+                      </Box>
+                    </HStack>
+                    <Switch
+                      id={`provider-${provider.id}`}
+                      colorScheme="blue"
+                      isChecked={provider.enabled}
+                      isDisabled={isProvidersLoading}
+                      onChange={(e) =>
+                        updateProviders([{ id: provider.id, enabled: e.target.checked }])
+                      }
+                    />
+                  </FormControl>
+                ))}
+              </VStack>
+            </Box>
+
+            <Divider />
+
             {/* PostgreSQL Section */}
             <Box>
               <HStack spacing={2} mb={4}>

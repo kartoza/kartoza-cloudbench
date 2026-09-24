@@ -41,6 +41,7 @@ class PreviewSessionManager:
 
     _instance: "PreviewSessionManager | None" = None
     _lock = threading.RLock()
+    _sessions: dict[str, PreviewSession]
 
     def __new__(cls) -> "PreviewSessionManager":
         """Singleton pattern for session manager."""
@@ -48,7 +49,7 @@ class PreviewSessionManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._sessions: dict[str, PreviewSession] = {}
+                    cls._instance._sessions = {}
         return cls._instance
 
     def create_session(
@@ -174,7 +175,7 @@ class PreviewLayerView(APIView):
 
         try:
             # Get the GeoServer URL from the connection
-            client = get_geoserver_client(session.conn_id, str(request.user.username))
+            client = get_geoserver_client(session.conn_id, request.user)
             geoserver_url = client.connection.url.rstrip("/")
 
             return Response(
@@ -213,7 +214,7 @@ class PreviewMetadataView(APIView):
             )
 
         try:
-            client = get_geoserver_client(session.conn_id, str(request.user.username))
+            client = get_geoserver_client(session.conn_id, request.user)
 
             # Use the client's get_layer_metadata method
             layer_meta = client.get_layer_metadata(session.workspace, session.layer_name)

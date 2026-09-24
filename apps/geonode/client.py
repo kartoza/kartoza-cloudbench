@@ -5,13 +5,16 @@ for managing geospatial data catalog and services.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from apps.core.config import get_config
 
 from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -329,9 +332,9 @@ class GeoNodeClient:
         )
 
 
-def get_geonode_client(connection_id: str, user_id: str = "default") -> GeoNodeClient:
+def get_geonode_client(connection_id: str, user: "User") -> GeoNodeClient:
     """Get a GeoNode client for a connection."""
-    conn = get_config(user_id).get_geonode_connection(connection_id)
+    conn = get_config(user).get_geonode_connection(connection_id)
     if not conn:
         raise ValueError(f"GeoNode connection not found: {connection_id}")
     return GeoNodeClient(

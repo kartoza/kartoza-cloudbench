@@ -6,6 +6,8 @@ import * as api from '../api'
 import MapPreview from './MapPreview'
 import Globe3DPreview from './Globe3DPreview'
 import S3LayerPreview from './S3LayerPreview'
+import S3MapPreview from './S3MapPreview'
+import S3TextPreview from './S3TextPreview'
 import QGISMapPreview from './QGISMapPreview'
 import GeoNodeMapPreview from './GeoNodeMapPreview'
 import DuckDBQueryPanel from './DuckDBQueryPanel'
@@ -43,6 +45,8 @@ export default function MainContent() {
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const activePreview = useUIStore((state) => state.activePreview)
   const activeS3Preview = useUIStore((state) => state.activeS3Preview)
+  const activeS3MapPreview = useUIStore((state) => state.activeS3MapPreview)
+  const activeS3TextPreview = useUIStore((state) => state.activeS3TextPreview)
   const activeQGISPreview = useUIStore((state) => state.activeQGISPreview)
   const activeGeoNodePreview = useUIStore((state) => state.activeGeoNodePreview)
   const activeDuckDBQuery = useUIStore((state) => state.activeDuckDBQuery)
@@ -52,6 +56,8 @@ export default function MainContent() {
   const previewMode = useUIStore((state) => state.previewMode)
   const setPreview = useUIStore((state) => state.setPreview)
   const setS3Preview = useUIStore((state) => state.setS3Preview)
+  const setS3MapPreview = useUIStore((state) => state.setS3MapPreview)
+  const setS3TextPreview = useUIStore((state) => state.setS3TextPreview)
   const setQGISPreview = useUIStore((state) => state.setQGISPreview)
   const setGeoNodePreview = useUIStore((state) => state.setGeoNodePreview)
   const setDuckDBQuery = useUIStore((state) => state.setDuckDBQuery)
@@ -223,6 +229,39 @@ export default function MainContent() {
     )
   }
 
+  // Show inline PMTiles/COG map preview if active (S3 connection tree)
+  if (activeS3MapPreview) {
+    return (
+      <Box flex="1" display="flex" flexDirection="column" minH="0">
+        <S3MapPreview
+          key={`s3map-${activeS3MapPreview.connectionId}:${activeS3MapPreview.bucketName}:${activeS3MapPreview.objectKey}`}
+          connectionId={activeS3MapPreview.connectionId}
+          bucketName={activeS3MapPreview.bucketName}
+          objectKey={activeS3MapPreview.objectKey}
+          format={activeS3MapPreview.format}
+          onClose={() => setS3MapPreview(null)}
+        />
+      </Box>
+    )
+  }
+
+  // Show inline markdown/JSON/text preview if active (S3 connection tree)
+  if (activeS3TextPreview) {
+    return (
+      <Box flex="1" display="flex" flexDirection="column" minH="0">
+        <S3TextPreview
+          key={`s3text-${activeS3TextPreview.connectionId}:${activeS3TextPreview.objectKey}`}
+          connectionId={activeS3TextPreview.connectionId}
+          objectKey={activeS3TextPreview.objectKey}
+          title={activeS3TextPreview.title}
+          size={activeS3TextPreview.size}
+          lastModified={activeS3TextPreview.lastModified}
+          onClose={() => setS3TextPreview(null)}
+        />
+      </Box>
+    )
+  }
+
   // Show GeoServer preview if active - fills the entire available space
   // Using key prop to force remount when layer changes, ensuring iframe and metadata fully refresh
   if (activePreview) {
@@ -360,7 +399,15 @@ export default function MainContent() {
       )
     case 's3connection':
       return (
-        <S3ConnectionPanel connectionId={selectedNode.s3ConnectionId!} />
+        <S3ConnectionPanel key={selectedNode.id} connectionId={selectedNode.s3ConnectionId!} />
+      )
+    case 's3folder':
+      return (
+        <S3ConnectionPanel
+          key={selectedNode.id}
+          connectionId={selectedNode.s3ConnectionId!}
+          initialPrefix={selectedNode.s3Key}
+        />
       )
     case 's3storage':
       return <S3StoragePanel />

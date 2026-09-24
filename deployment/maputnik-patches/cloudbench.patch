@@ -1,0 +1,64 @@
+diff --git a/src/components/AppToolbar.tsx b/src/components/AppToolbar.tsx
+index 31c40e84..3c31d7ef 100644
+--- a/src/components/AppToolbar.tsx
++++ b/src/components/AppToolbar.tsx
+@@ -137,6 +137,37 @@ class AppToolbarInternal extends React.Component<AppToolbarInternalProps> {
+     }
+   };
+ 
++  // CloudBench integration: when opened from CloudBench's "Edit style" with
++  // ?cbConnectionId=&cbStyleKey=, the "Save" button saves straight to that
++  // connection's bucket instead of opening the normal export dialog. Same
++  // origin as CloudBench, so the auth token in localStorage just works.
++  handleSaveClick = () => {
++    const params = new URLSearchParams(window.location.search);
++    const connectionId = params.get("cbConnectionId");
++    const key = params.get("cbStyleKey");
++
++    if (!connectionId || !key) {
++      this.props.onToggleModal("export");
++      return;
++    }
++
++    const token = window.localStorage.getItem("token");
++    const blob = new Blob([JSON.stringify(this.props.mapStyle, null, 2)], {type: "application/json"});
++    const formData = new FormData();
++    formData.append("file", blob, key.split("/").pop() || "style.json");
++    formData.append("key", key);
++
++    fetch(`/api/s3/upload/${encodeURIComponent(connectionId)}`, {
++      method: "POST",
++      headers: token ? {Authorization: `Token ${token}`} : {},
++      body: formData,
++    }).then((res) => {
++      window.alert(res.ok ? "Style saved to bucket." : "Failed to save style.");
++    }).catch(() => {
++      window.alert("Failed to save style.");
++    });
++  };
++
+   render() {
+     const t = this.props.t;
+     const views = [
+@@ -226,7 +257,7 @@ class AppToolbarInternal extends React.Component<AppToolbarInternalProps> {
+             <MdOpenInBrowser />
+             <IconText>{t("Open")}</IconText>
+           </ToolbarAction>
+-          <ToolbarAction wdKey="nav:export" onClick={() => this.props.onToggleModal("export")}>
++          <ToolbarAction wdKey="nav:export" onClick={this.handleSaveClick}>
+             <MdSave />
+             <IconText>{t("Save")}</IconText>
+           </ToolbarAction>
+diff --git a/src/libs/store/style-store-factory.ts b/src/libs/store/style-store-factory.ts
+index ee9c0811..ec540bef 100644
+--- a/src/libs/store/style-store-factory.ts
++++ b/src/libs/store/style-store-factory.ts
+@@ -6,7 +6,7 @@ import { StyleStore } from "./stylestore";
+ 
+ export async function createStyleStore(onStyleChanged: OnStyleChangedCallback): Promise<IStyleStore> {
+   const styleUrl = getStyleUrlFromAddressbarAndRemoveItIfNeeded();
+-  const useStyleUrl = styleUrl && window.confirm("Load style from URL: " + styleUrl + " and discard current changes?");
++  const useStyleUrl = !!styleUrl;
+   let styleStore: IStyleStore;
+   if (import.meta.env.MODE === "desktop" && !useStyleUrl) {
+     const apiStyleStore = new ApiStyleStore({

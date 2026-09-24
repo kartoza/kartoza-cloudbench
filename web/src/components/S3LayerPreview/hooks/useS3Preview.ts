@@ -14,7 +14,6 @@ interface UseS3PreviewResult {
  */
 export function useS3Preview(
   connectionId: string,
-  bucketName: string,
   objectKey: string
 ): UseS3PreviewResult {
   const [metadata, setMetadata] = useState<S3PreviewMetadata | null>(null)
@@ -25,7 +24,7 @@ export function useS3Preview(
     setIsLoading(true)
     setError(null)
 
-    api.getS3PreviewMetadata(connectionId, bucketName, objectKey)
+    api.getS3PreviewMetadata(connectionId, objectKey)
       .then((data) => {
         setMetadata(data)
         setIsLoading(false)
@@ -35,7 +34,7 @@ export function useS3Preview(
         setError(err.message || 'Failed to load preview')
         setIsLoading(false)
       })
-  }, [connectionId, bucketName, objectKey])
+  }, [connectionId, objectKey])
 
   // Load on mount and when dependencies change
   useEffect(() => {

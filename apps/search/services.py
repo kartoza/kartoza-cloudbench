@@ -5,10 +5,14 @@ including GeoServer layers, PostgreSQL tables, S3 objects, etc.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
+from apps.s3.models import S3Connection
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
 
 
 @dataclass
@@ -41,9 +45,9 @@ class SearchResult:
 class SearchService:
     """Service for universal search across all resources."""
 
-    def __init__(self, user_id: str = "default"):
+    def __init__(self, user: "User"):
         """Initialize search service."""
-        self._user_id = user_id
+        self._user = user
 
     def search(
         self,
@@ -76,10 +80,6 @@ class SearchService:
         if not types or "table" in types:
             results.extend(self._search_tables(query_lower))
 
-        # Search S3 buckets
-        if not types or "bucket" in types:
-            results.extend(self._search_buckets(query_lower))
-
         # Sort by relevance (simple name match priority)
         results.sort(
             key=lambda r: (
@@ -93,7 +93,7 @@ class SearchService:
     def _search_connections(self, query: str) -> list[SearchResult]:
         """Search GeoServer connections."""
         results = []
-        config = get_config(self._user_id)
+        config = get_config(self._user)
 
         for conn in config.list_connections():
             if query in conn.name.lower() or query in conn.url.lower():
@@ -109,17 +109,21 @@ class SearchService:
                     )
                 )
 
-        for conn in config.list_s3_connections():
-            if query in conn.name.lower() or query in conn.endpoint.lower():
+        for s3_conn in S3Connection.objects.filter(owner=self._user):
+            if (
+                query in s3_conn.name.lower()
+                or query in s3_conn.endpoint.lower()
+                or query in s3_conn.bucket.lower()
+            ):
                 results.append(
                     SearchResult(
                         type="connection",
-                        name=conn.name,
-                        title=conn.name,
-                        description=f"S3 at {conn.endpoint}",
+                        name=s3_conn.name,
+                        title=s3_conn.name,
+                        description=f"S3 bucket {s3_conn.bucket!r} on {s3_conn.endpoint}",
                         source="s3",
-                        source_id=conn.id,
-                        path=f"/s3/{conn.id}",
+                        source_id=str(s3_conn.id),
+                        path=f"/s3/{s3_conn.id}",
                     )
                 )
 
@@ -128,11 +132,11 @@ class SearchService:
     def _search_layers(self, query: str) -> list[SearchResult]:
         """Search GeoServer layers."""
         results = []
-        config = get_config(self._user_id)
+        config = get_config(self._user)
 
         for conn in config.list_connections():
             try:
-                client = get_geoserver_client(conn.id, self._user_id)
+                client = get_geoserver_client(conn.id, self._user)
                 workspaces = client.list_workspaces()
 
                 for ws in workspaces:
@@ -218,40 +222,6 @@ class SearchService:
 
         return results
 
-    def _search_buckets(self, query: str) -> list[SearchResult]:
-        """Search S3 buckets."""
-        results = []
-        config = get_config(self._user_id)
-
-        for conn in config.list_s3_connections():
-            try:
-                from apps.s3.client import get_s3_client
-
-                client = get_s3_client(conn.id)
-                buckets = client.list_buckets()
-
-                for bucket in buckets:
-                    if query in bucket.name.lower():
-                        results.append(
-                            SearchResult(
-                                type="bucket",
-                                name=bucket.name,
-                                title=bucket.name,
-                                description=f"S3 bucket on {conn.name}",
-                                source="s3",
-                                source_id=conn.id,
-                                path=f"/s3/{conn.id}/{bucket.name}",
-                                metadata={
-                                    "connection": conn.name,
-                                    "creationDate": bucket.creation_date,
-                                },
-                            )
-                        )
-            except Exception:
-                pass
-
-        return results
-
     def get_suggestions(
         self,
         query: str,
@@ -284,6 +254,6 @@ class SearchService:
         return suggestions
 
 
-def get_search_service(user_id: str = "default") -> SearchService:
+def get_search_service(user: "User") -> SearchService:
     """Get a search service for the given user."""
-    return SearchService(user_id)
+    return SearchService(user)

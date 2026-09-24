@@ -528,22 +528,22 @@ export interface DashboardData {
 // S3 Storage Types
 // ============================================================================
 
-// S3 Connection configuration
+// S3 Connection configuration — scoped to exactly one bucket.
+// The API never echoes back accessKey/secretKey (write-only, for security).
 export interface S3Connection {
   id: string
   name: string
   endpoint: string
-  accessKey: string
-  secretKey: string
+  bucket: string
   region?: string
   useSSL: boolean
   pathStyle: boolean
-  isActive: boolean
 }
 
 export interface S3ConnectionCreate {
   name: string
   endpoint: string
+  bucket: string
   accessKey: string
   secretKey: string
   region?: string
@@ -554,13 +554,6 @@ export interface S3ConnectionCreate {
 export interface S3ConnectionTestResult {
   success: boolean
   message: string
-  buckets?: number
-}
-
-// S3 Bucket
-export interface S3Bucket {
-  name: string
-  creationDate: string
 }
 
 // S3 Object
@@ -583,7 +576,13 @@ export type ConversionJobStatus = 'pending' | 'running' | 'completed' | 'failed'
 export interface ConversionJob {
   id: string
   sourcePath: string
-  outputPath: string
+  // Null when the job produced multiple files (e.g. one PMTiles per
+  // GeoPackage vector layer) — see outputPaths for the full list.
+  outputPath: string | null
+  outputPaths?: string[]
+  // GeoPackage -> pmtiles jobs only: the vector layers being converted, in
+  // the order cng-lite processes them.
+  layers?: string[] | null
   sourceFormat: string
   targetFormat: string
   status: ConversionJobStatus
@@ -609,12 +608,13 @@ export interface ConversionToolStatus {
   gdal?: ConversionToolInfo
   pdal?: ConversionToolInfo
   ogr2ogr?: ConversionToolInfo
+  cloudnativegis?: ConversionToolInfo
 }
 
 // S3 Upload options
 export interface S3UploadOptions {
   convert?: boolean // Whether to suggest/perform cloud-native conversion
-  targetFormat?: 'cog' | 'copc' | 'geoparquet'
+  targetFormat?: 'cog' | 'copc' | 'geoparquet' | 'pmtiles'
 }
 
 // S3 Upload result

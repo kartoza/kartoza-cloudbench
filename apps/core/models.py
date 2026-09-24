@@ -92,20 +92,6 @@ class PGService(BaseModel):
         return dsn
 
 
-class S3Connection(BaseModel):
-    """S3-compatible storage connection configuration."""
-
-    id: str = Field(default_factory=lambda: f"s3_{datetime.now().strftime('%Y%m%d%H%M%S')}")
-    name: str
-    endpoint: str
-    access_key: str
-    secret_key: str
-    region: str = ""
-    use_ssl: bool = False
-    path_style: bool = True  # True for MinIO, False for AWS S3
-    is_active: bool = False
-
-
 class QGISProject(BaseModel):
     """QGIS project file tracking."""
 
@@ -195,7 +181,6 @@ class Config(BaseModel):
     ping_interval_secs: int = 60
     pg_services: list[PGService] = Field(default_factory=list)
     saved_queries: list[SavedQuery] = Field(default_factory=list)
-    s3_connections: list[S3Connection] = Field(default_factory=list)
     qgis_projects: list[QGISProject] = Field(default_factory=list)
     geonode_connections: list[GeoNodeConnection] = Field(default_factory=list)
     qfieldcloud_connections: list[QFieldCloudConnection] = Field(default_factory=list)

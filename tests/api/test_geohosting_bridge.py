@@ -6,6 +6,7 @@ CloudBench pulling it from GeoHosting's database.
 """
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.test import RequestFactory
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -23,6 +24,11 @@ def _service_token(settings):
 
 def _auth_headers():
     return {"HTTP_AUTHORIZATION": f"Bearer {SERVICE_TOKEN}"}
+
+
+def _config_for(username):
+    """ConfigManager for a user the bridge created from owner_username."""
+    return get_config(get_user_model().objects.get(username=username))
 
 
 @pytest.mark.django_db
@@ -76,7 +82,7 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = get_config("102").config
+        config = _config_for("102").config
         conn = next(c for c in config.connections if c.id == "geohosting_1")
         assert conn.url == "https://my-geoserver.example.com/geoserver"
         assert conn.password == "secret"
@@ -101,7 +107,7 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = get_config("103").config
+        config = _config_for("103").config
         conn = next(c for c in config.geonode_connections if c.id == "geohosting_2")
         assert conn.url == "https://my-geonode.example.com"
 
@@ -124,7 +130,7 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = get_config("104").config
+        config = _config_for("104").config
         svc = next(s for s in config.pg_services if s.id == "geohosting_3")
         assert svc.host == "my-postgis.example.com"
         assert svc.dbname == "gis"
@@ -146,7 +152,7 @@ class TestGeoHostingInstanceView:
         payload["password"] = "second-secret"
         api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
-        config = get_config("105").config
+        config = _config_for("105").config
         conn = next(c for c in config.connections if c.id == "geohosting_4")
         assert conn.password == "first-secret"
 
@@ -167,7 +173,7 @@ class TestGeoHostingInstanceView:
         payload["password"] = "filled-in"
         api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
-        config = get_config("106").config
+        config = _config_for("106").config
         conn = next(c for c in config.connections if c.id == "geohosting_5")
         assert conn.password == "filled-in"
 
@@ -212,14 +218,14 @@ class TestGeoHostingInstanceView:
             format="json",
             **_auth_headers(),
         )
-        assert any(c.id == "geohosting_7" for c in get_config("109").config.connections)
+        assert any(c.id == "geohosting_7" for c in _config_for("109").config.connections)
 
         response = api_client.delete(
             "/api/geohosting/instances/7/?owner_username=109",
             **_auth_headers(),
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert not any(c.id == "geohosting_7" for c in get_config("109").config.connections)
+        assert not any(c.id == "geohosting_7" for c in _config_for("109").config.connections)
 
     def test_delete_requires_owner_username(self, api_client: APIClient) -> None:
         """DELETE without owner_username is a 400, not a silent no-op."""
@@ -267,4 +273,4 @@ class TestGeoHostingSSOTokenView:
 
         request = RequestFactory().get("/", HTTP_AUTHORIZATION=f"Token {token}")
         user, _ = SignedSSOTokenAuthentication().authenticate(request)
-        assert user.id == "42"
+        assert user.username == "42"
