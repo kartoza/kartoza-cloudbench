@@ -115,7 +115,9 @@ def seeded_client(authenticated_api_client: APIClient, user_config: Any) -> APIC
     return authenticated_api_client
 
 
-PUBLIC_ROUTES = {"/api/auth/login/"}
+# Routes the frontend must reach before login: the login form itself, and
+# the deployment config main.tsx loads before rendering it.
+PUBLIC_ROUTES = {"/api/auth/login/", "/api/frontend-config/"}
 ROUTES = _routes()
 
 
