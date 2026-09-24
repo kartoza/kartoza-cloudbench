@@ -168,7 +168,7 @@ class TestDuckDBEngine:
         monkeypatch.setattr(
             engine,
             "execute_query",
-            lambda q, _cid, _limit, user: captured.append(q) or {"rows": []},
+            lambda q, _cid, _limit, **_kwargs: captured.append(q) or {"rows": []},
         )
         engine.query_parquet(
             "s3://b/a.parquet", "c", USER, columns=["a", "b"], where="a > 1", limit=5
@@ -184,14 +184,14 @@ class TestDuckDBEngine:
     def test_parquet_schema_and_metadata(self, engine, monkeypatch):
         rows = [{"column_name": "a", "column_type": "INTEGER", "null": "YES"}]
         monkeypatch.setattr(
-            engine, "execute_query", lambda _q, _cid, _limit=1000, user=None: {"rows": rows}
+            engine, "execute_query", lambda _q, _cid, _limit=1000, **_kwargs: {"rows": rows}
         )
         assert engine.get_parquet_schema("p", "c", USER) == {
             "columns": [{"name": "a", "type": "INTEGER", "nullable": True}]
         }
         assert engine.get_parquet_metadata("p", "c", USER) == rows[0]
         monkeypatch.setattr(
-            engine, "execute_query", lambda _q, _cid, _limit=1000, user=None: {"rows": []}
+            engine, "execute_query", lambda _q, _cid, _limit=1000, **_kwargs: {"rows": []}
         )
         assert engine.get_parquet_metadata("p", "c", USER) == {}
 

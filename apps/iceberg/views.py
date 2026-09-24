@@ -232,7 +232,7 @@ class IcebergNamespaceListView(APIView):
 class IcebergNamespaceDetailView(APIView):
     """Get namespace details."""
 
-    def get(self, _request, conn_id, namespace):
+    def get(self, request, conn_id, namespace):
         """Get namespace information."""
         namespace_list = namespace.split(".")
 
@@ -262,7 +262,7 @@ class IcebergNamespaceDetailView(APIView):
 class IcebergTableListView(APIView):
     """List tables in a namespace."""
 
-    def get(self, _request, conn_id, namespace):
+    def get(self, request, conn_id, namespace):
         """List all tables."""
         namespace_list = namespace.split(".")
 
@@ -285,7 +285,7 @@ class IcebergTableListView(APIView):
 class IcebergTableDetailView(APIView):
     """Get table details."""
 
-    def get(self, _request, conn_id, namespace, table):
+    def get(self, request, conn_id, namespace, table):
         """Get table information."""
         namespace_list = namespace.split(".")
 
@@ -315,7 +315,7 @@ class IcebergTableDetailView(APIView):
 class IcebergTableMetadataView(APIView):
     """Get full table metadata."""
 
-    def get(self, _request, conn_id, namespace, table):
+    def get(self, request, conn_id, namespace, table):
         """Get table metadata including schema."""
         namespace_list = namespace.split(".")
 

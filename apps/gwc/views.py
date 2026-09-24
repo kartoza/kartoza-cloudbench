@@ -20,7 +20,7 @@ from .client import get_gwc_client
 class GWCLayerListView(APIView):
     """List all GWC layers for a connection."""
 
-    def get(self, _request, conn_id, workspace):
+    def get(self, request, conn_id, workspace):
         """List cached layers.
 
         Filters layers by workspace prefix.
@@ -44,7 +44,7 @@ class GWCLayerListView(APIView):
 class GWCLayerDetailView(APIView):
     """Get GWC layer details."""
 
-    def get(self, _request, conn_id, workspace, layer):
+    def get(self, request, conn_id, workspace, layer):
         """Get cached layer configuration."""
         try:
             client = get_gwc_client(conn_id, request.user)
@@ -100,7 +100,7 @@ class GWCSeedView(APIView):
                 {"error": e.message}, status=e.status_code or status.HTTP_502_BAD_GATEWAY
             )
 
-    def get(self, _request, conn_id, workspace, layer):
+    def get(self, request, conn_id, workspace, layer):
         """Get seed task status for a layer."""
         try:
             client = get_gwc_client(conn_id, request.user)
@@ -128,7 +128,7 @@ class GWCSeedView(APIView):
                 {"error": e.message}, status=e.status_code or status.HTTP_502_BAD_GATEWAY
             )
 
-    def delete(self, _request, conn_id, workspace, layer):
+    def delete(self, request, conn_id, workspace, layer):
         """Kill all running seed tasks for a layer."""
         try:
             client = get_gwc_client(conn_id, request.user)
@@ -180,7 +180,7 @@ class GWCTruncateView(APIView):
 class GWCGridSetListView(APIView):
     """List all available grid sets."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """List grid sets."""
         try:
             client = get_gwc_client(conn_id, request.user)
@@ -195,7 +195,7 @@ class GWCGridSetListView(APIView):
 class GWCGridSetDetailView(APIView):
     """Get grid set details."""
 
-    def get(self, _request, conn_id, gridset):
+    def get(self, request, conn_id, gridset):
         """Get grid set configuration."""
         try:
             client = get_gwc_client(conn_id, request.user)
@@ -210,7 +210,7 @@ class GWCGridSetDetailView(APIView):
 class GWCDiskQuotaView(APIView):
     """Get disk quota information."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """Get disk quota configuration and usage."""
         try:
             client = get_gwc_client(conn_id, request.user)

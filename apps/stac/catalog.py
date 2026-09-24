@@ -212,9 +212,7 @@ def _s3_item(
     self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}/items/{key}")
 
     try:
-        asset_href = get_s3_client(conn.id, user).generate_presigned_url(
-            key=key, expiration=3600
-        )
+        asset_href = get_s3_client(conn.id, user).generate_presigned_url(key=key, expiration=3600)
     except Exception:
         asset_href = None
 

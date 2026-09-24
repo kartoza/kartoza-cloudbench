@@ -33,7 +33,7 @@ class PGServiceClient:
     def list_databases(self) -> list[str]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT datname FROM pg_database " "WHERE datistemplate = false ORDER BY datname"
+                "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
             )
             return [row[0] for row in cur.fetchall()]
 

@@ -215,9 +215,7 @@ class PGSchemaStatsView(APIView):
 
     def get(self, request, service_name, schema_name):
         try:
-            stats = get_pg_client(service_name, request.user).get_schema_stats(
-                schema_name
-            )
+            stats = get_pg_client(service_name, request.user).get_schema_stats(schema_name)
             return Response(stats)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -265,9 +263,7 @@ class PGSchemaNameListView(APIView):
 
     def get(self, request, service_name, database_name):
         try:
-            names = get_pg_client(service_name, request.user).list_schema_names(
-                database_name
-            )
+            names = get_pg_client(service_name, request.user).list_schema_names(database_name)
             return Response(names)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -301,9 +297,7 @@ class PGTableListView(APIView):
     def get(self, request, service_name, schema_name):
         """List all tables in a schema."""
         try:
-            tables = get_pg_client(service_name, request.user).list_tables(
-                schema_name
-            )
+            tables = get_pg_client(service_name, request.user).list_tables(schema_name)
             return Response({"tables": tables})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
@@ -393,9 +387,7 @@ class PGQueryView(APIView):
 
         try:
             t0 = time.monotonic()
-            result = get_pg_client(service_name, request.user).execute_query(
-                query, limit=limit
-            )
+            result = get_pg_client(service_name, request.user).execute_query(query, limit=limit)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             return Response(
                 {

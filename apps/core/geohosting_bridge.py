@@ -73,7 +73,7 @@ class GeoHostingInstanceView(APIView):
         product = (data.get("product") or "").lower()
         if not owner_username or not instance_id or not product:
             return Response(
-                {"detail": ("owner_username, instance_id and product are " "required.")},
+                {"detail": ("owner_username, instance_id and product are required.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

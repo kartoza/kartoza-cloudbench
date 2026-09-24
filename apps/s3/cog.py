@@ -88,9 +88,7 @@ def prepare_tiff(uploaded_file, destination):
             output.write(chunk)
 
 
-def start_conversion(
-    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE
-):
+def start_conversion(uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:

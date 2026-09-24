@@ -151,7 +151,7 @@ class QFieldCloudConnectionDetailView(APIView):
 class QFieldCloudProjectListView(APIView):
     """List projects for a connection."""
 
-    def get(self, _request, conn_id):
+    def get(self, request, conn_id):
         """List all projects."""
         try:
             client = get_qfieldcloud_client(conn_id, request.user)
@@ -172,7 +172,7 @@ class QFieldCloudProjectListView(APIView):
 class QFieldCloudProjectDetailView(APIView):
     """Get project details."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """Get project information."""
         try:
             client = get_qfieldcloud_client(conn_id, request.user)
@@ -200,7 +200,7 @@ class QFieldCloudProjectDetailView(APIView):
 class QFieldCloudProjectFilesView(APIView):
     """List project files."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """List files in a project."""
         try:
             client = get_qfieldcloud_client(conn_id, request.user)
@@ -221,7 +221,7 @@ class QFieldCloudProjectFilesView(APIView):
 class QFieldCloudProjectStatusView(APIView):
     """Get project sync status."""
 
-    def get(self, _request, conn_id, project_id):
+    def get(self, request, conn_id, project_id):
         """Get project status."""
         try:
             client = get_qfieldcloud_client(conn_id, request.user)
