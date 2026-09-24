@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from apps.core.models import Connection, S3Connection, SyncConfiguration, SyncOptions
+from apps.core.config import get_config
+from apps.core.models import Connection, SyncConfiguration, SyncOptions
+from apps.s3.models import S3Connection
 from apps.search import services as search
 from apps.sync import services as sync
 
@@ -14,19 +16,30 @@ USER = SimpleNamespace(pk=1, username="u")
 
 
 @pytest.fixture
-def user(config_manager):
-    config_manager.add_connection(
+def user(config_manager, django_user_model):
+    """A user with one GeoServer connection (config file) and one S3 connection (DB).
+
+    config_manager is requested only for its isolated CLOUDBENCH_DATA_FOLDER.
+    """
+    owner = django_user_model.objects.create(username="alice")
+    get_config(owner).add_connection(
         Connection(
             id="gs1", name="Prod GeoServer", url="http://gs.test", username="a", password="b"
         )
     )
-    config_manager.add_s3_connection(
-        S3Connection(id="s31", name="Archive", endpoint="s3.test", access_key="k", secret_key="s")
+    S3Connection.objects.create(
+        owner=owner,
+        name="Archive",
+        endpoint="s3.test",
+        bucket="archive-bucket",
+        access_key="k",
+        secret_key="s",
     )
-    return config_manager._user
+    return owner
 
 
 @pytest.mark.unit
+@pytest.mark.django_db
 class TestSearchService:
     def make(self, user):
         return search.get_search_service(user)
@@ -85,29 +98,10 @@ class TestSearchService:
         monkeypatch.setattr("apps.postgres.service.list_services", boom)
         assert self.make(user).search("x", types=["table"]) == []
 
-    def test_search_buckets(self, user, monkeypatch):
-        client = MagicMock()
-        client.list_buckets.return_value = [
-            SimpleNamespace(name="photos", creation_date="2024"),
-            SimpleNamespace(name="docs", creation_date=None),
-        ]
-        monkeypatch.setattr("apps.s3.client.get_s3_client", lambda _id: client)
-        results = self.make(user).search("photo", types=["bucket"])
-        assert [r.name for r in results] == ["photos"]
-        assert results[0].metadata["creationDate"] == "2024"
-
-    def test_search_buckets_failure_is_swallowed(self, user, monkeypatch):
-        def boom(_id):
-            raise ValueError("nope")
-
-        monkeypatch.setattr("apps.s3.client.get_s3_client", boom)
-        assert self.make(user).search("x", types=["bucket"]) == []
-
     def test_search_sorts_name_matches_first_and_limits(self, user, monkeypatch):
         monkeypatch.setattr("apps.postgres.service.list_services", lambda: [])
         service = self.make(user)
         monkeypatch.setattr(service, "_search_layers", lambda _q: [])
-        monkeypatch.setattr(service, "_search_buckets", lambda _q: [])
         results = service.search("a")
         assert [r.name for r in results][0] == "Archive"
         assert len(service.search("a", limit=1)) == 1
