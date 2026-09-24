@@ -66,3 +66,6 @@ docker-compose.override.yml
 internal/webserver/static/cesium/
 internal/webserver/static/assets/
 volumes
+
+# MkDocs build output
+site/

@@ -9,6 +9,12 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 
+@pytest.fixture
+def api_client(authenticated_api_client: APIClient) -> APIClient:
+    """These endpoints require authentication, so use the logged-in client."""
+    return authenticated_api_client
+
+
 @pytest.mark.django_db
 @pytest.mark.api
 class TestGeoServerConnectionsAPI:
