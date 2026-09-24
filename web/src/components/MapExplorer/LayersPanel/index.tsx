@@ -27,8 +27,6 @@ import type { LayerSearchOption, MapLayerState } from '../types'
 import LayerSearch from './LayerSearch'
 import './styles.css'
 
-const LEGEND_GRADIENT = 'linear(to-r, #eaf6ff, #4a9cb8, #E8A331, #c0392b)'
-
 const MotionBox = chakra(motion.div)
 
 interface LayersPanelProps {
@@ -190,7 +188,6 @@ export default function LayersPanel({
                 <option value="default">Default style</option>
               </Select>
             )}
-            <Box h="8px" borderRadius="full" bgGradient={LEGEND_GRADIENT} mb={1} />
             <HStack justify="space-between" mb={1}>
               <Text fontSize="xs" color="gray.400">
                 0%

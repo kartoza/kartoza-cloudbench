@@ -16,8 +16,6 @@ import { getConnections } from '../../api/connection'
 import { getWorkspaces } from '../../api/workspace'
 import { getLayers } from '../../api/layer'
 
-const LEGEND_GRADIENT = 'linear(to-r, #eaf6ff, #4a9cb8, #E8A331, #c0392b)'
-
 export interface MapTarget {
   connectionId: string
   bucketName: string
@@ -203,7 +201,6 @@ export default function StacCataloguePage({ onOpenOnMap }: StacCataloguePageProp
                       borderRadius="md"
                       bg="white"
                     >
-                      <Box h="8px" borderRadius="full" bgGradient={LEGEND_GRADIENT} />
                       <Text fontWeight="semibold">{item.title}</Text>
                       {item.description && (
                         <Text fontSize="sm" color="gray.600" noOfLines={2}>{item.description}</Text>

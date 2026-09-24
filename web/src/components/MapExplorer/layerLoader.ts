@@ -8,6 +8,7 @@ import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import { getS3PresignedUrl } from '../../api/mapExplorer'
+import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
   bounds: [number, number, number, number]
@@ -94,6 +95,71 @@ export function applyPmtilesVectorStyle(
     'source-layer': sourceLayerName,
     paint: { 'line-color': color, 'line-width': 1 },
   })
+}
+
+const COLOR_PAINT_PROPS: Record<string, [string, LegendItem['kind']]> = {
+  fill: ['fill-color', 'fill'],
+  'fill-extrusion': ['fill-extrusion-color', 'fill'],
+  line: ['line-color', 'line'],
+  circle: ['circle-color', 'circle'],
+}
+
+function formatLegendValue(value: unknown): string {
+  return Array.isArray(value) ? value.map(String).join(', ') : String(value)
+}
+
+/**
+ * Best-effort legend entries for a saved MapLibre style: a plain color gives
+ * one entry per style layer, and `match`/`step`/`interpolate` color
+ * expressions are expanded into one entry per class/stop.
+ */
+export function legendItemsFromStyle(style: Record<string, unknown>): LegendItem[] {
+  const styleLayers = Array.isArray(style.layers) ? (style.layers as Record<string, unknown>[]) : []
+  const items: LegendItem[] = []
+  const seen = new Set<string>()
+  const push = (label: string, color: unknown, kind: LegendItem['kind']) => {
+    if (typeof color !== 'string') return
+    const dedupeKey = `${kind}|${label}|${color}`
+    if (seen.has(dedupeKey)) return
+    seen.add(dedupeKey)
+    items.push({ label, color, kind })
+  }
+
+  for (const layerDef of styleLayers) {
+    const colorProp = COLOR_PAINT_PROPS[layerDef.type as string]
+    if (!colorProp) continue
+    const [prop, kind] = colorProp
+    const value = (layerDef.paint as Record<string, unknown> | undefined)?.[prop]
+    const baseLabel = (layerDef.id as string | undefined) ?? String(layerDef.type)
+
+    if (!Array.isArray(value)) {
+      push(baseLabel, value, kind)
+      continue
+    }
+
+    const [op, ...args] = value
+    if (op === 'match') {
+      // ['match', input, label1, color1, label2, color2, ..., fallback]
+      const cases = args.slice(1)
+      for (let i = 0; i + 1 < cases.length; i += 2) push(formatLegendValue(cases[i]), cases[i + 1], kind)
+      if (cases.length % 2 === 1) push('Other', cases[cases.length - 1], kind)
+    } else if (op === 'step') {
+      // ['step', input, baseColor, stop1, color1, stop2, color2, ...]
+      const stops = args.slice(2)
+      push(stops.length > 0 ? `< ${formatLegendValue(stops[0])}` : baseLabel, args[1], kind)
+      for (let i = 0; i + 1 < stops.length; i += 2) push(`≥ ${formatLegendValue(stops[i])}`, stops[i + 1], kind)
+    } else if (op === 'interpolate' || op === 'interpolate-hcl' || op === 'interpolate-lab') {
+      // ['interpolate', interpolation, input, stop1, color1, stop2, color2, ...]
+      const stops = args.slice(2)
+      for (let i = 0; i + 1 < stops.length; i += 2) push(formatLegendValue(stops[i]), stops[i + 1], kind)
+    } else if (op === 'case') {
+      // ['case', cond1, color1, cond2, color2, ..., fallback] — conditions aren't human-readable.
+      for (let i = 0; i + 1 < args.length; i += 2) push(`${baseLabel} ${i / 2 + 1}`, args[i + 1], kind)
+      if (args.length % 2 === 1) push('Other', args[args.length - 1], kind)
+    }
+  }
+
+  return items
 }
 
 /** Fetches and renders a single layer's source/layer(s) onto the map. */
