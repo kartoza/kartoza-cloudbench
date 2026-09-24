@@ -243,8 +243,20 @@ def conversion_job(settings, tmp_path, owner):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("outcome", ["success", "failed", "bad-magic", "timeout", "s3-failed"])
-def test_conversion_pipeline(conversion_job, settings, outcome):
+@pytest.mark.parametrize(
+    "outcome, source_name",
+    [
+        ("success", "roads.zip"),
+        ("success", "roads.gpkg"),
+        ("failed", "roads.zip"),
+        ("bad-magic", "roads.zip"),
+        ("timeout", "roads.zip"),
+        ("s3-failed", "roads.zip"),
+    ],
+)
+def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
+    conversion_job.source_name = source_name
+    conversion_job.save(update_fields=["source_name"])
     requests = []
     polls = 0
     s3_client = Mock()
@@ -309,8 +321,12 @@ def test_conversion_pipeline(conversion_job, settings, outcome):
         # Every layer gets its own Portolan folder ("folder/roads/").
         assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", "folder/roads/roads.pmtiles")
         assert conversion_job.to_dict()["outputPath"] == "s3://bucket/folder/roads/roads.pmtiles"
-        collection = LayerCollection.objects.get()
-        assert collection.items.get().key == "folder/roads/roads.pmtiles"
+        # Only a GeoPackage upload is grouped into a collection; a shapefile isn't.
+        if source_name.endswith(".gpkg"):
+            collection = LayerCollection.objects.get()
+            assert collection.items.get().key == "folder/roads/roads.pmtiles"
+        else:
+            assert not LayerCollection.objects.exists()
     else:
         assert conversion_job.status == "failed"
         assert conversion_job.error

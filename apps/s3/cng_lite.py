@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from . import portolan
 from .client import get_s3_client
+from .geopackage import is_geopackage
 from .models import CngLiteJob, LayerCollection, LayerCollectionItem
 
 logger = logging.getLogger(__name__)
@@ -300,7 +301,10 @@ def run_conversion(
                 primary_key = dest_keys.get("visual") or dest_keys.get("data")
                 collection_items.append({"name": layer["title"], "key": primary_key})
 
-        _create_collection(job, collection_items)
+        # Only a GeoPackage groups several layers from one upload; a shapefile
+        # or TIFF is a single standalone layer, so it gets no collection.
+        if is_geopackage(job.source_name):
+            _create_collection(job, collection_items)
 
         if layer_errors:
             logger.warning(

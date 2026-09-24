@@ -257,8 +257,8 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
             "s3://bucket/folder/raster/raster.tif",
             "s3://bucket/folder/raster/raster_3857.tif",
         }
-        collection = LayerCollection.objects.get()
-        assert collection.items.get().key == "folder/raster/raster_3857.tif"
+        # A standalone TIFF is a single layer — only GeoPackages get a collection.
+        assert not LayerCollection.objects.exists()
     else:
         assert cog_job.status == "failed"
         assert cog_job.error

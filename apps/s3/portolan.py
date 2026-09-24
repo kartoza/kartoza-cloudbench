@@ -271,6 +271,43 @@ def ensure_root_catalog(s3_client, *, folder: str, title: str) -> None:
         logger.exception("Failed to update root catalog.json (layer was still uploaded)")
 
 
+def prune_root_catalog(s3_client, deleted_key: str) -> None:
+    """Drop bucket-root catalog.json child links pointing at deleted data.
+
+    `deleted_key` is either a folder prefix (ending in "/"), which removes
+    every child collection under it, or a single object key, which removes
+    the link only if that object was a child's collection.json. Best-effort:
+    the delete itself already happened, so a failure here is only logged.
+    """
+    try:
+        catalog = _load_json(s3_client, CATALOG_KEY)
+        if not catalog:
+            return
+
+        def is_deleted(link: dict) -> bool:
+            if link.get("rel") != "child":
+                return False
+            path = str(link.get("href", "")).removeprefix("./")
+            return (
+                path.startswith(deleted_key) if deleted_key.endswith("/") else path == deleted_key
+            )
+
+        links = catalog.get("links", [])
+        kept = [link for link in links if not is_deleted(link)]
+        if len(kept) == len(links):
+            return
+
+        catalog["links"] = kept
+        catalog["updated"] = _now_iso()
+        s3_client.put_object(
+            key=CATALOG_KEY,
+            body=json.dumps(catalog, indent=2).encode("utf-8"),
+            content_type="application/json",
+        )
+    except Exception:
+        logger.exception("Failed to prune root catalog.json after deleting %s", deleted_key)
+
+
 def finalize_layer(
     s3_client,
     *,
