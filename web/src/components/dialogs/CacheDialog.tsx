@@ -225,7 +225,7 @@ export default function CacheDialog() {
       <ModalContent borderRadius="xl" overflow="hidden" maxH="85vh">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+          bg="surface.header"
           px={6}
           py={4}
         >
@@ -263,7 +263,7 @@ export default function CacheDialog() {
                 <Tab>
                   Progress
                   {seedStatus && seedStatus.length > 0 && (
-                    <Badge ml={2} colorScheme="blue" borderRadius="full">
+                    <Badge ml={2} colorScheme="blue" borderRadius="sm">
                       {seedStatus.length}
                     </Badge>
                   )}
@@ -450,7 +450,7 @@ export default function CacheDialog() {
                                       value={task.progress}
                                       size="sm"
                                       colorScheme="kartoza"
-                                      borderRadius="full"
+                                      borderRadius="sm"
                                     />
                                     <Text fontSize="xs" color="gray.500">
                                       {task.progress.toFixed(1)}%

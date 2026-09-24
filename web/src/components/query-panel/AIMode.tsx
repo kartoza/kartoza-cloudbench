@@ -93,7 +93,7 @@ export const AIMode: React.FC<AIModeProps> = ({
             borderRadius="xl"
             _focus={{
               borderColor: 'purple.400',
-              boxShadow: '0 0 0 3px rgba(159, 122, 234, 0.2)',
+              boxShadow: '0 0 0 3px rgba(84, 162, 204, 0.2)',
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -144,7 +144,7 @@ export const AIMode: React.FC<AIModeProps> = ({
                   cursor="pointer"
                   onClick={() => onQuestionChange(q)}
                   _hover={{ bg: 'purple.100' }}
-                  borderRadius="full"
+                  borderRadius="sm"
                 >
                   <TagLabel>{q}</TagLabel>
                 </Tag>

@@ -235,9 +235,9 @@ export default function ConfirmDialog() {
     <Modal isOpen={isOpen} onClose={closeDialog} size="md" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
-        {/* Warning Header - Red gradient for destructive action */}
+        {/* Warning header — flat error colour for a destructive action */}
         <Box
-          bg="linear-gradient(135deg, #7f1d1d 0%, #b91c1c 50%, #dc2626 100%)"
+          bg="status.error"
           px={6}
           py={4}
         >

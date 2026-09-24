@@ -209,7 +209,7 @@ export const staggerItem: Variants = {
 export const listItemHover = {
   scale: 1.01,
   x: 4,
-  backgroundColor: 'rgba(59, 130, 246, 0.05)',
+  backgroundColor: 'rgba(84, 162, 204, 0.05)',
   transition: springs.snappy
 };
 
@@ -506,12 +506,12 @@ export const morphTransition = {
 
 export const inputFocus: Variants = {
   unfocused: {
-    boxShadow: '0 0 0 0 rgba(59, 130, 246, 0)',
-    borderColor: '#e5e7eb',
+    boxShadow: '0 0 0 0 rgba(84, 162, 204, 0)',
+    borderColor: '#D1D1D1',
   },
   focused: {
-    boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.2)',
-    borderColor: '#3b82f6',
+    boxShadow: '0 0 0 3px rgba(84, 162, 204, 0.2)',
+    borderColor: '#54A2CC',
     transition: springs.snappy
   }
 };
@@ -520,12 +520,12 @@ export const labelFloat: Variants = {
   resting: {
     y: 0,
     scale: 1,
-    color: '#9ca3af',
+    color: '#8A8B8B',
   },
   floating: {
     y: -24,
     scale: 0.85,
-    color: '#3b82f6',
+    color: '#54A2CC',
     transition: springs.snappy
   }
 };
@@ -550,7 +550,7 @@ export const validationMessage: Variants = {
 
 export const cardHover = {
   y: -4,
-  boxShadow: '0 20px 40px -12px rgba(0, 0, 0, 0.15)',
+  boxShadow: '0 0 0 1px #D1D1D1',
   transition: springs.snappy
 };
 
@@ -610,7 +610,7 @@ export const notificationBadge: Variants = {
 export const draggable = {
   drag: {
     scale: 1.05,
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+    boxShadow: '0 0 0 1px #D1D1D1',
     cursor: 'grabbing',
   },
   idle: {
@@ -623,11 +623,11 @@ export const draggable = {
 export const dropTarget: Variants = {
   inactive: {
     backgroundColor: 'transparent',
-    borderColor: '#e5e7eb',
+    borderColor: '#D1D1D1',
   },
   active: {
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-    borderColor: '#3b82f6',
+    backgroundColor: 'rgba(84, 162, 204, 0.05)',
+    borderColor: '#54A2CC',
     transition: springs.snappy
   }
 };
@@ -666,6 +666,6 @@ export const createSpring = (stiffness = 300, damping = 24, mass = 1): Transitio
 export const generateConfetti = (count = 20) =>
   Array.from({ length: count }, (_, i) => ({
     id: i,
-    color: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][i % 5],
+    color: ['#54A2CC', '#3C7D54', '#EEB348', '#B0473C', '#383939'][i % 5],
     size: 8 + Math.random() * 8,
   }));

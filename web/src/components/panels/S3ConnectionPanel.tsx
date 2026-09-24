@@ -151,10 +151,10 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
   }
 
   return (
-    <VStack spacing={6} align="stretch">
+    <VStack spacing={6} align="stretch" p={4}>
       {/* Header Card */}
       <Card
-        bg="linear-gradient(135deg, #c06c00 0%, #e08900 50%, #f0a020 100%)"
+        bg="surface.header"
         color="white"
       >
         <CardBody py={8} px={6}>
@@ -172,7 +172,7 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
                     fontSize="xs"
                     px={2}
                     py={1}
-                    borderRadius="full"
+                    borderRadius="sm"
                   >
                     <HStack spacing={1}>
                       <Icon as={FiCheckCircle} boxSize={3} />

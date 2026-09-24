@@ -404,7 +404,7 @@ export function SearchModal({ isOpen, onClose, onSelect }: SearchModalProps) {
                     cursor="pointer"
                     onClick={() => handleSuggestionClick(suggestion)}
                     _hover={{ bg: 'gray.200' }}
-                    borderRadius="full"
+                    borderRadius="sm"
                   >
                     <TagLabel>{suggestion}</TagLabel>
                   </Tag>
@@ -556,7 +556,7 @@ function SearchResultCard({
                 key={tag}
                 colorScheme={typeColor}
                 fontSize="xs"
-                borderRadius="full"
+                borderRadius="sm"
                 px={2}
               >
                 {tag}

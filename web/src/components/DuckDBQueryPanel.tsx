@@ -353,7 +353,7 @@ export default function DuckDBQueryPanel({
             source: 'query-results',
             paint: {
               'circle-radius': 6,
-              'circle-color': '#3182ce',
+              'circle-color': '#54A2CC',
               'circle-stroke-color': '#ffffff',
               'circle-stroke-width': 2,
             },
@@ -363,20 +363,20 @@ export default function DuckDBQueryPanel({
             id: 'query-results-layer',
             type: 'line',
             source: 'query-results',
-            paint: { 'line-color': '#3182ce', 'line-width': 3 },
+            paint: { 'line-color': '#54A2CC', 'line-width': 3 },
           })
         } else {
           map.addLayer({
             id: 'query-results-fill',
             type: 'fill',
             source: 'query-results',
-            paint: { 'fill-color': '#3182ce', 'fill-opacity': 0.3 },
+            paint: { 'fill-color': '#54A2CC', 'fill-opacity': 0.3 },
           })
           map.addLayer({
             id: 'query-results-layer',
             type: 'line',
             source: 'query-results',
-            paint: { 'line-color': '#3182ce', 'line-width': 2 },
+            paint: { 'line-color': '#54A2CC', 'line-width': 2 },
           })
         }
 
@@ -502,7 +502,7 @@ export default function DuckDBQueryPanel({
     <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
       {/* Header */}
       <Box
-        bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+        bg="surface.header"
         color="white"
         px={4}
         py={3}
@@ -511,17 +511,17 @@ export default function DuckDBQueryPanel({
           <HStack spacing={3}>
             <Icon as={FiDatabase} boxSize={5} />
             <Text fontWeight="600" fontSize="lg">DuckDB Query</Text>
-            <Badge colorScheme="blue" borderRadius="full">{displayName}</Badge>
+            <Badge colorScheme="blue" borderRadius="sm">{displayName}</Badge>
             {tableInfo && (
               <>
-                <Badge colorScheme="green" borderRadius="full">
+                <Badge colorScheme="green" borderRadius="sm">
                   {tableInfo.rowCount.toLocaleString()} rows
                 </Badge>
-                <Badge colorScheme="gray" borderRadius="full">
+                <Badge colorScheme="gray" borderRadius="sm">
                   {tableInfo.columns.length} columns
                 </Badge>
                 {tableInfo.geometryColumn && (
-                  <Badge colorScheme="purple" borderRadius="full">
+                  <Badge colorScheme="purple" borderRadius="sm">
                     Spatial: {tableInfo.geometryColumn}
                   </Badge>
                 )}
@@ -651,13 +651,13 @@ export default function DuckDBQueryPanel({
                 </TabList>
               </Tabs>
               {result && (
-                <Badge colorScheme="blue" borderRadius="full" ml={2}>
+                <Badge colorScheme="blue" borderRadius="sm" ml={2}>
                   {result.rows.length}
                   {result.total_count ? ` / ${result.total_count}` : ''} rows
                 </Badge>
               )}
               {result && (
-                <Badge colorScheme="gray" borderRadius="full">
+                <Badge colorScheme="gray" borderRadius="sm">
                   {result.duration_ms.toFixed(0)}ms
                 </Badge>
               )}

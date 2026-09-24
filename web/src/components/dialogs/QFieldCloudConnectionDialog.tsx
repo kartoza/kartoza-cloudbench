@@ -135,7 +135,7 @@ export default function QFieldCloudConnectionDialog() {
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header */}
-        <Box bg="linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%)" p={4}>
+        <Box bg="surface.header" p={4}>
           <HStack spacing={3}>
             <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
               <Icon as={FiCloud} boxSize={5} color="white" />

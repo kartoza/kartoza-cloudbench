@@ -194,7 +194,7 @@ export default function S3StoragePanel() {
     <VStack spacing={6} align="stretch" p={4}>
       {/* Header Card */}
       <Card
-        bg="linear-gradient(135deg, #c06c00 0%, #e08900 50%, #f0a020 100%)"
+        bg="surface.header"
         color="white"
       >
         <CardBody py={8} px={6}>
@@ -236,54 +236,6 @@ export default function S3StoragePanel() {
           </Flex>
         </CardBody>
       </Card>
-
-      {/* Stats */}
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-        <Box
-          bg={cardBg}
-          p={4}
-          borderRadius="xl"
-          borderWidth={1}
-          borderColor="gray.200"
-          shadow="sm"
-        >
-          <HStack spacing={3} mb={2}>
-            <Box p={2} borderRadius="lg" bg="orange.50" color="orange.500">
-              <Icon as={SiAmazons3} boxSize={5} />
-            </Box>
-            <Text fontSize="sm" fontWeight="medium" color="gray.500">
-              Connections
-            </Text>
-          </HStack>
-          <Text fontSize="2xl" fontWeight="bold">
-            {connections?.length || 0}
-          </Text>
-        </Box>
-
-        <Box
-          bg={cardBg}
-          p={4}
-          borderRadius="xl"
-          borderWidth={1}
-          borderColor="gray.200"
-          shadow="sm"
-        >
-          <HStack spacing={3} mb={2}>
-            <Box p={2} borderRadius="lg" bg="blue.50" color="blue.500">
-              <Icon as={FiHardDrive} boxSize={5} />
-            </Box>
-            <Text fontSize="sm" fontWeight="medium" color="gray.500">
-              Cloud-Native
-            </Text>
-          </HStack>
-          <Text fontSize="sm" fontWeight="bold">
-            COG, COPC, GeoParquet
-          </Text>
-          <Text fontSize="xs" color="gray.400">
-            Supported formats
-          </Text>
-        </Box>
-      </SimpleGrid>
 
       {/* Connections Grid */}
       <Card bg={cardBg}>

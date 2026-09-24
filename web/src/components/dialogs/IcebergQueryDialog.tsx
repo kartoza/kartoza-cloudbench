@@ -176,7 +176,7 @@ LIMIT 100`
       <ModalContent borderRadius="xl" overflow="hidden" maxH="90vh">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #0891b2 0%, #06b6d4 50%, #22d3ee 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3} justify="space-between">

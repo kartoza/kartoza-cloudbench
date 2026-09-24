@@ -173,7 +173,7 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
                 fontSize="xs"
                 px={2}
                 py={1}
-                borderRadius="full"
+                borderRadius="sm"
               >
                 <HStack spacing={1}>
                   <Icon as={FiCheckCircle} boxSize={3}/>
@@ -277,7 +277,7 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
               <Progress
                 value={stats.connection_percent}
                 colorScheme={stats.connection_percent > 80 ? 'red' : stats.connection_percent > 60 ? 'orange' : 'green'}
-                borderRadius="full"
+                borderRadius="sm"
                 size="lg"
               />
             </Box>
@@ -447,7 +447,7 @@ export default function PGServicePanel({ serviceName }: PGServicePanelProps) {
                       <Tag
                         size="md"
                         colorScheme={ext === 'postgis' ? 'green' : ext === 'plpgsql' ? 'blue' : 'gray'}
-                        borderRadius="full"
+                        borderRadius="sm"
                       >
                         {ext}
                       </Tag>

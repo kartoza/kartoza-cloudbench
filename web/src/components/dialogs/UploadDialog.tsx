@@ -298,7 +298,7 @@ export default function UploadDialog() {
     <Modal isOpen={isOpen} onClose={handleClose} size="xl" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden" maxH="85vh">
-        <Box bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)" px={6} py={4}>
+        <Box bg="surface.header" px={6} py={4}>
           <HStack spacing={3}>
             <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
               <Icon as={FiUploadCloud} boxSize={5} color="white" />
@@ -440,7 +440,7 @@ export default function UploadDialog() {
                           value={overallPct}
                           size="sm"
                           colorScheme={isPaused ? 'yellow' : 'kartoza'}
-                          borderRadius="full"
+                          borderRadius="sm"
                           hasStripe={!isPaused}
                           isAnimated={!isPaused}
                         />
@@ -454,7 +454,7 @@ export default function UploadDialog() {
                             value={chunkProgress}
                             size="xs"
                             colorScheme="blue"
-                            borderRadius="full"
+                            borderRadius="sm"
                             opacity={0.7}
                           />
                         </Box>
@@ -493,7 +493,7 @@ export default function UploadDialog() {
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>
                         Assembling file…
                       </Text>
-                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="full" />
+                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>
                   )}
 

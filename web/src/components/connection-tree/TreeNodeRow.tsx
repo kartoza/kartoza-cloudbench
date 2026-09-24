@@ -338,7 +338,7 @@ export function TreeNodeRow({
           colorScheme={nodeColor.split('.')[0]}
           variant="subtle"
           fontSize="xs"
-          borderRadius="full"
+          borderRadius="sm"
           px={2}
           mr={2}
           fontWeight="600"

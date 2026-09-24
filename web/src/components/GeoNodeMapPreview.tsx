@@ -231,7 +231,7 @@ export default function GeoNodeMapPreview({
     <Card bg={cardBg} overflow="hidden" h="100%" display="flex" flexDirection="column">
       {/* Header */}
       <Box
-        bg="linear-gradient(135deg, #0d7377 0%, #14919b 50%, #2dc2c9 100%)"
+        bg="surface.header"
         color="white"
         px={4}
         py={3}

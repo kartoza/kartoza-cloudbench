@@ -462,7 +462,7 @@ export default function S3UploadDialog() {
       <ModalContent borderRadius="xl" overflow="hidden" maxH="90vh">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #c06c00 0%, #e08900 50%, #f0a020 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>
@@ -781,7 +781,7 @@ export default function S3UploadDialog() {
                 value={conversionJob.progress}
                 size="sm"
                 colorScheme="blue"
-                borderRadius="full"
+                borderRadius="sm"
                 hasStripe
                 isAnimated
               />
@@ -828,7 +828,7 @@ export default function S3UploadDialog() {
                   value={uploadProgress}
                   size="xs"
                   colorScheme="orange"
-                  borderRadius="full"
+                  borderRadius="sm"
                   hasStripe
                   isAnimated
                 />
@@ -846,7 +846,7 @@ export default function S3UploadDialog() {
                   value={conversionJob.progress}
                   size="xs"
                   colorScheme="blue"
-                  borderRadius="full"
+                  borderRadius="sm"
                   hasStripe
                   isAnimated
                 />

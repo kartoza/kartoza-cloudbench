@@ -217,20 +217,20 @@ export async function openStyleEditor(
         source: { type: 'vector', url: `pmtiles://${tilesUrl}` },
       },
       layers: [
-        { id: 'background', type: 'background', paint: { 'background-color': '#f8f9fa' } },
+        { id: 'background', type: 'background', paint: { 'background-color': '#F5F5F2' } },
         {
           id: 'fill',
           type: 'fill',
           source: 'source',
           'source-layer': sourceLayer,
-          paint: { 'fill-color': '#2d7d9b', 'fill-opacity': 0.5 },
+          paint: { 'fill-color': '#54A2CC', 'fill-opacity': 0.5 },
         },
         {
           id: 'line',
           type: 'line',
           source: 'source',
           'source-layer': sourceLayer,
-          paint: { 'line-color': '#2d7d9b', 'line-width': 1 },
+          paint: { 'line-color': '#54A2CC', 'line-width': 1 },
         },
       ],
     }

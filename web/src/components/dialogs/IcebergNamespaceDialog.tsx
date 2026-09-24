@@ -145,7 +145,7 @@ export default function IcebergNamespaceDialog() {
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #06b6d4 0%, #22d3ee 50%, #67e8f9 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>

@@ -391,7 +391,7 @@ export default function PGUploadDialog() {
       <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
         <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
         <ModalContent borderRadius="xl" overflow="hidden">
-          <Box bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)" px={6} py={4}>
+          <Box bg="surface.header" px={6} py={4}>
             <HStack spacing={3}>
               <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
                 <Icon as={FiDatabase} boxSize={5} color="white" />
@@ -428,7 +428,7 @@ export default function PGUploadDialog() {
     <Modal isOpen={isOpen} onClose={handleClose} size="xl" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden" maxH="85vh">
-        <Box bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)" px={6} py={4}>
+        <Box bg="surface.header" px={6} py={4}>
           <HStack spacing={3}>
             <Box bg="whiteAlpha.200" p={2} borderRadius="lg">
               <Icon as={FiDatabase} boxSize={5} color="white" />
@@ -533,7 +533,7 @@ export default function PGUploadDialog() {
                           value={overallPct}
                           size="sm"
                           colorScheme={isPaused ? 'yellow' : 'purple'}
-                          borderRadius="full"
+                          borderRadius="sm"
                           hasStripe={!isPaused}
                           isAnimated={!isPaused}
                         />
@@ -541,7 +541,7 @@ export default function PGUploadDialog() {
                       {chunksTotal > 1 && (
                         <Box>
                           <Text fontSize="xs" color="gray.400" mb={1}>Current chunk: {chunkProgress}%</Text>
-                          <Progress value={chunkProgress} size="xs" colorScheme="blue" borderRadius="full" opacity={0.7} />
+                          <Progress value={chunkProgress} size="xs" colorScheme="blue" borderRadius="sm" opacity={0.7} />
                         </Box>
                       )}
                       <HStack spacing={2} justify="flex-end">
@@ -558,7 +558,7 @@ export default function PGUploadDialog() {
                   {phase === 'finalizing' && (
                     <Box>
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>Assembling file…</Text>
-                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="full" />
+                      <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>
                   )}
 

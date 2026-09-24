@@ -165,7 +165,7 @@ export default function QGISProjectDialog() {
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header - QGIS green theme */}
         <Box
-          bg="linear-gradient(135deg, #0d4b1f 0%, #1a7a35 50%, #2ca84d 100%)"
+          bg="surface.header"
           px={6}
           py={4}
         >
@@ -296,7 +296,7 @@ export default function QGISProjectDialog() {
                   value={uploadProgress}
                   size="sm"
                   colorScheme="green"
-                  borderRadius="full"
+                  borderRadius="sm"
                   hasStripe
                   isAnimated
                 />

@@ -104,7 +104,7 @@ export default function IcebergTablePreview({
             id: 'background',
             type: 'background',
             paint: {
-              'background-color': '#e8e8e8',
+              'background-color': '#F5F5F2',
             },
           },
         ],
@@ -208,7 +208,7 @@ export default function IcebergTablePreview({
           borderBottomWidth="1px"
           borderBottomColor={borderColor}
           justify="space-between"
-          bg="linear-gradient(135deg, #0891b2 0%, #06b6d4 50%, #22d3ee 100%)"
+          bg="surface.header"
         >
           <HStack spacing={3}>
             <Icon as={TbSnowflake} boxSize={5} color="white" />

@@ -10,7 +10,7 @@ import { useUIStore } from '../stores/uiStore'
 import { loadLayerOntoMap, applyPmtilesVectorStyle, layerIdFor } from './MapExplorer/layerLoader'
 
 const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
-const LAYER_COLOR = '#2d7d9b'
+const LAYER_COLOR = '#54A2CC'
 
 interface S3MapPreviewProps {
   connectionId: string

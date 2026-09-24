@@ -243,7 +243,7 @@ export default function QGISMapLibrePreview({
     >
       {/* Header */}
       <Box
-        bg="linear-gradient(135deg, #0d4b1f 0%, #1a7a35 50%, #2ca84d 100%)"
+        bg="surface.header"
         px={4}
         py={3}
       >

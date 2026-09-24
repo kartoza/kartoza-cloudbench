@@ -161,7 +161,7 @@ export default function MerginMapsConnectionDialog() {
       <ModalContent borderRadius="xl" overflow="hidden">
         {/* Gradient Header */}
         <Box
-          bg="linear-gradient(135deg, #1e7e34 0%, #28a745 50%, #34ce57 100%)"
+          bg="surface.header"
           p={4}
         >
           <HStack spacing={3}>

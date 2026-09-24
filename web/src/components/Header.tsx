@@ -115,13 +115,12 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
           borderBottom="1px solid"
           borderBottomColor="gray.100"
           gap={"4px"}
-          boxShadow="0 1px 3px rgba(0, 0, 0, 0.04)"
       >
         <Box flexGrow={1}>
           <Box w="100%" onClick={onSearchClick} cursor="pointer">
             <InputGroup size="sm">
               <InputLeftElement pointerEvents="none">
-                <FiSearch color="#9E9E9E" />
+                <FiSearch color="#8A8B8B" />
               </InputLeftElement>
               <Input
                 placeholder="Search..."
@@ -132,7 +131,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
                 _placeholder={{ color: 'gray.400' }}
                 _hover={{ borderColor: 'gray.300', bg: 'gray.100' }}
                 _focus={{ borderColor: 'kartoza.500', bg: 'white' }}
-                borderRadius="full"
+                borderRadius="sm"
                 readOnly
                 cursor="pointer"
               />
@@ -188,7 +187,6 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
         py={3}
         borderBottom="1px solid"
         borderBottomColor="gray.100"
-        boxShadow="0 2px 4px rgba(0, 0, 0, 0.04)"
       >
         <Flex align="center" maxW="1400px" mx="auto">
           {/* Logo */}
@@ -264,7 +262,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
           >
             <InputGroup size="sm">
               <InputLeftElement pointerEvents="none">
-                <FiSearch color="#9E9E9E" />
+                <FiSearch color="#8A8B8B" />
               </InputLeftElement>
               <Input
                 placeholder="Search..."
@@ -275,7 +273,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
                 _placeholder={{ color: 'gray.400' }}
                 _hover={{ borderColor: 'gray.300', bg: 'gray.100' }}
                 _focus={{ borderColor: 'kartoza.500', bg: 'white' }}
-                borderRadius="full"
+                borderRadius="sm"
                 readOnly
                 cursor="pointer"
               />

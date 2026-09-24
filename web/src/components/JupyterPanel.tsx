@@ -72,7 +72,7 @@ export default function JupyterPanel({
           borderBottomWidth="1px"
           borderBottomColor={borderColor}
           justify="space-between"
-          bg="linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fdba74 100%)"
+          bg="surface.header"
         >
           <HStack spacing={3}>
             <Icon as={FiBook} boxSize={5} color="white" />

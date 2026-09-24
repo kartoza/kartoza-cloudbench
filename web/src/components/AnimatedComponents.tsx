@@ -319,7 +319,7 @@ interface AnimatedCheckmarkProps {
 export const AnimatedCheckmark: React.FC<AnimatedCheckmarkProps> = ({
   show,
   size = 48,
-  color = '#10b981',
+  color = '#3C7D54',
 }) => {
   return (
     <AnimatePresence>
@@ -540,7 +540,7 @@ interface AnimatedProgressProps {
 
 export const AnimatedProgress: React.FC<AnimatedProgressProps> = ({
   progress,
-  color = '#3b82f6',
+  color = '#54A2CC',
   height = 8,
   showLabel = false,
 }) => {
@@ -708,7 +708,7 @@ export const SparkleWrapper: React.FC<SparkleProps> = ({ children, enabled = tru
           initial="hidden"
           animate="visible"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="#fbbf24">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#EEB348">
             <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" />
           </svg>
         </motion.div>

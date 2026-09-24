@@ -85,7 +85,7 @@ interface ServerLocationMapProps {
 
 export default function ServerLocationMap({ host }: ServerLocationMapProps) {
   const mapBg = useColorModeValue('blue.50', 'blue.900')
-  const landColor = useColorModeValue('#94a3b8', '#475569')
+  const landColor = useColorModeValue('#D1D1D1', '#676869')
   const dotColor = useColorModeValue('red.500', 'red.400')
   const pulseColor = useColorModeValue('red.300', 'red.600')
   const textBg = useColorModeValue('gray.100', 'gray.700')

@@ -24,7 +24,7 @@ export const QueryPanelHeader: React.FC<QueryPanelHeaderProps> = ({
 }) => {
   return (
     <Flex
-      bg="linear-gradient(135deg, #0a3a50 0%, #175a77 50%, #2d7d9b 100%)"
+      bg="surface.header"
       px={6}
       py={4}
       align="center"
@@ -44,7 +44,7 @@ export const QueryPanelHeader: React.FC<QueryPanelHeaderProps> = ({
         </Box>
       </HStack>
       <HStack spacing={2}>
-        <Badge colorScheme="whiteAlpha" variant="subtle" px={3} py={1} borderRadius="full">
+        <Badge colorScheme="whiteAlpha" variant="subtle" px={3} py={1} borderRadius="sm">
           {schemaCount} schemas
         </Badge>
         {onClose && (
