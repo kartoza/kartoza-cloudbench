@@ -163,12 +163,11 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: cloudbench.settings.development
 
-  # Integration tests (run on main only or manually)
+  # Integration tests (pull requests and pushes to main)
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     services:
       postgres:
         image: postgis/postgis:16-3.4
@@ -219,12 +218,11 @@ jobs:
           S3_ACCESS_KEY: minioadmin
           S3_SECRET_KEY: minioadmin
 
-  # E2E tests (run on main only or manually)
+  # E2E tests (pull requests and pushes to main)
   test-e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
 
