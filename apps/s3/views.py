@@ -325,6 +325,7 @@ class S3ObjectDetailView(APIView):
                 client.delete_prefix(key)
             else:
                 client.delete_object(key)
+            portolan.prune_root_catalog(client, key)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ValueError as e:
             return Response(
