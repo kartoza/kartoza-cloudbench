@@ -419,9 +419,9 @@ class TestPostgresImportCleanup:
                     },
                     format="json",
                 )
-                assert response.status_code == status.HTTP_200_OK, (
-                    f"layer {layer} failed: {response.json()}"
-                )
+                assert (
+                    response.status_code == status.HTTP_200_OK
+                ), f"layer {layer} failed: {response.json()}"
                 if i < len(layers) - 1:
                     assert uploaded_gpkg.exists(), f"source must survive after layer {layer}"
 
