@@ -25,7 +25,7 @@ services:
       start_period: 30s
 
   cloudnativegis-processing:
-    image: ghcr.io/kartoza/cloudnativegis-processing:${CLOUDNATIVEGIS_PROCESSING_TAG:-0.0.1}
+    image: ghcr.io/kartoza/cloudnativegis-processing:${CLOUDNATIVEGIS_PROCESSING_TAG:-0.0.2}
     restart: on-failure
     environment:
       - LITE_API_TOKEN=${CLOUDNATIVEGIS_API_TOKEN:-}

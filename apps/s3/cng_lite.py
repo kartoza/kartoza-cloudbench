@@ -180,7 +180,7 @@ def download_result(client, result_path, destination, validate_result, invalid_r
                     raise ValueError("The generated file exceeds the upload size limit.")
                 output.write(chunk)
     with destination.open("rb") as output:
-        if not validate_result(output):
+        if not validate_result(output, PurePosixPath(result_path).name):
             raise ValueError(invalid_result_message)
     return size
 
@@ -195,6 +195,7 @@ def run_conversion(
     output_content_type,
     group_results,
     build_extra_payload=None,
+    create_collection=True,
 ):
     """Run a conversion job, then publish each result as its own Portolan layer.
 
@@ -209,6 +210,10 @@ def run_conversion(
 
     Any layers/tables cng-lite skipped (rather than failing the whole job)
     are recorded on `job.error`, even though the job itself still completes.
+
+    `create_collection=False` skips grouping a GeoPackage's layers into a new
+    LayerCollection — for re-running an already-published job (see the
+    portolan_backfill command), whose original collection still exists.
     """
     close_old_connections()
     directory = job_directory(kind, job_id)
@@ -267,20 +272,33 @@ def run_conversion(
                 data_assets = []
                 dest_keys = {}
                 info = None
+                table_info = None
                 for asset in layer["assets"]:
                     local_path = local_paths[asset["item"]["name"]]
                     dest_key = f"{folder}/{asset['filename']}"
+                    media_type = asset.get("media_type", output_content_type)
                     with local_path.open("rb") as source:
                         s3_client.client.upload_fileobj(
                             source,
                             job.bucket,
                             dest_key,
-                            ExtraArgs={"ContentType": output_content_type},
+                            ExtraArgs={"ContentType": media_type},
                         )
                     output_keys.append({"name": asset["filename"], "key": dest_key})
-                    data_assets.append({"filename": asset["filename"], "role": asset["role"]})
+                    data_assets.append(
+                        {
+                            "filename": asset["filename"],
+                            "role": asset["role"],
+                            "media_type": media_type,
+                        }
+                    )
                     dest_keys[asset["role"]] = dest_key
-                    if info is None:
+                    # A GeoParquet asset's info is its schema (and a bbox in
+                    # its own CRS); the WGS84 bbox/zoom/layer names always
+                    # come from the PMTiles or COG.
+                    if media_type == portolan.PARQUET_MEDIA_TYPE:
+                        table_info = asset["item"].get("info")
+                    elif info is None:
                         info = asset["item"].get("info")
 
                 portolan.finalize_layer(
@@ -294,6 +312,7 @@ def run_conversion(
                     provider_name=provider_name,
                     source_name=job.source_name,
                     info=info,
+                    table_info=table_info,
                 )
                 # The "visual" (renderable) asset is what Map Explorer opens —
                 # a plain PMTiles layer has only that; a COG layer's other
@@ -303,7 +322,7 @@ def run_conversion(
 
         # Only a GeoPackage groups several layers from one upload; a shapefile
         # or TIFF is a single standalone layer, so it gets no collection.
-        if is_geopackage(job.source_name):
+        if create_collection and is_geopackage(job.source_name):
             _create_collection(job, collection_items)
 
         if layer_errors:

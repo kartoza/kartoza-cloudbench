@@ -291,6 +291,35 @@ class DuckDBQueryEngine:
             return cast(dict, result["rows"][0])
         return {}
 
+    def get_geoparquet_info(
+        self,
+        s3_path: str,
+        connection_id: str,
+        user: "User",
+    ) -> dict[str, Any] | None:
+        """Read a Parquet file's GeoParquet footer, or None if it isn't GeoParquet.
+
+        Returns {'geo': <the parsed "geo" key-value metadata>, 'rowCount'}.
+        Only the footer is fetched (range requests), not the row data.
+        """
+        geo_rows = self.execute_query(
+            f"SELECT decode(value) AS geo FROM parquet_kv_metadata('{s3_path}') "
+            "WHERE decode(key) = 'geo'",
+            connection_id,
+            user=user,
+        )["rows"]
+        if not geo_rows:
+            return None
+        count_rows = self.execute_query(
+            f"SELECT num_rows FROM parquet_file_metadata('{s3_path}')",
+            connection_id,
+            user=user,
+        )["rows"]
+        return {
+            "geo": json.loads(geo_rows[0]["geo"]),
+            "rowCount": count_rows[0]["num_rows"] if count_rows else None,
+        }
+
     def query_geoparquet(
         self,
         s3_path: str,

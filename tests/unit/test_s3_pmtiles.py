@@ -1,6 +1,7 @@
 """CloudNativeGIS Lite PMTiles conversion contract and failure handling."""
 
 import io
+import json
 import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -65,6 +66,27 @@ def test_group_results_plain_shapefile_uses_source_name_for_title():
     assert layer["layer_id"] == "roads"
     assert layer["title"] == "Roads"
     assert layer["assets"] == [{"item": results[0], "filename": "roads.pmtiles", "role": "visual"}]
+
+
+def test_group_results_pairs_geoparquet_with_pmtiles():
+    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
+    results = [
+        {"name": "roads.parquet", "info": {}},
+        {"name": "roads.pmtiles", "info": {}},
+        {"name": "rivers.parquet", "info": {}},
+        {"name": "rivers.pmtiles", "info": {}},
+    ]
+    layers = group_results(job, results)
+    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
+    assert layers[0]["assets"] == [
+        {
+            "item": results[0],
+            "filename": "roads.parquet",
+            "role": "data",
+            "media_type": "application/vnd.apache.parquet",
+        },
+        {"item": results[1], "filename": "roads.pmtiles", "role": "visual"},
+    ]
 
 
 def test_group_results_geopackage_uses_layer_names():
@@ -331,6 +353,81 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         assert conversion_job.status == "failed"
         assert conversion_job.error
         assert not uploaded
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("parquet_content, succeeds", [(b"PAR1fixture", True), (b"junk", False)])
+def test_conversion_publishes_geoparquet_alongside_pmtiles(
+    conversion_job, parquet_content, succeeds
+):
+    s3_client = Mock()
+    s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
+    s3_client.get_object.side_effect = Exception("no catalog.json yet")
+    uploaded = {}
+
+    def upload(_source, _bucket, key, **kwargs):
+        uploaded[key] = kwargs["ExtraArgs"]["ContentType"]
+
+    s3_client.client.upload_fileobj.side_effect = upload
+    columns = [{"name": "name", "type": "string"}, {"name": "geometry", "type": "binary"}]
+    results = {
+        "output.parquet": (parquet_content, {"columns": columns}),
+        "output.pmtiles": (b"PMTiles\x03fixture", {"bbox": [1, 2, 3, 4], "layers": ["default"]}),
+    }
+
+    def respond(request):
+        path = request.url.path
+        if path == "/api/v1/pmtiles":
+            return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
+        if path == "/api/v1/jobs/cng-job-1":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "done",
+                    "results": [
+                        {
+                            "name": name,
+                            "result_url": f"/api/v1/jobs/cng-job-1/result/{name}",
+                            "info": info,
+                        }
+                        for name, (_, info) in results.items()
+                    ],
+                },
+            )
+        name = path.rsplit("/", 1)[-1]
+        if name in results:
+            return httpx.Response(200, content=results[name][0])
+        return httpx.Response(404)
+
+    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+    with (
+        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        run_conversion(conversion_job.pk)
+
+    conversion_job.refresh_from_db()
+    if not succeeds:
+        assert conversion_job.status == "failed"
+        return
+    assert conversion_job.status == "completed"
+    assert uploaded == {
+        "folder/roads/roads.parquet": "application/vnd.apache.parquet",
+        "folder/roads/roads.pmtiles": "application/vnd.pmtiles",
+    }
+    assert conversion_job.to_dict()["outputPaths"] == [
+        "s3://bucket/folder/roads/roads.parquet",
+        "s3://bucket/folder/roads/roads.pmtiles",
+    ]
+    written = {
+        call.kwargs["key"]: call.kwargs["body"] for call in s3_client.put_object.call_args_list
+    }
+    collection = json.loads(written["folder/roads/collection.json"])
+    assert collection["assets"]["data"]["href"] == "./roads.parquet"
+    assert collection["table:columns"] == columns
+    # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
+    assert collection["extent"]["spatial"]["bbox"] == [[1, 2, 3, 4]]
 
 
 @pytest.mark.django_db

@@ -137,15 +137,15 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
   return (
     <Card bg={cardBg} flex="1" display="flex" flexDirection="column" minH="0">
       <CardBody display="flex" flexDirection="column" minH="0" p={0} overflow="auto">
-        <Flex align="center" justify="space-between" p={4} borderBottomWidth="1px" flexShrink={0}>
-          <Heading size="sm" noOfLines={1}>{title}</Heading>
+        <Flex align="center" justify="space-between" px={4} py={3} flexShrink={0} bg="surface.header" color="white">
+          <Heading size="sm" color="white" noOfLines={1}>{title}</Heading>
           <HStack spacing={1}>
             <Tooltip label="Download" fontSize="xs">
-              <IconButton aria-label="Download" icon={<FiDownload size={14} />} size="sm" variant="ghost" onClick={handleDownload} />
+              <IconButton aria-label="Download" icon={<FiDownload size={14} />} size="sm" variant="ghost" color="white" _hover={{ bg: 'whiteAlpha.200' }} onClick={handleDownload} />
             </Tooltip>
             {onClose && (
               <Tooltip label="Close" fontSize="xs">
-                <IconButton aria-label="Close" icon={<FiX size={16} />} size="sm" variant="ghost" onClick={onClose} />
+                <IconButton aria-label="Close" icon={<FiX size={16} />} size="sm" variant="ghost" color="white" _hover={{ bg: 'whiteAlpha.200' }} onClick={onClose} />
               </Tooltip>
             )}
           </HStack>

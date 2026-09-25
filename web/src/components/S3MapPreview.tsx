@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Box, Card, CardBody, Flex, HStack, Heading, IconButton, Text, Tooltip, Spinner, Center, useColorModeValue } from '@chakra-ui/react'
+import { Badge, Box, Card, CardBody, Flex, HStack, Heading, IconButton, Text, Tooltip, Spinner, Center, useColorModeValue } from '@chakra-ui/react'
 import { FiX, FiMaximize2 } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -90,10 +90,10 @@ export default function S3MapPreview({ connectionId, bucketName, objectKey, form
   return (
     <Card bg={cardBg} flex="1" display="flex" flexDirection="column" minH="0">
       <CardBody display="flex" flexDirection="column" minH="0" p={0}>
-        <Flex align="center" justify="space-between" p={4} borderBottomWidth="1px">
+        <Flex align="center" justify="space-between" px={4} py={3} bg="surface.header" color="white">
           <HStack spacing={3} minW={0}>
-            <Heading size="sm" noOfLines={1}>{fileName}</Heading>
-            <Text fontSize="xs" color="gray.500" textTransform="uppercase">{format}</Text>
+            <Heading size="sm" color="white" noOfLines={1}>{fileName}</Heading>
+            <Badge colorScheme="blue" variant="solid" fontSize="xs" textTransform="uppercase">{format}</Badge>
           </HStack>
           <HStack spacing={1}>
             <Tooltip label="Open in Map Explorer" fontSize="xs">
@@ -102,12 +102,14 @@ export default function S3MapPreview({ connectionId, bucketName, objectKey, form
                 icon={<FiMaximize2 size={14} />}
                 size="sm"
                 variant="ghost"
+                color="white"
+                _hover={{ bg: 'whiteAlpha.200' }}
                 onClick={() => requestOpenMapExplorer({ connectionId, bucketName, key: objectKey })}
               />
             </Tooltip>
             {onClose && (
               <Tooltip label="Close" fontSize="xs">
-                <IconButton aria-label="Close" icon={<FiX size={16} />} size="sm" variant="ghost" onClick={onClose} />
+                <IconButton aria-label="Close" icon={<FiX size={16} />} size="sm" variant="ghost" color="white" _hover={{ bg: 'whiteAlpha.200' }} onClick={onClose} />
               </Tooltip>
             )}
           </HStack>

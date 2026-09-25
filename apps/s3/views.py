@@ -18,6 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import httpx
 from django.conf import settings
@@ -344,8 +345,55 @@ class S3ObjectDetailView(APIView):
 # ============================================================================
 
 
+# What S3LayerPreview (the frontend's map/table preview panel) renders each
+# format as — see web/src/types S3PreviewMetadata.
+_LAYER_PREVIEW_FORMATS = {
+    "geoparquet": ("geoparquet", "vector"),
+    "parquet": ("parquet", "table"),
+    "geojson": ("geojson", "vector"),
+    "tif": ("geotiff", "raster"),
+    "tiff": ("geotiff", "raster"),
+    "gtiff": ("geotiff", "raster"),
+    "geotiff": ("geotiff", "raster"),
+    "cog": ("cog", "raster"),
+    "copc": ("copc", "pointcloud"),
+    "laz": ("copc", "pointcloud"),
+    "las": ("copc", "pointcloud"),
+}
+# GeoParquet's default CRS when its "crs" is omitted, and its lon/lat
+# equivalents — the only ones whose bbox is usable as map bounds as-is.
+_LONLAT_CRS = {"OGC:CRS84", "EPSG:4326"}
+
+
+def _geoparquet_extent(geo):
+    """(bounds, crs) from GeoParquet "geo" metadata; bounds only if lon/lat."""
+    column = geo.get("columns", {}).get(geo.get("primary_column"), {})
+    crs = column.get("crs")
+    if crs is None:
+        crs_id = "OGC:CRS84"
+    else:
+        crs_ref = crs.get("id", {}) if isinstance(crs, dict) else {}
+        crs_id = (
+            f"{crs_ref['authority']}:{crs_ref['code']}"
+            if crs_ref.get("authority")
+            else str(crs.get("name", "unknown") if isinstance(crs, dict) else crs)
+        )
+    bbox = column.get("bbox")
+    bounds = None
+    if crs_id in _LONLAT_CRS and bbox and len(bbox) >= 4:
+        # A 3D bbox is [minx, miny, minz, maxx, maxy, maxz].
+        half = len(bbox) // 2
+        bounds = {"minX": bbox[0], "minY": bbox[1], "maxX": bbox[half], "maxY": bbox[half + 1]}
+    return bounds, crs_id
+
+
 class S3PreviewView(APIView):
-    """Preview file content."""
+    """Preview file content.
+
+    Besides the generic `type`/`content`/`schema`, map/table-previewable
+    formats also get the fields the frontend's layer preview panel reads
+    (`format`, `previewType`, `proxyUrl`, `bounds`, ...).
+    """
 
     def get(self, request, conn_id, key):
         """Preview file content based on type."""
@@ -377,22 +425,35 @@ class S3PreviewView(APIView):
                     with contextlib.suppress(json.JSONDecodeError):
                         content = json.loads(content)
 
-            # For parquet, get schema
+            # For parquet, get schema (and GeoParquet's footer metadata)
             schema = None
+            geoparquet = None
             if preview_type == "parquet":
                 engine = get_duckdb_engine()
                 s3_path = f"s3://{client.bucket}/{key}"
                 schema = engine.get_parquet_schema(s3_path, conn_id, request.user)
+                geoparquet = engine.get_geoparquet_info(s3_path, conn_id, request.user)
 
-            return Response(
-                {
-                    "type": preview_type,
-                    "contentType": content_type,
-                    "size": size,
-                    "content": content,
-                    "schema": schema,
-                }
-            )
+            result = {
+                "type": preview_type,
+                "contentType": content_type,
+                "size": size,
+                "content": content,
+                "schema": schema,
+                "key": key,
+                "proxyUrl": f"/api/s3/proxy/{conn_id}/{quote(key)}",
+            }
+            extension = key.lower().rsplit(".", 1)[-1] if "." in key else ""
+            if extension == "parquet" and geoparquet:
+                extension = "geoparquet"
+            if extension in _LAYER_PREVIEW_FORMATS:
+                result["format"], result["previewType"] = _LAYER_PREVIEW_FORMATS[extension]
+            if schema:
+                result["fieldNames"] = [column["name"] for column in schema["columns"]]
+            if geoparquet:
+                result["bounds"], result["crs"] = _geoparquet_extent(geoparquet["geo"])
+                result["featureCount"] = geoparquet["rowCount"]
+            return Response(result)
         except ValueError as e:
             return Response(
                 {"error": str(e)},

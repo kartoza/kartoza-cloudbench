@@ -464,7 +464,7 @@ export default function MapPreview({
               <Heading size="sm" color="white">
                 Layer Preview
               </Heading>
-              <Badge colorScheme="whiteAlpha" variant="solid" fontSize="xs">
+              <Badge colorScheme="blue" variant="solid" fontSize="xs">
                 {layerType === 'raster' ? 'Raster' : 'Vector'}
               </Badge>
             </HStack>

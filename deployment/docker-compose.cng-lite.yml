@@ -1,6 +1,7 @@
-# CloudNativeGIS Lite: standalone, database-free PMTiles/COG conversion
-# service used by CloudBench's S3 upload flow (apps/s3/pmtiles.py, cog.py).
-# Image is built from CloudNativeGIS/lite/ — see that directory's README
+# CloudNativeGIS Processing (formerly "Lite"): standalone, database-free
+# PMTiles/GeoParquet/COG conversion service used by CloudBench's S3 upload
+# flow (apps/s3/pmtiles.py, cog.py).
+# Image is built from CloudNativeGIS/processing/ — see that directory's README
 # for the API. It holds real S3 credentials, so it must never be exposed
 # publicly regardless of LITE_API_TOKEN below: port bound to 127.0.0.1 only.
 #
@@ -8,8 +9,9 @@
 # a host-run Django (e.g. via VSCode) at http://127.0.0.1:8000 — point
 # CLOUDNATIVEGIS_URL at whichever applies.
 #
-# Build (from repo root, since the image isn't published anywhere):
-#   docker build -t cng-lite:latest CloudNativeGIS/lite/
+# Build a local image from the working tree (from repo root), or use a
+# released ghcr.io/kartoza/cloudnativegis-processing tag instead:
+#   docker build -t cloudnativegis-processing:latest CloudNativeGIS/processing/
 #
 # Usage (from this directory):
 #   docker compose -f docker-compose.cng-lite.yml --env-file .env up -d
@@ -23,7 +25,7 @@ networks:
 
 services:
   cng-lite:
-    image: cng-lite:latest
+    image: cloudnativegis-processing:latest
     container_name: cloudbench-cng-lite
     environment:
       S3_ENDPOINT_URL: http://minio:9000
