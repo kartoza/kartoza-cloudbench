@@ -12,10 +12,10 @@ up:
 up-prod:
 	COMPOSE_FILE=docker-compose.yml docker compose up -d
 
-# Start the SSH debug container (PyCharm remote interpreter) and the
-# frontend dev server
+# Start the SSH debug container (PyCharm remote interpreter), the
+# frontend dev server and the CloudNativeGIS processing service
 dev:
-	docker compose --profile dev up -d dev vite
+	docker compose --profile dev up -d dev vite cloudnativegis-processing
 
 # Stop all services (including the dev/vite profile)
 down:

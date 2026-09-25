@@ -49,12 +49,12 @@ services:
       - DJANGO_SETTINGS_MODULE=cloudbench.settings.development
       - DJANGO_DEBUG=true
       - CLOUDBENCH_DATA_FOLDER=${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
-      - CLOUDNATIVEGIS_URL=${CLOUDNATIVEGIS_URL:-http://host.docker.internal:${CLOUDNATIVEGIS_PORT:-8100}}
+      - CLOUDNATIVEGIS_URL=${CLOUDNATIVEGIS_URL:-http://cloudnativegis-processing:8000}
       - CLOUDNATIVEGIS_CONVERSION_TIMEOUT=${CLOUDNATIVEGIS_CONVERSION_TIMEOUT:-1800}
       - CLOUDNATIVEGIS_POLL_INTERVAL=${CLOUDNATIVEGIS_POLL_INTERVAL:-5}
       - CLOUDNATIVEGIS_API_TOKEN=${CLOUDNATIVEGIS_API_TOKEN:-}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - cloudnativegis-processing
     volumes:
       - ../apps:/app/apps:z
       - ../cloudbench:/app/cloudbench:z
