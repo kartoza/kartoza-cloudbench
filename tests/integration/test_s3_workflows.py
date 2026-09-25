@@ -47,11 +47,14 @@ def mock_duckdb_engine():
     """Mock DuckDB engine for parquet queries."""
     with patch("apps.s3.views.get_duckdb_engine") as mock_get:
         engine = MagicMock()
-        engine.get_parquet_schema.return_value = [
-            {"name": "id", "type": "INTEGER"},
-            {"name": "name", "type": "VARCHAR"},
-            {"name": "geometry", "type": "GEOMETRY"},
-        ]
+        engine.get_parquet_schema.return_value = {
+            "columns": [
+                {"name": "id", "type": "INTEGER"},
+                {"name": "name", "type": "VARCHAR"},
+                {"name": "geometry", "type": "GEOMETRY"},
+            ]
+        }
+        engine.get_geoparquet_info.return_value = None
         engine.query.return_value = {
             "columns": ["id", "name"],
             "rows": [[1, "Test"], [2, "Another"]],
@@ -229,6 +232,43 @@ class TestS3PreviewWorkflow:
         data = response.json()
         assert data["type"] == "parquet"
         assert "schema" in data
+        # Plain Parquet (no "geo" footer) previews as a table.
+        assert data["format"] == "parquet"
+        assert data["previewType"] == "table"
+        assert data["proxyUrl"] == "/api/s3/proxy/test-s3-conn/data/file.parquet"
+        assert data["fieldNames"] == ["id", "name", "geometry"]
+
+    @pytest.mark.parametrize(
+        "crs, bounds",
+        [
+            (None, {"minX": 1.0, "minY": 2.0, "maxX": 3.0, "maxY": 4.0}),
+            ({"id": {"authority": "EPSG", "code": 32749}}, None),
+        ],
+    )
+    def test_preview_geoparquet(
+        self, api_client: APIClient, mock_s3_client, mock_duckdb_engine, crs, bounds
+    ) -> None:
+        """GeoParquet gets map-preview metadata; bounds only when lon/lat."""
+        mock_s3_client.get_object_info.return_value = {
+            "contentType": "application/vnd.apache.parquet",
+            "contentLength": 2048,
+        }
+        mock_duckdb_engine.get_geoparquet_info.return_value = {
+            "geo": {
+                "version": "1.1.0",
+                "primary_column": "geometry",
+                "columns": {"geometry": {"encoding": "WKB", "bbox": [1, 2, 3, 4], "crs": crs}},
+            },
+            "rowCount": 177,
+        }
+
+        data = api_client.get("/api/s3/preview/test-s3-conn/data/roads.parquet").json()
+
+        assert data["format"] == "geoparquet"
+        assert data["previewType"] == "vector"
+        assert data["featureCount"] == 177
+        assert data["bounds"] == bounds
+        assert data["crs"] == ("OGC:CRS84" if crs is None else "EPSG:32749")
 
 
 @pytest.mark.integration

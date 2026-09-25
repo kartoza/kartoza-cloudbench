@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 PORTOLAN_SCHEMA = "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json"
 WEB_MAP_LINKS_SCHEMA = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
+TABLE_SCHEMA = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 CATALOG_KEY = "catalog.json"
 
 # SPDX ids offered in the upload dialog; "other" is the safe default when
@@ -31,10 +32,18 @@ LICENSE_CHOICES = [
 ]
 DEFAULT_LICENSE = "other"
 
+PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
+PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
+
 _MEDIA_TYPES = {
-    "pmtiles": "application/vnd.pmtiles",
+    "pmtiles": PMTILES_MEDIA_TYPE,
     "cog": "image/tiff; application=geotiff; profile=cloud-optimized",
 }
+
+
+def _asset_media_type(asset: dict, kind: str) -> str:
+    """An asset's own media type (e.g. GeoParquet), else its layer kind's default."""
+    return asset.get("media_type") or _MEDIA_TYPES[kind]
 
 
 def sanitize_layer_id(name: str) -> str:
@@ -112,25 +121,39 @@ def build_collection_json(
     root_relative_path: str,
     style_filename: str = "default.json",
     pmtiles_layers: list | None = None,
+    table_info: dict | None = None,
 ) -> dict:
-    """`data_assets` is [{'filename', 'role'}, ...] — every asset the layer's
-    folder holds (a plain PMTiles layer has one; a COG layer has two: the
-    original-CRS file and its "_3857" rendering derivative)."""
-    bbox = list(bbox) if bbox else [-180.0, -90.0, 180.0, 90.0]
-    media_type = _MEDIA_TYPES[kind]
-    # The renderable one drives the style/pmtiles link — "visual" if there
-    # is one (COG's "_3857" file), else the only asset there is.
-    visual = next((a for a in data_assets if a["role"] == "visual"), data_assets[0])
+    """`data_assets` is [{'filename', 'role', 'media_type'?}, ...] — every
+    asset the layer's folder holds. A vector layer has two: its GeoParquet
+    ("data") and PMTiles ("visual") files — older conversions only the
+    PMTiles. A COG layer has two: the original-CRS file and its "_3857"
+    rendering derivative.
 
-    assets = {
-        asset["role"]: {
+    `table_info` ({'columns', 'rowCount'}) describes the GeoParquet file's
+    schema, as the STAC table extension's `table:columns`."""
+    bbox = list(bbox) if bbox else [-180.0, -90.0, 180.0, 90.0]
+    # The renderable one drives the style/pmtiles link — "visual" if there
+    # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
+    visual = next((a for a in data_assets if a["role"] == "visual"), data_assets[0])
+    has_geoparquet = any(
+        _asset_media_type(asset, kind) == PARQUET_MEDIA_TYPE for asset in data_assets
+    )
+
+    assets = {}
+    for asset in data_assets:
+        media_type = _asset_media_type(asset, kind)
+        # Portolan registers a vector layer's PMTiles through the
+        # `rel: pmtiles` link rather than as an asset, the GeoParquet being
+        # the data — unless there is no GeoParquet (an older conversion),
+        # in which case the PMTiles is the only data there is.
+        if media_type == PMTILES_MEDIA_TYPE and has_geoparquet:
+            continue
+        assets[asset["role"]] = {
             "href": f"./{asset['filename']}",
             "type": media_type,
-            "title": title,
+            "title": f"{title} (GeoParquet)" if media_type == PARQUET_MEDIA_TYPE else title,
             "roles": [asset["role"]],
         }
-        for asset in data_assets
-    }
     assets["style-default"] = {
         "href": f"./styles/{style_filename}",
         "type": "application/vnd.mapbox.style+json",
@@ -165,7 +188,7 @@ def build_collection_json(
             }
         )
 
-    return {
+    collection: dict[str, Any] = {
         "type": "Collection",
         "stac_version": "1.1.0",
         "stac_extensions": [PORTOLAN_SCHEMA, WEB_MAP_LINKS_SCHEMA],
@@ -182,6 +205,12 @@ def build_collection_json(
         "links": links,
         "updated": _now_iso(),
     }
+    if table_info and table_info.get("columns"):
+        collection["stac_extensions"].append(TABLE_SCHEMA)
+        collection["table:columns"] = table_info["columns"]
+        if table_info.get("rowCount") is not None:
+            collection["table:row_count"] = table_info["rowCount"]
+    return collection
 
 
 def build_readme(
@@ -192,6 +221,7 @@ def build_readme(
     kind: str,
     layer_names: list | None = None,
     bbox: list | None = None,
+    table_info: dict | None = None,
 ) -> str:
     lines = [f"# {title}", "", f"Uploaded via CloudBench on {_now_iso()[:10]}.", ""]
     lines.append(f"**License:** {license_id}")
@@ -199,7 +229,11 @@ def build_readme(
     lines.append("")
     lines.append("## Contents")
     if kind == "pmtiles":
-        lines.append("- Format: PMTiles (vector tiles)")
+        if table_info:
+            lines.append("- Data: GeoParquet (full attributes and geometry, source CRS)")
+            if table_info.get("rowCount") is not None:
+                lines.append(f"- Features: {table_info['rowCount']}")
+        lines.append("- Web map: PMTiles (vector tiles)")
         if layer_names:
             lines.append(f"- Layer(s): {', '.join(layer_names)}")
     else:
@@ -211,14 +245,24 @@ def build_readme(
 
 
 def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) -> str:
-    media_type = _MEDIA_TYPES[kind]
     file_lines = "\n".join(
-        f"- Data file: `./{asset['filename']}` ({media_type}, {asset['role']})"
+        f"- Data file: `./{asset['filename']}` ({_asset_media_type(asset, kind)}, {asset['role']})"
         for asset in data_assets
+    )
+    geoparquet = next(
+        (a for a in data_assets if _asset_media_type(a, kind) == PARQUET_MEDIA_TYPE), None
+    )
+    query_hint = (
+        f"- Query the data (not the tiles) from `./{geoparquet['filename']}`, e.g. with "
+        f"DuckDB: `SELECT * FROM read_parquet('{geoparquet['filename']}') LIMIT 10`; "
+        "the PMTiles file is a display-only derivative.\n"
+        if geoparquet
+        else ""
     )
     return (
         f"# Agent notes for {title}\n\n"
         f"{file_lines}\n"
+        f"{query_hint}"
         "- Default style: `./styles/default.json` (MapLibre GL style v8)\n"
         "- This collection was generated automatically by CloudBench on upload; "
         "no manual curation has been applied.\n"
@@ -320,11 +364,14 @@ def finalize_layer(
     provider_name: str,
     source_name: str,
     info: dict | None,
+    table_info: dict | None = None,
 ) -> None:
     """Upload collection.json, README.md, AGENTS.md and a default style for one layer.
 
-    `data_assets` is [{'filename', 'role'}, ...] for every asset the
-    layer's data file(s) already uploaded under `folder`. Best-effort: a
+    `data_assets` is [{'filename', 'role', 'media_type'?}, ...] for every
+    asset the layer's data file(s) already uploaded under `folder`.
+    `info` is the PMTiles/COG's (WGS84 bbox, vector layer names);
+    `table_info` the GeoParquet's schema, if the layer has one. Best-effort: a
     failure here shouldn't undo the conversion that already succeeded and
     already landed in S3.
     """
@@ -353,6 +400,7 @@ def finalize_layer(
             bbox=bbox,
             root_relative_path=root_relative_path,
             pmtiles_layers=layer_names if kind == "pmtiles" else None,
+            table_info=table_info,
         )
         readme = build_readme(
             title=title,
@@ -361,6 +409,7 @@ def finalize_layer(
             kind=kind,
             layer_names=layer_names if kind == "pmtiles" else None,
             bbox=bbox,
+            table_info=table_info,
         )
         agents = build_agents_md(title=title, layer_id=layer_id, kind=kind, data_assets=data_assets)
 

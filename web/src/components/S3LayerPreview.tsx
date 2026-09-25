@@ -32,11 +32,12 @@ import 'maplibre-gl-lidar/style.css'
 import * as GeoTIFF from 'geotiff'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
-import { parquetReadObjects } from 'hyparquet'
+import { parquetMetadata, parquetReadObjects } from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 import * as api from '../api'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
+import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
 
 // Disable Cesium Ion (we don't use it)
 Cesium.Ion.defaultAccessToken = ''
@@ -126,10 +127,12 @@ export default function S3LayerPreview({
       // hyparquet automatically decodes GeoParquet geometry columns to GeoJSON
       // Include compressors for zstd, lz4, brotli, gzip support
       const rows = await parquetReadObjects({ file: arrayBuffer, compressors })
+      const geoColumns = geoParquetColumns(parquetMetadata(arrayBuffer).key_value_metadata)
 
-      // Find the geometry column (commonly named 'geometry', 'geom', or 'wkb_geometry')
-      let geometryColumn = 'geometry'
-      if (rows.length > 0) {
+      // Prefer the file's declared primary geometry column; otherwise guess
+      // from common names ('geometry', 'geom', or 'wkb_geometry')
+      let geometryColumn = geoColumns.primary ?? 'geometry'
+      if (!geoColumns.primary && rows.length > 0) {
         const firstRow = rows[0]
         if ('geometry' in firstRow) {
           geometryColumn = 'geometry'
@@ -144,6 +147,10 @@ export default function S3LayerPreview({
       const convertBigInts = (obj: unknown): unknown => {
         if (typeof obj === 'bigint') {
           return Number(obj)
+        }
+        // Dates would otherwise become {} below (they have no own properties)
+        if (obj instanceof Date) {
+          return obj.toISOString()
         }
         if (Array.isArray(obj)) {
           return obj.map(convertBigInts)
@@ -308,9 +315,10 @@ export default function S3LayerPreview({
         const geometry = wkbToGeoJSON(rawGeom)
         const properties: Record<string, unknown> = {}
 
-        // Copy all non-geometry properties, converting BigInts
+        // Copy all attribute properties, converting BigInts — skipping the
+        // geometry and any bbox covering column (derived, not an attribute)
         for (const [key, value] of Object.entries(row)) {
-          if (key !== geometryColumn) {
+          if (key !== geometryColumn && !geoColumns.covering.includes(key)) {
             properties[key] = convertBigInts(value)
           }
         }
@@ -1108,7 +1116,7 @@ export default function S3LayerPreview({
             <VStack align="start" spacing={0}>
               <HStack>
                 <Heading size="sm" color="white">S3 Layer Preview</Heading>
-                <Badge colorScheme="purple" variant="solid" fontSize="xs">Point Cloud</Badge>
+                <Badge colorScheme="blue" variant="solid" fontSize="xs">Point Cloud</Badge>
               </HStack>
               <Text fontSize="xs" color="whiteAlpha.800">{fileName}</Text>
             </VStack>
@@ -1159,7 +1167,7 @@ export default function S3LayerPreview({
             <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
               <Box>
                 <Text fontSize="xs" color="gray.500" fontWeight="500">Format</Text>
-                <Badge colorScheme={getFormatBadgeColor(metadata.format)}>{metadata.format.toUpperCase()}</Badge>
+                <Badge colorScheme={getFormatBadgeColor(metadata.format)}>{(metadata.format ?? 'unknown').toUpperCase()}</Badge>
               </Box>
               <Box>
                 <Text fontSize="xs" color="gray.500" fontWeight="500">Size</Text>
@@ -1237,8 +1245,8 @@ export default function S3LayerPreview({
           <VStack align="start" spacing={0}>
             <HStack>
               <Heading size="sm" color="white">S3 Layer Preview</Heading>
-              {metadata && (
-                <Badge colorScheme={getPreviewTypeBadgeColor(metadata.previewType)} variant="solid" fontSize="xs">
+              {metadata?.previewType && (
+                <Badge colorScheme="blue" variant="solid" fontSize="xs">
                   {metadata.previewType.charAt(0).toUpperCase() + metadata.previewType.slice(1)}
                 </Badge>
               )}
@@ -1356,12 +1364,14 @@ export default function S3LayerPreview({
             <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
               <Box>
                 <Text fontSize="xs" color="gray.500" fontWeight="500">Format</Text>
-                <Badge colorScheme={getFormatBadgeColor(metadata.format)}>{metadata.format.toUpperCase()}</Badge>
+                <Badge colorScheme={getFormatBadgeColor(metadata.format)}>{(metadata.format ?? 'unknown').toUpperCase()}</Badge>
               </Box>
               <Box>
                 <Text fontSize="xs" color="gray.500" fontWeight="500">Type</Text>
                 <Badge colorScheme={getPreviewTypeBadgeColor(metadata.previewType)}>
-                  {metadata.previewType.charAt(0).toUpperCase() + metadata.previewType.slice(1)}
+                  {metadata.previewType
+                    ? metadata.previewType.charAt(0).toUpperCase() + metadata.previewType.slice(1)
+                    : 'Unknown'}
                 </Badge>
               </Box>
               <Box>
@@ -1471,7 +1481,7 @@ export default function S3LayerPreview({
                         <Box as="tr" key={rowIdx} _hover={{ bg: 'gray.50' }} borderBottom="1px solid" borderColor="gray.100">
                           {tableData.fields.map((field, colIdx) => (
                             <Box as="td" key={colIdx} px={3} py={2} whiteSpace="nowrap" maxW="300px" overflow="hidden" textOverflow="ellipsis">
-                              {String(row[field] ?? '')}
+                              {formatCellValue(row[field])}
                             </Box>
                           ))}
                         </Box>

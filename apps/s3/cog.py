@@ -136,7 +136,7 @@ def start_conversion(uploaded_file, key, connection_id, user, license_id=portola
     return job
 
 
-def validate_cog(output):
+def validate_cog(output, name=""):  # noqa: ARG001 - shared validate_result signature
     return output.read(4) in TIFF_MAGIC
 
 

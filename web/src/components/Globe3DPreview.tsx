@@ -331,7 +331,7 @@ export default function Globe3DPreview({
               <Heading size="sm" color="white">
                 3D Globe Preview
               </Heading>
-              <Badge colorScheme="whiteAlpha" variant="solid" fontSize="xs">
+              <Badge colorScheme="blue" variant="solid" fontSize="xs">
                 {nodeType === 'layergroup' ? 'Layer Group' : 'Layer'}
               </Badge>
             </HStack>

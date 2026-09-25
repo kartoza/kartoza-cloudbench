@@ -26,30 +26,38 @@ from .models import CngLiteJob
 KIND = "pmtiles"
 ENDPOINT = "api/v1/pmtiles"
 CONTENT_TYPE = "application/vnd.pmtiles"
+PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 
 
 def group_results(job, results):
-    """Groups cng-lite's PMTiles output into one logical layer per file.
-
-    A GeoPackage's per-layer files each keep their own name; a plain
-    shapefile's single (generically-named) file instead takes its title
-    from the original upload, since cng-lite's own name for it
-    ("output.pmtiles") isn't meaningful to a reader.
-    """
+    """Groups cng-lite's output into one logical layer per vector layer."""
     is_multi = job.layers is not None
-    layers = []
+    groups = {}
     for item in results:
-        stem = PurePosixPath(item["name"]).stem
+        path = PurePosixPath(item["name"])
+        role = "data" if path.suffix.lower() == ".parquet" else "visual"
+        groups.setdefault(path.stem, {})[role] = item
+
+    layers = []
+    for stem, items in groups.items():
         title_stem = stem if is_multi else PurePosixPath(job.source_name).stem
         title = portolan.prettify(title_stem)
         layer_id = portolan.sanitize_layer_id(title_stem)
-        layers.append(
-            {
-                "layer_id": layer_id,
-                "title": title,
-                "assets": [{"item": item, "filename": f"{layer_id}.pmtiles", "role": "visual"}],
-            }
-        )
+        assets = []
+        if "data" in items:
+            assets.append(
+                {
+                    "item": items["data"],
+                    "filename": f"{layer_id}.parquet",
+                    "role": "data",
+                    "media_type": PARQUET_CONTENT_TYPE,
+                }
+            )
+        if "visual" in items:
+            assets.append(
+                {"item": items["visual"], "filename": f"{layer_id}.pmtiles", "role": "visual"}
+            )
+        layers.append({"layer_id": layer_id, "title": title, "assets": assets})
     return layers
 
 
@@ -314,18 +322,22 @@ def cancel_geopackage_inspection(job_id, user):
     job.delete()
 
 
-def validate_pmtiles(output):
+def validate_pmtiles(output, name=""):
+    """PMTiles output, or the GeoParquet file paired with it ("PAR1" magic)."""
+    if name.lower().endswith(".parquet"):
+        return output.read(4) == b"PAR1"
     return output.read(7) == b"PMTiles"
 
 
-def run_conversion(job_id):
+def run_conversion(job_id, create_collection=True):
     run_cng_lite_conversion(
         job_id,
         kind=KIND,
         endpoint=ENDPOINT,
         validate_result=validate_pmtiles,
-        invalid_result_message="CloudNativeGIS did not return a valid PMTiles file.",
+        invalid_result_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
         output_content_type=CONTENT_TYPE,
         build_extra_payload=lambda job: {"layers": job.layers} if job.layers else None,
         group_results=group_results,
+        create_collection=create_collection,
     )

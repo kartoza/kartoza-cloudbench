@@ -51,7 +51,7 @@ this stack.
 ## Services (dev mode — `make up`)
 
 - **django** — `http://localhost:${HTTP_PORT:-8000}`, source-mounted, autoreload
-- **cloudnativegis-processing** — PMTiles/COG conversion service, internal only (no published port), reached by `django`/`dev` at `http://cloudnativegis-processing:8000`
+- **cloudnativegis-processing** — PMTiles/GeoParquet/COG conversion service, internal only (no published port), reached by `django`/`dev` at `http://cloudnativegis-processing:8000`
 - **vite** *(opt-in, `make dev`)* — `http://localhost:5173`, frontend dev server (`npm install && npm run dev`), proxies `/api` to `dev`
 - **dev** *(opt-in, `make dev`)* — SSH on `:8091`, manually-run Django dev server on `:8090` — see PyCharm remote interpreter setup. `make dev` also starts `cloudnativegis-processing`
 
@@ -84,7 +84,7 @@ prefer.
 
 ## CloudNativeGIS
 
-S3's PMTiles/COG conversion uses [CloudNativeGIS](https://github.com/kartoza/CloudNativeGIS)
+S3's PMTiles/GeoParquet/COG conversion uses [CloudNativeGIS](https://github.com/kartoza/CloudNativeGIS)
 — see [S3 upload details](../docs/user-guide/uploads.md#s3-cloud-native-options).
 It ships in `docker-compose.yml` as the `cloudnativegis-processing` service
 (`ghcr.io/kartoza/cloudnativegis-processing`), so it starts with the rest of
@@ -97,7 +97,8 @@ Settings in `.env`:
   (`http://cloudnativegis-processing:8000`); set it only to point at an
   external CloudNativeGIS instance instead.
 - `CLOUDNATIVEGIS_PROCESSING_TAG` — image tag of the bundled service
-  (default `0.0.1`).
+  (default `0.0.2`, the first to also produce GeoParquet for vector layers;
+  older tags still work, publishing PMTiles only).
 - `CLOUDNATIVEGIS_API_TOKEN` — shared secret. Django sends it as a bearer
   token, and the bundled service receives it as `LITE_API_TOKEN`. Leave blank
   to disable auth.

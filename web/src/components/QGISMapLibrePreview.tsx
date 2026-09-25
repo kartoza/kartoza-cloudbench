@@ -257,7 +257,7 @@ export default function QGISMapLibrePreview({
                 {metadata?.title || projectName || 'QGIS Project'}
               </Text>
               {metadata?.crs && (
-                <Badge bg="whiteAlpha.200" color="white" fontSize="xs">
+                <Badge colorScheme="blue" variant="solid" fontSize="xs">
                   {metadata.crs}
                 </Badge>
               )}

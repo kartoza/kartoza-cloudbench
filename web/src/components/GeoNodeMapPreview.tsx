@@ -243,7 +243,7 @@ export default function GeoNodeMapPreview({
               <Heading size="sm" color="white">
                 GeoNode Layer Preview
               </Heading>
-              <Badge colorScheme="whiteAlpha" variant="solid" fontSize="xs">
+              <Badge colorScheme="blue" variant="solid" fontSize="xs">
                 WMS
               </Badge>
             </HStack>
