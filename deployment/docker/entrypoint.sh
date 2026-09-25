@@ -37,6 +37,36 @@ else
     echo "Skipping admin user creation (ADMIN_USERNAME/ADMIN_PASSWORD not set)."
 fi
 
+# Non-fatal: CloudBench runs without CloudNativeGIS, the PMTiles/COG
+# conversion options are just hidden. Retries because the processing
+# container may still be booting (depends_on doesn't wait for healthy).
+echo "Checking CloudNativeGIS connection..."
+python manage.py shell -c "
+import time
+import httpx
+from django.conf import settings
+
+url = settings.CLOUDNATIVEGIS_URL
+if not url:
+    print('  CloudNativeGIS: NOT CONFIGURED (CLOUDNATIVEGIS_URL is empty)')
+else:
+    error = None
+    for attempt in range(5):
+        try:
+            response = httpx.get(f'{url}/health', timeout=5)
+            response.raise_for_status()
+            error = None
+            break
+        except httpx.HTTPError as exc:
+            error = exc
+            time.sleep(2)
+    if error is None:
+        print(f'  CloudNativeGIS: ACTIVE at {url}')
+    else:
+        print(f'  CloudNativeGIS: NOT REACHABLE at {url} ({error.__class__.__name__}: {error})')
+        print('  PMTiles/COG conversions will be unavailable until it is reachable.')
+" || echo "  CloudNativeGIS: check failed to run, skipping."
+
 echo "----------------------------------------------------"
 echo "READY"
 echo "----------------------------------------------------"

@@ -8,9 +8,10 @@ services:
     image: ghcr.io/kartoza/kartoza-cloudbench:${CLOUDBENCH_TAG:-latest}
     env_file: .env
     environment:
-      CLOUDNATIVEGIS_URL: ${CLOUDNATIVEGIS_URL:-http://host.docker.internal:${CLOUDNATIVEGIS_PORT:-8100}}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      CLOUDNATIVEGIS_URL: ${CLOUDNATIVEGIS_URL:-http://cloudnativegis-processing:8000}
+      CLOUDNATIVEGIS_API_TOKEN: ${CLOUDNATIVEGIS_API_TOKEN:-}
+    depends_on:
+      - cloudnativegis-processing
     volumes:
       - cloudbench-folder:${CLOUDBENCH_DATA_FOLDER:-/home/web/cloudbench_data}
     ports:
@@ -22,3 +23,10 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  cloudnativegis-processing:
+    image: ghcr.io/kartoza/cloudnativegis-processing:${CLOUDNATIVEGIS_PROCESSING_TAG:-0.0.1}
+    restart: on-failure
+    environment:
+      - LITE_API_TOKEN=${CLOUDNATIVEGIS_API_TOKEN:-}
+      - LITE_MAX_DOWNLOAD_SIZE=${CLOUDNATIVEGIS_MAX_DOWNLOAD_SIZE:-524288000}
