@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Box, Card, CardBody, Flex, HStack, Heading, IconButton, Text, Tooltip, Spinner, Center, VStack, Icon, Code, useColorModeValue, useToast } from '@chakra-ui/react'
 import { FiX, FiDownload, FiFile } from 'react-icons/fi'
 import * as api from '../api'
 import { MarkdownContent } from './MarkdownContent'
 import { formatFileSize } from '../utils/s3ObjectFormat'
+import { resolveRelativeKey } from '../utils/s3Key'
 
 // Above this, don't try to render the content inline — just offer a download.
 const MAX_PREVIEW_BYTES = 2_000_000
@@ -42,6 +43,18 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
   const toast = useToast()
 
   const kind = kindFor(objectKey, size)
+
+  // A layer README's "./thumbnail.png" is relative to the README in its
+  // bucket, not to this page: load it from beside the README instead.
+  const resolveImageSrc = useCallback(
+    async (src: string) => {
+      const key = resolveRelativeKey(objectKey, src)
+      if (!key) return null
+      const result = await api.getS3PresignedURL(connectionId, key)
+      return result.url
+    },
+    [connectionId, objectKey]
+  )
   const validDate = lastModified && !Number.isNaN(new Date(lastModified).getTime())
 
   useEffect(() => {
@@ -120,7 +133,7 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
     if (kind === 'markdown') {
       return (
         <Box p={6}>
-          <MarkdownContent content={content} />
+          <MarkdownContent content={content} resolveImageSrc={resolveImageSrc} />
         </Box>
       )
     }

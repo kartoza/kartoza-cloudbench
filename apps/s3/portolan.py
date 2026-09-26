@@ -41,11 +41,34 @@ UNSPECIFIED_LICENSE_FILE = "LICENSE.md"
 
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
+THUMBNAIL_MEDIA_TYPE = "image/png"
+THUMBNAIL_FILENAME = "thumbnail.png"
+_THUMBNAIL_SUFFIX = "_thumbnail.png"
 
 _MEDIA_TYPES = {
     "pmtiles": PMTILES_MEDIA_TYPE,
     "cog": "image/tiff; application=geotiff; profile=cloud-optimized",
 }
+
+
+def is_thumbnail_result(name: str) -> bool:
+    """Whether a cng-lite result file is a layer's rendered thumbnail."""
+    return name.lower().endswith(_THUMBNAIL_SUFFIX)
+
+
+def thumbnail_stem(name: str) -> str:
+    """The stem of the layer a "<stem>_thumbnail.png" result belongs to."""
+    return name[: -len(_THUMBNAIL_SUFFIX)]
+
+
+def thumbnail_asset(item: dict) -> dict:
+    """A group_results asset entry for a layer's rendered thumbnail."""
+    return {
+        "item": item,
+        "filename": THUMBNAIL_FILENAME,
+        "role": "thumbnail",
+        "media_type": THUMBNAIL_MEDIA_TYPE,
+    }
 
 
 def _asset_media_type(asset: dict, kind: str) -> str:
@@ -154,6 +177,16 @@ def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
                 "source-layer": source_layer,
                 "paint": {"line-color": "#2d7d9b", "line-width": 1},
             },
+            {
+                # Fill/line layers draw nothing for points; without this a
+                # point layer would render (and thumbnail) as empty.
+                "id": "circle",
+                "type": "circle",
+                "source": "data",
+                "source-layer": source_layer,
+                "filter": ["==", ["geometry-type"], "Point"],
+                "paint": {"circle-color": "#2d7d9b", "circle-radius": 3},
+            },
         ],
     }
 
@@ -217,7 +250,10 @@ def build_collection_json(
         assets[asset["role"]] = {
             "href": f"./{asset['filename']}",
             "type": media_type,
-            "title": f"{title} (GeoParquet)" if media_type == PARQUET_MEDIA_TYPE else title,
+            "title": {
+                PARQUET_MEDIA_TYPE: f"{title} (GeoParquet)",
+                THUMBNAIL_MEDIA_TYPE: f"{title} thumbnail",
+            }.get(media_type, title),
             "roles": [asset["role"]],
         }
     assets["style-default"] = {
@@ -295,8 +331,12 @@ def build_readme(
     bbox: list | None = None,
     table_info: dict | None = None,
     license_url: str = "",
+    thumbnail: bool = False,
 ) -> str:
-    lines = [f"# {title}", "", f"Uploaded via CloudBench on {_now_iso()[:10]}.", ""]
+    lines = [f"# {title}", ""]
+    if thumbnail:
+        lines += [f"![{title}](./{THUMBNAIL_FILENAME})", ""]
+    lines += [f"Uploaded via CloudBench on {_now_iso()[:10]}.", ""]
     if license_id != "other":
         lines.append(f"**License:** {license_id}")
     elif license_url:
@@ -327,7 +367,10 @@ def build_readme(
 
 def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) -> str:
     file_lines = "\n".join(
-        f"- Data file: `./{asset['filename']}` ({_asset_media_type(asset, kind)}, {asset['role']})"
+        f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
+        if asset["role"] == "thumbnail"
+        else f"- Data file: `./{asset['filename']}` "
+        f"({_asset_media_type(asset, kind)}, {asset['role']})"
         for asset in data_assets
     )
     geoparquet = next(
@@ -596,6 +639,7 @@ def finalize_layer(
             bbox=bbox,
             table_info=table_info,
             license_url=license_url,
+            thumbnail=any(asset["role"] == "thumbnail" for asset in data_assets),
         )
         agents = build_agents_md(title=title, layer_id=layer_id, kind=kind, data_assets=data_assets)
 

@@ -27,6 +27,7 @@ KIND = "pmtiles"
 ENDPOINT = "api/v1/pmtiles"
 CONTENT_TYPE = "application/vnd.pmtiles"
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def group_results(job, results):
@@ -34,6 +35,9 @@ def group_results(job, results):
     is_multi = job.layers is not None
     groups = {}
     for item in results:
+        if portolan.is_thumbnail_result(item["name"]):
+            groups.setdefault(portolan.thumbnail_stem(item["name"]), {})["thumbnail"] = item
+            continue
         path = PurePosixPath(item["name"])
         role = "data" if path.suffix.lower() == ".parquet" else "visual"
         groups.setdefault(path.stem, {})[role] = item
@@ -57,6 +61,8 @@ def group_results(job, results):
             assets.append(
                 {"item": items["visual"], "filename": f"{layer_id}.pmtiles", "role": "visual"}
             )
+        if "thumbnail" in items:
+            assets.append(portolan.thumbnail_asset(items["thumbnail"]))
         layers.append({"layer_id": layer_id, "title": title, "assets": assets})
     return layers
 
@@ -326,9 +332,11 @@ def cancel_geopackage_inspection(job_id, user):
 
 
 def validate_pmtiles(output, name=""):
-    """PMTiles output, or the GeoParquet file paired with it ("PAR1" magic)."""
+    """PMTiles output, or the GeoParquet/thumbnail paired with it."""
     if name.lower().endswith(".parquet"):
         return output.read(4) == b"PAR1"
+    if portolan.is_thumbnail_result(name):
+        return output.read(8) == PNG_MAGIC
     return output.read(7) == b"PMTiles"
 
 
@@ -340,7 +348,10 @@ def run_conversion(job_id, create_collection=True):
         validate_result=validate_pmtiles,
         invalid_result_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
         output_content_type=CONTENT_TYPE,
-        build_extra_payload=lambda job: {"layers": job.layers} if job.layers else None,
+        build_extra_payload=lambda job: {
+            "thumbnail": True,
+            **({"layers": job.layers} if job.layers else {}),
+        },
         group_results=group_results,
         create_collection=create_collection,
     )

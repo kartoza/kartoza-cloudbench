@@ -68,6 +68,22 @@ def test_group_results_plain_tiff_uses_source_name_for_title():
     }
 
 
+def test_group_results_attaches_thumbnail_to_its_raster():
+    job = Mock(source_name="dem.tif", layers=None)
+    results = [
+        {"name": "output_cog.tif", "info": {}},
+        {"name": "output_cog_3857.tif", "info": {}},
+        {"name": "output_cog_thumbnail.png", "info": {}},
+    ]
+    with patch("apps.s3.cog.is_geopackage", return_value=False):
+        [layer] = group_results(job, results)
+    assert [(a["role"], a["filename"]) for a in layer["assets"]] == [
+        ("data", "dem.tif"),
+        ("visual", "dem_3857.tif"),
+        ("thumbnail", "thumbnail.png"),
+    ]
+
+
 def test_group_results_geopackage_uses_table_names():
     job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
     results = [

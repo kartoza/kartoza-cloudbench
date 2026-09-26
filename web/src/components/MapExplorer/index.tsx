@@ -386,15 +386,6 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     }
   }, [])
 
-  // The catalogue no longer names a single connection/bucket to switch the map
-  // into — Map Explorer already searches everything — so this just switches tabs.
-  const openOnMap = useCallback(
-    (_target: MapTarget) => {
-      setView('map')
-    },
-    [setView]
-  )
-
   useEffect(() => {
     if (view === 'map') map.current?.resize()
   }, [view])
@@ -413,6 +404,34 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     addedLayerIdsRef.current.delete(layerId)
     setLayers((prev) => prev.filter((l) => l.id !== layerId))
   }, [])
+
+  // "Open on map" from the catalogue: show that one layer on its own —
+  // replacing whatever was on the map — and zoom to it (addLayer does).
+  const openOnMap = useCallback(
+    (target: MapTarget) => {
+      setView('map')
+      for (const layer of layersRef.current) handleRemoveLayer(layer.id)
+      if (!mapReady) {
+        // Picked up by the catalog load once the map is ready (as a URL restore is).
+        pendingLayerRefsRef.current = [target]
+        return
+      }
+      // Prefer the discovered entry (it carries the connection name); fall back
+      // to the catalogue's own details for a layer uploaded since that listing.
+      const option = availableLayers.find(
+        (o) => o.connectionId === target.connectionId && o.bucketName === target.bucketName && o.key === target.key
+      ) ?? {
+        connectionId: target.connectionId,
+        connectionName: '',
+        bucketName: target.bucketName,
+        key: target.key,
+        name: layerNameFromKey(target.key, 'pmtiles'),
+        format: 'pmtiles' as const,
+      }
+      addLayer(option)
+    },
+    [setView, handleRemoveLayer, mapReady, availableLayers, addLayer]
+  )
 
   return (
     <Box position="fixed" inset={0} zIndex={1500} bg="white" display="flex" flexDirection="column">
