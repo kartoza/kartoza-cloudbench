@@ -85,6 +85,8 @@ class S3Client:
         if not endpoint_url.startswith("http"):
             protocol = "https" if use_ssl else "http"
             endpoint_url = f"{protocol}://{endpoint}"
+        self.endpoint_url = endpoint_url.rstrip("/")
+        self.path_style = path_style
 
         self.client = boto3.client(
             "s3",
@@ -103,6 +105,14 @@ class S3Client:
             region_name=region,
             config=config,
         )
+
+    @property
+    def bucket_url(self) -> str:
+        """The bucket's base URL, as its addressing style would reach it."""
+        if self.path_style:
+            return f"{self.endpoint_url}/{self.bucket}"
+        scheme, _, host = self.endpoint_url.partition("://")
+        return f"{scheme}://{self.bucket}.{host}"
 
     def test_connection(self) -> tuple[bool, str]:
         """Test that this client's bucket is reachable.

@@ -61,6 +61,7 @@ export default function S3ConnectionDialog() {
   const [region, setRegion] = useState('')
   const [useSSL, setUseSSL] = useState(true)
   const [pathStyle, setPathStyle] = useState(true)
+  const [contactEmail, setContactEmail] = useState('')
   const [showSecretKey, setShowSecretKey] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Once the user manually edits a connectivity toggle, stop silently
@@ -88,6 +89,7 @@ export default function S3ConnectionDialog() {
         setRegion(conn.region || '')
         setUseSSL(conn.useSSL)
         setPathStyle(conn.pathStyle)
+        setContactEmail(conn.contactEmail || '')
         // Flag as "touched" so re-typing the endpoint doesn't clobber this
         // connection's existing (possibly non-default) settings.
         setAdvancedTouched(true)
@@ -109,6 +111,7 @@ export default function S3ConnectionDialog() {
       setAccessKey('')
       setSecretKey('')
       setRegion('')
+      setContactEmail('')
       setUseSSL(deriveConnectionDefaults(defaultEndpoint).useSSL)
       setPathStyle(deriveConnectionDefaults(defaultEndpoint).pathStyle)
       setShowSecretKey(false)
@@ -192,6 +195,8 @@ export default function S3ConnectionDialog() {
         region: region || undefined,
         useSSL,
         pathStyle,
+        // Always sent (even blank) so clearing it on edit takes effect.
+        contactEmail: contactEmail.trim(),
       }
 
       if (isEditMode && connectionId) {
@@ -322,6 +327,21 @@ export default function S3ConnectionDialog() {
                   />
                 </InputRightElement>
               </InputGroup>
+            </FormControl>
+
+            <FormControl>
+              <FormLabel fontWeight="500" color="gray.700">Contact Email (optional)</FormLabel>
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="data@example.org"
+                size="lg"
+                borderRadius="lg"
+              />
+              <FormHelperText>
+                Published as the host contact in this bucket&apos;s catalog. Leave blank to use the server default.
+              </FormHelperText>
             </FormControl>
 
             <Box w="100%">

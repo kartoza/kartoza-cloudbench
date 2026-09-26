@@ -33,6 +33,12 @@ class TestS3Client:
         explicit = s3.S3Client("http://explicit.test", "b", "k", "s")
         assert explicit.client.meta.endpoint_url == "http://explicit.test"
 
+    def test_bucket_url_follows_addressing_style(self):
+        path = s3.S3Client("minio.test:9000", "bkt", "k", "s", use_ssl=False)
+        assert path.bucket_url == "http://minio.test:9000/bkt"
+        virtual = s3.S3Client("https://s3.test/", "bkt", "k", "s", path_style=False)
+        assert virtual.bucket_url == "https://bkt.s3.test"
+
     def test_dataclasses(self):
         obj = s3.S3Object("k", 1, "t", "e", is_directory=True)
         assert obj.to_dict()["isDirectory"] is True

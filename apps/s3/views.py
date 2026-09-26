@@ -23,6 +23,7 @@ from urllib.parse import quote
 import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.response import Response
@@ -62,6 +63,18 @@ def _get_owned_connection(request, conn_id):
         return None
 
 
+def _clean_contact_email(value):
+    """A connection's contact email, stripped: "" if blank, None if invalid."""
+    email = (value or "").strip()
+    if not email:
+        return ""
+    try:
+        validate_email(email)
+    except ValidationError:
+        return None
+    return email
+
+
 class S3ConnectionListView(APIView):
     """List and create S3 connections.
 
@@ -81,6 +94,7 @@ class S3ConnectionListView(APIView):
                     "region": c.region,
                     "useSSL": c.use_ssl,
                     "pathStyle": c.path_style,
+                    "contactEmail": c.contact_email,
                 }
                 for c in connections
             ]
@@ -95,6 +109,12 @@ class S3ConnectionListView(APIView):
                 {"error": "Bucket is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        contact_email = _clean_contact_email(data.get("contactEmail"))
+        if contact_email is None:
+            return Response(
+                {"error": "Contact email is not a valid email address"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         conn = S3Connection.objects.create(
             owner=request.user,
             name=data.get("name", ""),
@@ -105,6 +125,7 @@ class S3ConnectionListView(APIView):
             region=data.get("region", "us-east-1"),
             use_ssl=data.get("useSSL", True),
             path_style=data.get("pathStyle", True),
+            contact_email=contact_email,
         )
 
         return Response(
@@ -188,6 +209,7 @@ class S3ConnectionDetailView(APIView):
                     "region": conn.region,
                     "useSSL": conn.use_ssl,
                     "pathStyle": conn.path_style,
+                    "contactEmail": conn.contact_email,
                 }
             }
         )
@@ -217,6 +239,14 @@ class S3ConnectionDetailView(APIView):
         conn.region = data.get("region", conn.region)
         conn.use_ssl = data.get("useSSL", conn.use_ssl)
         conn.path_style = data.get("pathStyle", conn.path_style)
+        if "contactEmail" in data:
+            contact_email = _clean_contact_email(data["contactEmail"])
+            if contact_email is None:
+                return Response(
+                    {"error": "Contact email is not a valid email address"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            conn.contact_email = contact_email
         conn.save()
 
         # Clear cached client

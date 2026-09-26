@@ -281,7 +281,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     conversion_job.save(update_fields=["source_name"])
     requests = []
     polls = 0
-    s3_client = Mock()
+    s3_client = Mock(bucket_url="http://minio:9000/bucket")
     s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
     uploaded = []
 
@@ -360,7 +360,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
 def test_conversion_publishes_geoparquet_alongside_pmtiles(
     conversion_job, parquet_content, succeeds
 ):
-    s3_client = Mock()
+    s3_client = Mock(bucket_url="http://minio:9000/bucket")
     s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
     s3_client.get_object.side_effect = Exception("no catalog.json yet")
     uploaded = {}
@@ -428,6 +428,11 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
     assert collection["table:columns"] == columns
     # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
     assert collection["extent"]["spatial"]["bbox"] == [[1, 2, 3, 4]]
+    # The uploader produced it; the bucket hosts it (Portolan: exactly one host).
+    assert collection["providers"] == [
+        {"name": "7", "roles": ["producer"]},
+        {"name": "minio", "roles": ["host"], "url": "http://minio:9000/bucket"},
+    ]
 
 
 @pytest.mark.django_db
