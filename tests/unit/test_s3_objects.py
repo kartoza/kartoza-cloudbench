@@ -47,7 +47,12 @@ def _catalog_client(child_folders):
 def _written_child_hrefs(client):
     import json
 
-    body = json.loads(client.put_object.call_args.kwargs["body"])
+    # catalog.json is written alongside the root README.md/AGENTS.md now.
+    [body] = [
+        json.loads(call.kwargs["body"])
+        for call in client.put_object.call_args_list
+        if call.kwargs["key"] == "catalog.json"
+    ]
     return [link["href"] for link in body["links"] if link["rel"] == "child"]
 
 

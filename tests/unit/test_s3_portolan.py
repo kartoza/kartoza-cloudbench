@@ -260,3 +260,87 @@ def test_finalize_removes_stale_license_file_once_terms_are_known(license_id, li
     collection = json.loads(written["roads/collection.json"])
     expected = [license_url] if license_id == "other" else []
     assert [link["href"] for link in license_links(collection)] == expected
+
+
+class FakeBucket:
+    """Just enough of S3Client for the root catalog functions: an in-memory bucket."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def get_object(self, key):
+        return self.objects[key]
+
+    def put_object(self, key, body, content_type):
+        self.objects[key] = body
+
+
+def test_publishing_writes_root_readme_and_agents_listing_every_layer():
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+    portolan.ensure_root_catalog(bucket, folder="imports/rivers", title="Rivers")
+
+    catalog = json.loads(bucket.objects["catalog.json"])
+    doc_links = {link["rel"]: link["href"] for link in catalog["links"]}
+    assert doc_links["describedby"] == "./README.md"
+    assert doc_links["agents"] == "./AGENTS.md"
+
+    readme = bucket.objects["README.md"].decode()
+    assert (
+        "| [Roads](./roads/README.md) | `roads/` | [collection.json](./roads/collection.json) |"
+        in readme
+    )
+    assert "[Rivers](./imports/rivers/README.md)" in readme
+    agents = bucket.objects["AGENTS.md"].decode()
+    assert "- `Roads`: `./roads/collection.json` (notes: `./roads/AGENTS.md`)" in agents
+    assert "`./imports/rivers/collection.json`" in agents
+
+
+def test_republishing_a_layer_does_not_duplicate_links():
+    bucket = FakeBucket()
+    for _ in range(2):
+        portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+
+    catalog = json.loads(bucket.objects["catalog.json"])
+    rels = [link["rel"] for link in catalog["links"]]
+    assert rels.count("child") == 1
+    assert rels.count("describedby") == 1
+    assert rels.count("agents") == 1
+    assert bucket.objects["README.md"].decode().count("./roads/README.md") == 1
+
+
+def test_deleting_layers_regenerates_root_docs():
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+    portolan.ensure_root_catalog(bucket, folder="rivers", title="Rivers")
+
+    portolan.prune_root_catalog(bucket, "roads/")
+    assert "Roads" not in bucket.objects["README.md"].decode()
+    assert "Rivers" in bucket.objects["AGENTS.md"].decode()
+
+    portolan.prune_root_catalog(bucket, "rivers/")
+    assert "No layers are published yet." in bucket.objects["README.md"].decode()
+    assert "(none published yet)" in bucket.objects["AGENTS.md"].decode()
+
+
+def test_catalogs_from_before_root_docs_gain_them_on_next_change():
+    bucket = FakeBucket()
+    bucket.objects["catalog.json"] = json.dumps(
+        {
+            "type": "Catalog",
+            "id": "catalog",
+            "title": "CloudBench Catalog",
+            "links": [
+                {"rel": "root", "href": "./catalog.json"},
+                {"rel": "child", "href": "./old/collection.json", "title": "Old"},
+            ],
+        }
+    ).encode()
+
+    portolan.ensure_root_catalog(bucket, folder="new", title="New")
+
+    readme = bucket.objects["README.md"].decode()
+    assert "[Old](./old/README.md)" in readme and "[New](./new/README.md)" in readme
+    assert {"describedby", "agents"} <= {
+        link["rel"] for link in json.loads(bucket.objects["catalog.json"])["links"]
+    }
