@@ -40,14 +40,14 @@ import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { ConversionJob } from '../../types'
 
-// Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync.
+// Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync. ("proprietary"
+// isn't offered: the Portolan spec forbids it — use "other" with a URL.)
 const LICENSE_CHOICES = [
-  { id: 'other', label: 'Not specified' },
+  { id: 'other', label: 'Other / not specified' },
   { id: 'CC0-1.0', label: 'CC0 1.0 (Public Domain)' },
   { id: 'CC-BY-4.0', label: 'CC BY 4.0' },
   { id: 'CC-BY-SA-4.0', label: 'CC BY-SA 4.0' },
   { id: 'ODbL-1.0', label: 'ODbL 1.0' },
-  { id: 'proprietary', label: 'Proprietary / All rights reserved' },
 ]
 
 // Helper to format file size
@@ -124,6 +124,9 @@ export default function S3UploadDialog() {
   const [createSubfolder, setCreateSubfolder] = useState(true) // For GeoPackage layer extraction
   const [isGeoPackage, setIsGeoPackage] = useState(false)
   const [license, setLicense] = useState(LICENSE_CHOICES[0].id)
+  const [licenseUrl, setLicenseUrl] = useState('')
+  // Only an "other" license needs a link to its terms.
+  const requestedLicenseUrl = license === 'other' ? licenseUrl.trim() || undefined : undefined
 
   // Upload state
   const [isUploading, setIsUploading] = useState(false)
@@ -190,6 +193,7 @@ export default function S3UploadDialog() {
     setCreateSubfolder(true)
     setIsGeoPackage(false)
     setLicense(LICENSE_CHOICES[0].id)
+    setLicenseUrl('')
     setIsInspecting(false)
     setGpkgJobId(null)
     setGpkgFormat('pmtiles')
@@ -286,7 +290,7 @@ export default function S3UploadDialog() {
       setUploadResult(null)
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
-          connectionId, selectedFile, customKey || undefined, license
+          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -339,7 +343,8 @@ export default function S3UploadDialog() {
         isGeoPackage ? createSubfolder : undefined,
         undefined,
         companionFiles,
-        license
+        license,
+        requestedLicenseUrl
       )
 
       setUploadResult({
@@ -622,6 +627,24 @@ export default function S3UploadDialog() {
                     ))}
                   </Select>
                 </FormControl>
+
+                {license === 'other' && (
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License URL (optional)</FormLabel>
+                    <Input
+                      type="url"
+                      value={licenseUrl}
+                      isDisabled={isUploading || isConverting}
+                      onChange={(e) => setLicenseUrl(e.target.value)}
+                      placeholder="https://example.org/data-license"
+                      size="sm"
+                      borderRadius="lg"
+                    />
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      Link to the license terms. Leave empty if they&apos;re not known — the catalog will say so.
+                    </Text>
+                  </FormControl>
+                )}
               </VStack>
 
               {!cngLiteConnected && (

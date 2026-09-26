@@ -7,6 +7,7 @@ data file(s) themselves. This is a deliberately trimmed subset of the
 full spec — no checksums, thumbnails, or multi-language support yet.
 """
 
+import contextlib
 import json
 import logging
 import re
@@ -22,16 +23,21 @@ TABLE_SCHEMA = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 CATALOG_KEY = "catalog.json"
 
 # SPDX ids offered in the upload dialog; "other" is the safe default when
-# the uploader doesn't know (or the source data doesn't specify) a license.
+# the uploader doesn't know (or the source data doesn't specify) a license,
+# and also covers any license outside this list, given by URL.
 LICENSE_CHOICES = [
-    {"id": "other", "label": "Not specified"},
+    {"id": "other", "label": "Other / not specified"},
     {"id": "CC0-1.0", "label": "CC0 1.0 (Public Domain)"},
     {"id": "CC-BY-4.0", "label": "CC BY 4.0"},
     {"id": "CC-BY-SA-4.0", "label": "CC BY-SA 4.0"},
     {"id": "ODbL-1.0", "label": "ODbL 1.0"},
-    {"id": "proprietary", "label": "Proprietary / All rights reserved"},
 ]
 DEFAULT_LICENSE = "other"
+# STAC 1.1's deprecated "proprietary", which Portolan forbids — older jobs
+# (and clients) may still carry it, so it's published as "other" instead.
+_FORBIDDEN_LICENSES = {"proprietary"}
+# Where a layer licensed "other" without a URL points its license link.
+UNSPECIFIED_LICENSE_FILE = "LICENSE.md"
 
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
@@ -63,6 +69,42 @@ def prettify(name: str) -> str:
         return name or "Untitled layer"
     return " ".join(
         word if not word.islower() and not word.isupper() else word.capitalize() for word in words
+    )
+
+
+def normalize_license(license_id: str | None) -> str:
+    """A license id Portolan accepts: blank or forbidden ones become "other"."""
+    license_id = (license_id or "").strip()
+    if not license_id or license_id in _FORBIDDEN_LICENSES:
+        return DEFAULT_LICENSE
+    return license_id
+
+
+def license_link(license_id: str, license_url: str = "") -> dict | None:
+    """The `rel: license` link Portolan requires when the license is "other".
+
+    Points at `license_url` when the uploader gave one, else at a generated
+    LICENSE.md in the layer folder saying the terms aren't specified. An
+    SPDX id needs no link — the id itself identifies the license text.
+    """
+    if license_id != "other":
+        return None
+    if license_url:
+        return {"rel": "license", "href": license_url, "type": "text/html", "title": "License"}
+    return {
+        "rel": "license",
+        "href": f"./{UNSPECIFIED_LICENSE_FILE}",
+        "type": "text/markdown",
+        "title": "License (not specified)",
+    }
+
+
+def build_unspecified_license_md(title: str) -> str:
+    return (
+        f"# License for {title}\n\n"
+        "The license for this data was not specified when it was uploaded to "
+        "CloudBench. Contact the data's producer or host (see `collection.json`) "
+        "before reusing it.\n"
     )
 
 
@@ -139,6 +181,7 @@ def build_collection_json(
     bbox: list | None,
     root_relative_path: str,
     host: dict | None = None,
+    license_url: str = "",
     style_filename: str = "default.json",
     pmtiles_layers: list | None = None,
     table_info: dict | None = None,
@@ -152,7 +195,8 @@ def build_collection_json(
     `table_info` ({'columns', 'rowCount'}) describes the GeoParquet file's
     schema, as the STAC table extension's `table:columns`. `host` is the
     `host` provider (see host_provider), alongside the uploader as
-    `producer`."""
+    `producer`. `license_url` is where an "other" license's terms live
+    (see license_link)."""
     bbox = list(bbox) if bbox else [-180.0, -90.0, 180.0, 90.0]
     # The renderable one drives the style/pmtiles link — "visual" if there
     # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
@@ -199,6 +243,9 @@ def build_collection_json(
             "title": "Human-readable documentation",
         },
     ]
+    link = license_link(license_id, license_url)
+    if link:
+        links.append(link)
     if kind == "pmtiles":
         links.append(
             {
@@ -247,9 +294,18 @@ def build_readme(
     layer_names: list | None = None,
     bbox: list | None = None,
     table_info: dict | None = None,
+    license_url: str = "",
 ) -> str:
     lines = [f"# {title}", "", f"Uploaded via CloudBench on {_now_iso()[:10]}.", ""]
-    lines.append(f"**License:** {license_id}")
+    if license_id != "other":
+        lines.append(f"**License:** {license_id}")
+    elif license_url:
+        lines.append(f"**License:** {license_url}")
+    else:
+        lines.append(
+            f"**License:** not specified (see [{UNSPECIFIED_LICENSE_FILE}]"
+            f"(./{UNSPECIFIED_LICENSE_FILE}))"
+        )
     lines.append(f"**Source file:** {source_name}")
     lines.append("")
     lines.append("## Contents")
@@ -392,6 +448,7 @@ def finalize_layer(
     table_info: dict | None = None,
     host_name: str = "",
     host_email: str = "",
+    license_url: str = "",
 ) -> None:
     """Upload collection.json, README.md, AGENTS.md and a default style for one layer.
 
@@ -400,11 +457,15 @@ def finalize_layer(
     `info` is the PMTiles/COG's (WGS84 bbox, vector layer names);
     `table_info` the GeoParquet's schema, if the layer has one.
     `host_name`/`host_email` customise the `host` provider, whose url is
-    the bucket's (see host_provider). Best-effort: a
+    the bucket's (see host_provider). `license_url` is where an "other"
+    license's terms live; without one, a LICENSE.md saying the terms
+    aren't specified is written instead (see license_link). Best-effort: a
     failure here shouldn't undo the conversion that already succeeded and
     already landed in S3.
     """
     info = info or {}
+    license_id = normalize_license(license_id)
+    license_url = license_url if license_id == "other" else ""
     bbox = info.get("bbox")
     layer_names = info.get("layers") or [layer_id]
     visual = next((a for a in data_assets if a["role"] == "visual"), data_assets[0])
@@ -431,6 +492,7 @@ def finalize_layer(
             host=host_provider(s3_client.bucket_url, name=host_name, email=host_email),
             pmtiles_layers=layer_names if kind == "pmtiles" else None,
             table_info=table_info,
+            license_url=license_url,
         )
         readme = build_readme(
             title=title,
@@ -440,10 +502,11 @@ def finalize_layer(
             layer_names=layer_names if kind == "pmtiles" else None,
             bbox=bbox,
             table_info=table_info,
+            license_url=license_url,
         )
         agents = build_agents_md(title=title, layer_id=layer_id, kind=kind, data_assets=data_assets)
 
-        for suffix, body, content_type in (
+        files = [
             ("collection.json", json.dumps(collection, indent=2), "application/json"),
             ("README.md", readme, "text/markdown"),
             ("AGENTS.md", agents, "text/markdown"),
@@ -452,7 +515,13 @@ def finalize_layer(
                 json.dumps(style, indent=2),
                 "application/vnd.mapbox.style+json",
             ),
-        ):
+        ]
+        needs_license_file = license_id == "other" and not license_url
+        if needs_license_file:
+            files.append(
+                (UNSPECIFIED_LICENSE_FILE, build_unspecified_license_md(title), "text/markdown")
+            )
+        for suffix, body, content_type in files:
             s3_client.put_object(
                 key=f"{folder}/{suffix}",
                 body=body.encode("utf-8"),
@@ -460,6 +529,11 @@ def finalize_layer(
             )
 
         ensure_root_catalog(s3_client, folder=folder, title=title)
+        if not needs_license_file:
+            # A re-publish into a folder that used to need one: don't leave a
+            # stale "not specified" notice next to a now-known license.
+            with contextlib.suppress(Exception):
+                s3_client.delete_object(f"{folder}/{UNSPECIFIED_LICENSE_FILE}")
     except Exception:
         logger.exception(
             "Failed to finalize Portolan layer %r (data file was still uploaded)", layer_id

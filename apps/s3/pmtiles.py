@@ -163,6 +163,7 @@ def start_conversion(
     user,
     companion_files=(),
     license_id=portolan.DEFAULT_LICENSE,
+    license_url="",
 ):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
@@ -182,6 +183,7 @@ def start_conversion(
         output_key=output_key(key),
         input_size=input_size,
         license=license_id,
+        license_url=license_url,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
@@ -217,7 +219,7 @@ def start_conversion(
 
 
 def inspect_geopackage(
-    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE
+    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE, license_url=""
 ):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
@@ -247,6 +249,7 @@ def inspect_geopackage(
         input_size=uploaded_file.size,
         message="Waiting for layer selection",
         license=license_id,
+        license_url=license_url,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)

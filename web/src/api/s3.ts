@@ -185,7 +185,9 @@ export async function uploadToS3(
   subfolder?: boolean,
   prefix?: string,
   companionFiles: File[] = [],
-  license?: string
+  license?: string,
+  // Terms of an "other" license (sent as the collection's rel=license link).
+  licenseUrl?: string
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -207,6 +209,9 @@ export async function uploadToS3(
   }
   if (license) {
     formData.append('license', license)
+  }
+  if (licenseUrl) {
+    formData.append('licenseUrl', licenseUrl)
   }
 
   return new Promise((resolve, reject) => {
@@ -255,12 +260,14 @@ export async function inspectGeoPackage(
   connectionId: string,
   file: File,
   key?: string,
-  license?: string
+  license?: string,
+  licenseUrl?: string
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
   if (key) formData.append('key', key)
   if (license) formData.append('license', license)
+  if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }

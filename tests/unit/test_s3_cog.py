@@ -158,6 +158,67 @@ def test_upload_accepts_chosen_license(settings, tmp_path):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "license_id, license_url, expected",
+    [
+        # "other" keeps its URL (the terms its rel=license link points at)...
+        ("other", " https://example.org/terms ", ("other", "https://example.org/terms")),
+        # ...an SPDX id needs none, so any URL sent along is dropped...
+        ("CC-BY-4.0", "https://example.org/terms", ("CC-BY-4.0", "")),
+        # ...and the forbidden "proprietary" (older clients) becomes "other".
+        ("proprietary", "", ("other", "")),
+    ],
+)
+def test_upload_records_license_url(settings, tmp_path, license_id, license_url, expected):
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    api = APIClient()
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    with (
+        patch("apps.s3.cog.get_s3_client") as get_client,
+        patch("apps.s3.views.get_s3_client", get_client),
+        patch("apps.s3.cog.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        response = api.post(
+            "/api/s3/upload/s3-one",
+            {
+                "file": tiff_file(),
+                "convert": "true",
+                "targetFormat": "cog",
+                "key": "folder/raster.tif",
+                "license": license_id,
+                "licenseUrl": license_url,
+            },
+            format="multipart",
+        )
+    job = CngLiteJob.objects.get(pk=response.json()["conversionJobId"])
+    assert (job.license, job.license_url) == expected
+
+
+@pytest.mark.django_db
+def test_upload_rejects_invalid_license_url(settings, tmp_path):
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    api = APIClient()
+    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    with patch("apps.s3.views.get_s3_client"):
+        response = api.post(
+            "/api/s3/upload/s3-one",
+            {
+                "file": tiff_file(),
+                "convert": "true",
+                "targetFormat": "cog",
+                "license": "other",
+                "licenseUrl": "javascript:alert(1)",
+            },
+            format="multipart",
+        )
+    assert response.status_code == 400
+    assert not CngLiteJob.objects.exists()
+
+
+@pytest.mark.django_db
 def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)

@@ -320,6 +320,7 @@ def run_conversion(
                     kind=kind,
                     data_assets=data_assets,
                     license_id=job.license,
+                    license_url=job.license_url,
                     provider_name=provider_name,
                     source_name=job.source_name,
                     info=info,

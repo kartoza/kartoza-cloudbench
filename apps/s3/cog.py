@@ -88,7 +88,9 @@ def prepare_tiff(uploaded_file, destination):
             output.write(chunk)
 
 
-def start_conversion(uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE):
+def start_conversion(
+    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE, license_url=""
+):
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
@@ -104,6 +106,7 @@ def start_conversion(uploaded_file, key, connection_id, user, license_id=portola
         output_key=output_key(key),
         input_size=uploaded_file.size,
         license=license_id,
+        license_url=license_url,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
