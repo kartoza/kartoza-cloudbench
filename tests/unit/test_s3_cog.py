@@ -194,7 +194,7 @@ def cog_job(settings, tmp_path, owner):
 @pytest.mark.django_db
 @pytest.mark.parametrize("outcome", ["success", "failed", "bad-magic"])
 def test_cog_conversion_pipeline(cog_job, settings, outcome):
-    s3_client = Mock()
+    s3_client = Mock(bucket_url="http://minio:9000/bucket")
     s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.tif"
     uploaded = []
     s3_client.client.upload_fileobj.side_effect = lambda source, bucket, key, **kw: uploaded.append(

@@ -12,6 +12,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, cast
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,24 @@ def prettify(name: str) -> str:
     return " ".join(
         word if not word.islower() and not word.isupper() else word.capitalize() for word in words
     )
+
+
+def host_provider(bucket_url: str, name: str = "", email: str = "") -> dict:
+    """The collection's `host` provider: where its data is served from.
+
+    Portolan requires exactly one, with a `url` or `email` to reach it —
+    the bucket URL always gives it a url. `name` defaults to the
+    endpoint's hostname; `email` is an optional contact (see settings
+    PORTOLAN_HOST_NAME / PORTOLAN_HOST_EMAIL).
+    """
+    provider = {
+        "name": name or urlparse(bucket_url).hostname or bucket_url,
+        "roles": ["host"],
+        "url": bucket_url,
+    }
+    if email:
+        provider["email"] = email
+    return provider
 
 
 def _now_iso() -> str:
@@ -119,6 +138,7 @@ def build_collection_json(
     data_assets: list,
     bbox: list | None,
     root_relative_path: str,
+    host: dict | None = None,
     style_filename: str = "default.json",
     pmtiles_layers: list | None = None,
     table_info: dict | None = None,
@@ -130,7 +150,9 @@ def build_collection_json(
     rendering derivative.
 
     `table_info` ({'columns', 'rowCount'}) describes the GeoParquet file's
-    schema, as the STAC table extension's `table:columns`."""
+    schema, as the STAC table extension's `table:columns`. `host` is the
+    `host` provider (see host_provider), alongside the uploader as
+    `producer`."""
     bbox = list(bbox) if bbox else [-180.0, -90.0, 180.0, 90.0]
     # The renderable one drives the style/pmtiles link — "visual" if there
     # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
@@ -196,7 +218,10 @@ def build_collection_json(
         "title": title,
         "description": description,
         "license": license_id,
-        "providers": [{"name": provider_name, "roles": ["producer"]}],
+        "providers": [
+            {"name": provider_name, "roles": ["producer"]},
+            *([host] if host else []),
+        ],
         "extent": {
             "spatial": {"bbox": [bbox]},
             "temporal": {"interval": [[_now_iso(), None]]},
@@ -365,13 +390,17 @@ def finalize_layer(
     source_name: str,
     info: dict | None,
     table_info: dict | None = None,
+    host_name: str = "",
+    host_email: str = "",
 ) -> None:
     """Upload collection.json, README.md, AGENTS.md and a default style for one layer.
 
     `data_assets` is [{'filename', 'role', 'media_type'?}, ...] for every
     asset the layer's data file(s) already uploaded under `folder`.
     `info` is the PMTiles/COG's (WGS84 bbox, vector layer names);
-    `table_info` the GeoParquet's schema, if the layer has one. Best-effort: a
+    `table_info` the GeoParquet's schema, if the layer has one.
+    `host_name`/`host_email` customise the `host` provider, whose url is
+    the bucket's (see host_provider). Best-effort: a
     failure here shouldn't undo the conversion that already succeeded and
     already landed in S3.
     """
@@ -399,6 +428,7 @@ def finalize_layer(
             data_assets=data_assets,
             bbox=bbox,
             root_relative_path=root_relative_path,
+            host=host_provider(s3_client.bucket_url, name=host_name, email=host_email),
             pmtiles_layers=layer_names if kind == "pmtiles" else None,
             table_info=table_info,
         )

@@ -195,6 +195,13 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 COOP_COEP_ENABLED = False
 
 # CloudBench specific settings
+# The `host` provider written into every published layer's Portolan
+# collection.json (apps.s3.portolan.host_provider): its url is always the
+# layer's bucket URL; the name defaults to that endpoint's hostname, and the
+# contact email is the S3 connection's own (S3Connection.contact_email),
+# falling back to PORTOLAN_HOST_EMAIL — omitted when neither is set.
+PORTOLAN_HOST_NAME = os.environ.get("PORTOLAN_HOST_NAME", "")
+PORTOLAN_HOST_EMAIL = os.environ.get("PORTOLAN_HOST_EMAIL", "")
 CLOUDNATIVEGIS_URL = os.environ.get("CLOUDNATIVEGIS_URL", "http://localhost:8000").rstrip("/")
 CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
     1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800"))

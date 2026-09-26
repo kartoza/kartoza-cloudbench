@@ -33,6 +33,9 @@ class S3Connection(models.Model):
     region = models.CharField(max_length=100, blank=True, default="")
     use_ssl = models.BooleanField(default=True)
     path_style = models.BooleanField(default=True)
+    # Contact for this bucket's published data: the `host` provider email in
+    # its Portolan collections. Blank falls back to settings.PORTOLAN_HOST_EMAIL.
+    contact_email = models.EmailField(blank=True, default="")
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

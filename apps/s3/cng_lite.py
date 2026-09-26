@@ -15,13 +15,14 @@ from pathlib import Path, PurePosixPath
 import httpx
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.utils import timezone
 
 from . import portolan
 from .client import get_s3_client
 from .geopackage import is_geopackage
-from .models import CngLiteJob, LayerCollection, LayerCollectionItem
+from .models import CngLiteJob, LayerCollection, LayerCollectionItem, S3Connection
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,15 @@ def _create_collection(job, items):
         logger.exception(
             "Job %s: failed to create a layer collection (files were still uploaded)", job.id
         )
+
+
+def host_contact_email(connection_id):
+    """The Portolan `host` contact: the connection's own, else the server default."""
+    try:
+        connection = S3Connection.objects.filter(pk=connection_id).first()
+    except (ValueError, ValidationError):
+        connection = None
+    return (connection.contact_email if connection else "") or settings.PORTOLAN_HOST_EMAIL
 
 
 def cng_lite_headers():
@@ -264,6 +274,7 @@ def run_conversion(
             base_prefix = str(PurePosixPath(job.output_key).parent)
             base_prefix = "" if base_prefix in ("", ".") else base_prefix
             provider_name = _provider_name(owner)
+            host_email = host_contact_email(job.connection_id)
 
             collection_items = []
             output_keys = []
@@ -313,6 +324,8 @@ def run_conversion(
                     source_name=job.source_name,
                     info=info,
                     table_info=table_info,
+                    host_name=settings.PORTOLAN_HOST_NAME,
+                    host_email=host_email,
                 )
                 # The "visual" (renderable) asset is what Map Explorer opens —
                 # a plain PMTiles layer has only that; a COG layer's other

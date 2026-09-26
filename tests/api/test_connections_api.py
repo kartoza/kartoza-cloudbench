@@ -188,6 +188,48 @@ class TestS3ConnectionsAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_contact_email_is_saved_updated_and_cleared(self, api_client: APIClient) -> None:
+        """The optional contact email round-trips; blank on edit clears it."""
+        conn_id = api_client.post(
+            "/api/s3/connections",
+            {
+                "name": "Test MinIO",
+                "endpoint": "localhost:9000",
+                "bucket": "test-bucket",
+                "contactEmail": " data@example.org ",
+            },
+            format="json",
+        ).json()["id"]
+
+        def contact_email():
+            detail = api_client.get(f"/api/s3/connections/{conn_id}").json()
+            return detail["connection"]["contactEmail"]
+
+        assert contact_email() == "data@example.org"
+        assert api_client.get("/api/s3/connections").json()[0]["contactEmail"] == (
+            "data@example.org"
+        )
+
+        # An edit that doesn't mention it leaves it alone...
+        api_client.put(f"/api/s3/connections/{conn_id}", {"name": "Renamed"}, format="json")
+        assert contact_email() == "data@example.org"
+        # ...while an explicit blank clears it (falling back to the server default).
+        api_client.put(f"/api/s3/connections/{conn_id}", {"contactEmail": ""}, format="json")
+        assert contact_email() == ""
+
+    def test_invalid_contact_email_is_rejected(self, api_client: APIClient) -> None:
+        payload = {"name": "Test MinIO", "endpoint": "localhost:9000", "bucket": "b"}
+        response = api_client.post(
+            "/api/s3/connections", {**payload, "contactEmail": "not-an-email"}, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        conn_id = api_client.post("/api/s3/connections", payload, format="json").json()["id"]
+        response = api_client.put(
+            f"/api/s3/connections/{conn_id}", {"contactEmail": "nope@"}, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_delete_s3_connection(self, api_client: APIClient) -> None:
         """Test deleting an S3 connection."""
         # Create first

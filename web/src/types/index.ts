@@ -538,6 +538,9 @@ export interface S3Connection {
   region?: string
   useSSL: boolean
   pathStyle: boolean
+  // Published as the host contact in this bucket's Portolan catalog; blank
+  // means the server-wide default (PORTOLAN_HOST_EMAIL).
+  contactEmail?: string
 }
 
 export interface S3ConnectionCreate {
@@ -549,6 +552,7 @@ export interface S3ConnectionCreate {
   region?: string
   useSSL: boolean
   pathStyle: boolean
+  contactEmail?: string
 }
 
 // Testing an edited connection may omit the keys; the backend then uses the
