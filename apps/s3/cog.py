@@ -34,6 +34,13 @@ def group_results(job, results):
     groups = {}
     order = []
     for item in results:
+        if portolan.is_thumbnail_result(item["name"]):
+            # "<stem>_cog_thumbnail.png" belongs to "<stem>_cog.tif"'s layer.
+            base = portolan.thumbnail_stem(item["name"]).removesuffix("_cog")
+            groups.setdefault(base, {})["thumbnail"] = item
+            if base not in order:
+                order.append(base)
+            continue
         stem = PurePosixPath(item["name"]).stem
         is_3857 = stem.endswith("_3857")
         base = stem[: -len("_3857")] if is_3857 else stem
@@ -62,6 +69,8 @@ def group_results(job, results):
                     "role": "visual",
                 }
             )
+        if "thumbnail" in groups[base]:
+            assets.append(portolan.thumbnail_asset(groups[base]["thumbnail"]))
         layers.append({"layer_id": layer_id, "title": title, "assets": assets})
     return layers
 
@@ -139,7 +148,10 @@ def start_conversion(
     return job
 
 
-def validate_cog(output, name=""):  # noqa: ARG001 - shared validate_result signature
+def validate_cog(output, name=""):
+    """A COG, or the thumbnail rendered alongside it."""
+    if portolan.is_thumbnail_result(name):
+        return output.read(8) == b"\x89PNG\r\n\x1a\n"
     return output.read(4) in TIFF_MAGIC
 
 
@@ -182,5 +194,8 @@ def run_conversion(job_id):
         # Only set when confirmed via start_geopackage_conversion (a
         # direct GeoPackage upload with targetFormat=cog converts every
         # raster table, same as before).
-        build_extra_payload=lambda job: {"tables": job.layers} if job.layers else None,
+        build_extra_payload=lambda job: {
+            "thumbnail": True,
+            **({"tables": job.layers} if job.layers else {}),
+        },
     )

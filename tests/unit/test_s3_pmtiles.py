@@ -89,6 +89,27 @@ def test_group_results_pairs_geoparquet_with_pmtiles():
     ]
 
 
+def test_group_results_attaches_thumbnails_to_their_layer():
+    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
+    results = [
+        {"name": "roads_thumbnail.png", "info": {}},
+        {"name": "roads.parquet", "info": {}},
+        {"name": "roads.pmtiles", "info": {}},
+        {"name": "rivers.parquet", "info": {}},
+        {"name": "rivers.pmtiles", "info": {}},
+    ]
+    layers = group_results(job, results)
+    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
+    # The thumbnail comes last, so the data/visual assets still lead.
+    assert [(a["role"], a["filename"]) for a in layers[0]["assets"]] == [
+        ("data", "roads.parquet"),
+        ("visual", "roads.pmtiles"),
+        ("thumbnail", "thumbnail.png"),
+    ]
+    # A layer whose thumbnail didn't render simply has none.
+    assert [a["role"] for a in layers[1]["assets"]] == ["data", "visual"]
+
+
 def test_group_results_geopackage_uses_layer_names():
     job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
     results = [{"name": "roads.pmtiles", "info": {}}, {"name": "rivers.pmtiles", "info": {}}]
@@ -371,13 +392,17 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
     s3_client.client.upload_fileobj.side_effect = upload
     columns = [{"name": "name", "type": "string"}, {"name": "geometry", "type": "binary"}]
     results = {
+        # cng-lite lists the thumbnail first; its empty info mustn't win.
+        "output_thumbnail.png": (b"\x89PNG\r\n\x1a\nfixture", {}),
         "output.parquet": (parquet_content, {"columns": columns}),
         "output.pmtiles": (b"PMTiles\x03fixture", {"bbox": [1, 2, 3, 4], "layers": ["default"]}),
     }
+    submitted = []
 
     def respond(request):
         path = request.url.path
         if path == "/api/v1/pmtiles":
+            submitted.append(json.loads(request.content))
             return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
         if path == "/api/v1/jobs/cng-job-1":
             return httpx.Response(
@@ -412,19 +437,29 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
         assert conversion_job.status == "failed"
         return
     assert conversion_job.status == "completed"
+    assert submitted[0]["thumbnail"] is True
     assert uploaded == {
         "folder/roads/roads.parquet": "application/vnd.apache.parquet",
         "folder/roads/roads.pmtiles": "application/vnd.pmtiles",
+        "folder/roads/thumbnail.png": "image/png",
     }
     assert conversion_job.to_dict()["outputPaths"] == [
         "s3://bucket/folder/roads/roads.parquet",
         "s3://bucket/folder/roads/roads.pmtiles",
+        "s3://bucket/folder/roads/thumbnail.png",
     ]
     written = {
         call.kwargs["key"]: call.kwargs["body"] for call in s3_client.put_object.call_args_list
     }
     collection = json.loads(written["folder/roads/collection.json"])
     assert collection["assets"]["data"]["href"] == "./roads.parquet"
+    assert collection["assets"]["thumbnail"] == {
+        "href": "./thumbnail.png",
+        "type": "image/png",
+        "title": "Roads thumbnail",
+        "roles": ["thumbnail"],
+    }
+    assert b"![Roads](./thumbnail.png)" in written["folder/roads/README.md"]
     assert collection["table:columns"] == columns
     # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
     assert collection["extent"]["spatial"]["bbox"] == [[1, 2, 3, 4]]
