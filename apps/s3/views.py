@@ -23,7 +23,7 @@ from urllib.parse import quote
 import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
+from django.core.validators import URLValidator, validate_email
 from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.response import Response
@@ -61,6 +61,24 @@ def _get_owned_connection(request, conn_id):
         return S3Connection.objects.filter(owner=request.user, id=conn_id).first()
     except (ValueError, ValidationError):
         return None
+
+
+def _requested_license(data):
+    """(license id, license URL) from an upload request.
+
+    The id is normalised for Portolan (blank or the forbidden "proprietary"
+    become "other"); the URL — only kept for "other", the one license that
+    needs a link — is "" if blank, or None if it isn't a valid http(s) URL.
+    """
+    license_id = portolan.normalize_license(data.get("license"))
+    license_url = (data.get("licenseUrl") or "").strip()
+    if license_id != "other" or not license_url:
+        return license_id, ""
+    try:
+        URLValidator(schemes=["http", "https"])(license_url)
+    except ValidationError:
+        return license_id, None
+    return license_id, license_url
 
 
 def _clean_contact_email(value):
@@ -894,7 +912,12 @@ class S3UploadView(APIView):
         try:
             client = get_s3_client(conn_id, request.user)
             target_format = request.data.get("targetFormat")
-            license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
+            license_id, license_url = _requested_license(request.data)
+            if license_url is None:
+                return Response(
+                    {"error": "License URL must be a valid http(s) URL"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if str(request.data.get("convert", "false")).lower() == "true" and target_format in (
                 "pmtiles",
                 "cog",
@@ -908,6 +931,7 @@ class S3UploadView(APIView):
                             request.user,
                             companion_files,
                             license_id,
+                            license_url,
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -917,7 +941,7 @@ class S3UploadView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
                         job = start_cog_conversion(
-                            uploaded_file, key, conn_id, request.user, license_id
+                            uploaded_file, key, conn_id, request.user, license_id, license_url
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                 except ValueError as exc:
@@ -987,10 +1011,15 @@ class S3GeoPackageInspectView(APIView):
             return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
         uploaded_file = request.FILES["file"]
         key = request.data.get("key", uploaded_file.name)
-        license_id = request.data.get("license") or portolan.DEFAULT_LICENSE
+        license_id, license_url = _requested_license(request.data)
+        if license_url is None:
+            return Response(
+                {"error": "License URL must be a valid http(s) URL"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             job, layers, raster_tables = inspect_geopackage(
-                uploaded_file, key, conn_id, request.user, license_id
+                uploaded_file, key, conn_id, request.user, license_id, license_url
             )
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

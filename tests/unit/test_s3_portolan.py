@@ -1,5 +1,8 @@
 """Portolan collection generation for converted layers."""
 
+import json
+from unittest.mock import Mock
+
 import pytest
 
 from apps.s3 import portolan
@@ -16,12 +19,14 @@ VECTOR_ASSETS = [
 ]
 
 
-def collection_for(data_assets, kind="pmtiles", table_info=None, host=None):
+def collection_for(
+    data_assets, kind="pmtiles", table_info=None, host=None, license_id="CC-BY-4.0", license_url=""
+):
     return portolan.build_collection_json(
         layer_id="roads",
         title="Roads",
         description="Roads, uploaded via CloudBench.",
-        license_id="CC-BY-4.0",
+        license_id=license_id,
         provider_name="admin",
         kind=kind,
         data_assets=data_assets,
@@ -30,6 +35,7 @@ def collection_for(data_assets, kind="pmtiles", table_info=None, host=None):
         pmtiles_layers=["default"] if kind == "pmtiles" else None,
         table_info=table_info,
         host=host,
+        license_url=license_url,
     )
 
 
@@ -157,3 +163,100 @@ def test_host_contact_email_prefers_connection_then_setting(
 def test_host_contact_email_falls_back_for_unknown_connections(settings, connection_id):
     settings.PORTOLAN_HOST_EMAIL = "info@kartoza.com"
     assert host_contact_email(connection_id) == "info@kartoza.com"
+
+
+def license_links(collection):
+    return [link for link in collection["links"] if link["rel"] == "license"]
+
+
+def test_other_license_links_to_its_url():
+    collection = collection_for(
+        VECTOR_ASSETS, license_id="other", license_url="https://example.org/terms"
+    )
+    assert collection["license"] == "other"
+    assert license_links(collection) == [
+        {
+            "rel": "license",
+            "href": "https://example.org/terms",
+            "type": "text/html",
+            "title": "License",
+        }
+    ]
+
+
+def test_other_license_without_url_links_to_generated_license_file():
+    collection = collection_for(VECTOR_ASSETS, license_id="other")
+    assert license_links(collection) == [
+        {
+            "rel": "license",
+            "href": "./LICENSE.md",
+            "type": "text/markdown",
+            "title": "License (not specified)",
+        }
+    ]
+
+
+def test_spdx_license_needs_no_license_link():
+    assert license_links(collection_for(VECTOR_ASSETS, license_id="CC-BY-4.0")) == []
+
+
+@pytest.mark.parametrize(
+    "license_id, expected",
+    [("proprietary", "other"), ("", "other"), (None, "other"), (" CC0-1.0 ", "CC0-1.0")],
+)
+def test_normalize_license(license_id, expected):
+    assert portolan.normalize_license(license_id) == expected
+
+
+def test_proprietary_is_not_offered():
+    assert "proprietary" not in {choice["id"] for choice in portolan.LICENSE_CHOICES}
+
+
+def finalize(s3_client, license_id, license_url=""):
+    portolan.finalize_layer(
+        s3_client,
+        folder="roads",
+        layer_id="roads",
+        title="Roads",
+        kind="pmtiles",
+        data_assets=VECTOR_ASSETS,
+        license_id=license_id,
+        provider_name="admin",
+        source_name="roads.zip",
+        info={"bbox": [1, 2, 3, 4], "layers": ["default"]},
+        license_url=license_url,
+    )
+    return {call.kwargs["key"]: call.kwargs["body"] for call in s3_client.put_object.call_args_list}
+
+
+def publish_target():
+    s3_client = Mock(bucket_url="http://minio:9000/bucket")
+    s3_client.get_object.side_effect = Exception("no catalog.json yet")
+    return s3_client
+
+
+def test_finalize_writes_license_file_when_terms_are_unknown():
+    s3_client = publish_target()
+    written = finalize(s3_client, "proprietary")  # legacy value: published as "other"
+
+    assert b"was not specified" in written["roads/LICENSE.md"]
+    assert b"not specified" in written["roads/README.md"]
+    collection = json.loads(written["roads/collection.json"])
+    assert collection["license"] == "other"
+    assert license_links(collection)[0]["href"] == "./LICENSE.md"
+    s3_client.delete_object.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "license_id, license_url",
+    [("other", "https://example.org/terms"), ("CC-BY-4.0", "https://ignored.example.org")],
+)
+def test_finalize_removes_stale_license_file_once_terms_are_known(license_id, license_url):
+    s3_client = publish_target()
+    written = finalize(s3_client, license_id, license_url)
+
+    assert "roads/LICENSE.md" not in written
+    s3_client.delete_object.assert_called_once_with("roads/LICENSE.md")
+    collection = json.loads(written["roads/collection.json"])
+    expected = [license_url] if license_id == "other" else []
+    assert [link["href"] for link in license_links(collection)] == expected

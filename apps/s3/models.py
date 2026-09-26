@@ -71,6 +71,9 @@ class CngLiteJob(models.Model):
     # SPDX id (or "other") the user picked at upload time, carried through
     # to the generated Portolan collection.json — see apps.s3.portolan.
     license = models.CharField(max_length=100, default="other", blank=True)
+    # Where an "other" license's terms live, written as the collection's
+    # rel=license link (blank: a generated LICENSE.md says they're unknown).
+    license_url = models.URLField(max_length=2000, blank=True, default="")
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,
