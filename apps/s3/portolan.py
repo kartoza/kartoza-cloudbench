@@ -367,10 +367,12 @@ def build_readme(
 
 def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) -> str:
     file_lines = "\n".join(
-        f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
-        if asset["role"] == "thumbnail"
-        else f"- Data file: `./{asset['filename']}` "
-        f"({_asset_media_type(asset, kind)}, {asset['role']})"
+        (
+            f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
+            if asset["role"] == "thumbnail"
+            else f"- Data file: `./{asset['filename']}` "
+            f"({_asset_media_type(asset, kind)}, {asset['role']})"
+        )
         for asset in data_assets
     )
     geoparquet = next(
