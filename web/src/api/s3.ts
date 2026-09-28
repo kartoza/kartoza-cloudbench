@@ -320,3 +320,55 @@ export async function getS3PresignedURL(
 export const getDuckDBTableInfo = getS3DuckDBTableInfo
 export const executeDuckDBQuery = executeS3DuckDBQuery
 export const executeDuckDBQueryAsGeoJSON = executeS3DuckDBQueryAsGeoJSON
+
+// Portolan checksum verification: re-hash a published layer's files and
+// compare them with the file:checksum/file:size in its collection.json.
+export interface PortolanLayerRef {
+  folder: string
+  title: string
+}
+
+export interface PortolanFileCheck {
+  name: string
+  key: string
+  status: 'ok' | 'mismatch' | 'missing'
+  expectedChecksum?: string
+  expectedSize?: number
+  actualChecksum?: string
+  actualSize?: number
+}
+
+export interface PortolanLayerCheck {
+  folder: string
+  title: string
+  // unverifiable: published before checksums; unreadable: no valid collection.json
+  status: 'ok' | 'mismatch' | 'unverifiable' | 'unreadable'
+  files: PortolanFileCheck[]
+}
+
+export async function listPortolanLayers(connectionId: string): Promise<PortolanLayerRef[]> {
+  const response = await fetch(`${API_BASE}/s3/portolan/layers/${encodeURIComponent(connectionId)}`)
+  const data = await handleResponse<{ layers: PortolanLayerRef[] }>(response)
+  return data.layers
+}
+
+// Record checksums for a layer published before they existed, from its files
+// as they are now; the server refuses (409) if it already has checksums.
+// Resolves to the layer's verification result afterwards.
+export async function recordPortolanChecksums(connectionId: string, folder: string): Promise<PortolanLayerCheck> {
+  const response = await fetch(`${API_BASE}/s3/portolan/record/${encodeURIComponent(connectionId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder }),
+  })
+  return handleResponse<PortolanLayerCheck>(response)
+}
+
+export async function verifyPortolanLayer(connectionId: string, folder: string): Promise<PortolanLayerCheck> {
+  const response = await fetch(`${API_BASE}/s3/portolan/verify/${encodeURIComponent(connectionId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder }),
+  })
+  return handleResponse<PortolanLayerCheck>(response)
+}

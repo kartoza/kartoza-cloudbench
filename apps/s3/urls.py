@@ -98,6 +98,22 @@ urlpatterns = [
         views.S3GeoPackageConvertView.as_view(),
         name="s3-gpkg-convert",
     ),
+    # Portolan catalog checksum verification
+    path(
+        "s3/portolan/layers/<str:conn_id>",
+        views.S3PortolanLayersView.as_view(),
+        name="s3-portolan-layers",
+    ),
+    path(
+        "s3/portolan/verify/<str:conn_id>",
+        views.S3PortolanVerifyView.as_view(),
+        name="s3-portolan-verify",
+    ),
+    path(
+        "s3/portolan/record/<str:conn_id>",
+        views.S3PortolanRecordView.as_view(),
+        name="s3-portolan-record",
+    ),
     # Layer collections (grouped layers from one GeoPackage upload)
     path(
         "s3/collections",
