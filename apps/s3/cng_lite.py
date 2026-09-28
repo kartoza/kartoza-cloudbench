@@ -127,8 +127,7 @@ def _clear_for_replace(job, s3_client):
 
 
 def _staged_geopackage(job):
-    """The GeoPackage the upload staged on local disk, if it's still there.
-    """
+    """The GeoPackage the upload staged on local disk, if it's still there."""
     for kind in ("pmtiles", "cog"):
         path = job_directory(kind, job.id) / "source.gpkg"
         if path.exists():

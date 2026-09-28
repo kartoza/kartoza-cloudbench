@@ -437,11 +437,13 @@ def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) 
         (
             f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
             if asset["role"] == "thumbnail"
-            else f"- Source: `{_asset_href(asset['filename'])}` (the original upload this "
-            "layer was converted from; not cloud-native - query the data file instead)"
-            if asset["role"] == "source"
-            else f"- Data file: `./{asset['filename']}` "
-            f"({_asset_media_type(asset, kind)}, {asset['role']})"
+            else (
+                f"- Source: `{_asset_href(asset['filename'])}` (the original upload this "
+                "layer was converted from; not cloud-native - query the data file instead)"
+                if asset["role"] == "source"
+                else f"- Data file: `./{asset['filename']}` "
+                f"({_asset_media_type(asset, kind)}, {asset['role']})"
+            )
         )
         for asset in data_assets
     )
