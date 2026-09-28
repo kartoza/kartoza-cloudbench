@@ -208,6 +208,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
           {/* App Name */}
           <Heading
             size="md"
+            fontFamily="brand"
             color="gray.800"
             fontWeight="600"
             mr={8}

@@ -13,7 +13,7 @@ import {
   FiEye,
   FiPlus,
 } from 'react-icons/fi'
-import { getNodeIconComponent, getNodeColor } from './utils'
+import { getNodeIconComponent, getNodeColor, treeIndent, TREE_BORDER_PX, TREE_PLACEHOLDER_PL } from './utils'
 import type { DatasetRowProps } from './types'
 
 export function DatasetRow({
@@ -25,8 +25,11 @@ export function DatasetRow({
   onToggleSelect,
   onPublish,
   onPreview,
+  level = 6,
 }: DatasetRowProps) {
-  const hoverBg = useColorModeValue('gray.100', 'gray.600')
+  const hoverBg = useColorModeValue('gray.100', 'whiteAlpha.100')
+  const separatorColor = useColorModeValue('gray.100', 'whiteAlpha.100')
+  const guideColor = useColorModeValue('gray.200', 'whiteAlpha.200')
   const iconType = isCoverage ? 'coverage' : 'featuretype'
   const NodeIcon = getNodeIconComponent(iconType)
   const nodeColor = getNodeColor(iconType)
@@ -34,14 +37,18 @@ export function DatasetRow({
   return (
     <Flex
       align="center"
-      py={1.5}
+      py={1}
       px={2}
-      pl={6}
+      // Icon lines up with sibling rows' icons (past their chevron column).
+      pl={TREE_PLACEHOLDER_PL}
+      ml={treeIndent(level)}
       bg={bg}
+      borderLeft={`${TREE_BORDER_PX}px solid`}
+      borderLeftColor={guideColor}
+      borderBottom="1px solid"
+      borderBottomColor={separatorColor}
       _hover={{ bg: hoverBg }}
-      borderRadius="md"
-      mx={1}
-      my={0.5}
+      mr={1}
       role="group"
     >
       {!isPublished && onToggleSelect && (

@@ -7,6 +7,8 @@ import '@fontsource/nunito/500.css'
 import '@fontsource/nunito/600.css'
 import '@fontsource/nunito/700.css'
 import '@fontsource/nunito/800.css'
+// Roboto: the CloudBench title (theme font "brand"); only the weight it uses.
+import '@fontsource/roboto/600.css'
 import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/600.css'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

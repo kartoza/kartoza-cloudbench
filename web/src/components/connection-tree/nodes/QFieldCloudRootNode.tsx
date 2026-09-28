@@ -7,6 +7,7 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api/client'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { QFieldCloudConnectionNode } from './QFieldCloudConnectionNode'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 export function QFieldCloudRootNode() {
   const nodeId = 'qfieldcloud-root'
@@ -62,7 +63,7 @@ export function QFieldCloudRootNode() {
       {isExpanded && (
         <>
           {!connections || connections.length === 0 ? (
-            <Box px={2} py={3} ml={2 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(2)}>
               <Text color="gray.500" fontSize="sm">
                 No QFieldCloud connections. Click + to add one.
               </Text>

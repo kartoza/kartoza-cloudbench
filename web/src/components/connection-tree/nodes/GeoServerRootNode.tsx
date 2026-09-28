@@ -6,6 +6,7 @@ import { useConnectionStore } from '../../../stores/connectionStore'
 import type { Connection, TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { ConnectionNode } from './ConnectionNode'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 export function GeoServerRootNode() {
   const nodeId = 'geoserver'
@@ -58,7 +59,7 @@ export function GeoServerRootNode() {
       {isExpanded && (
         <>
           {!connections || connections.length === 0 ? (
-            <Box px={2} py={3} ml={2 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(2)}>
               <Text color="gray.500" fontSize="sm">
                 No GeoServer connections found.
               </Text>

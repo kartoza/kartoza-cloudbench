@@ -89,6 +89,8 @@ export interface DatasetRowProps {
   onToggleSelect?: () => void
   onPublish?: () => void
   onPreview?: () => void
+  // Tree depth (see treeIndent); datasets sit under a level-5 store row.
+  level?: number
 }
 
 export interface TreeNodeRowProps {
@@ -133,6 +135,8 @@ export interface S3ConnectionNodeProps {
 export interface S3ObjectNodeProps {
   connectionId: string
   bucket: string
+  // Tree depth: 3 directly under a connection, one more per folder.
+  level?: number
   object: {
     key: string
     size: number
