@@ -1,6 +1,11 @@
 """Builds real STAC JSON (Catalog/Collection/Item) from CloudBench's own
 S3 (PMTiles) and GeoServer (layers) connections.
 
+An S3 bucket with a Portolan catalog.json (as CloudBench publishes) is
+served from it — one Collection per published layer, see
+apps.stac.portolan_layers; a bucket without one falls back to a single
+Collection of the .pmtiles objects found by listing it.
+
 Hierarchy: Catalog (this CloudBench instance) -> Collection (one per S3
 connection whose bucket has .pmtiles objects, or per GeoServer workspace
 that has layers) -> Item (one per PMTiles object / GeoServer layer).
@@ -15,6 +20,8 @@ from apps.core.config import get_config
 from apps.geoserver.client import get_geoserver_client
 from apps.s3.client import get_s3_client
 from apps.s3.models import S3Connection
+
+from . import portolan_layers
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -33,12 +40,15 @@ def gs_collection_id(conn_id: str, workspace: str) -> str:
 def parse_collection_id(collection_id: str) -> tuple[str, str, str | None]:
     """Returns (kind, conn_id, name).
 
-    name is a GeoServer workspace, or None for S3 — an S3 connection is
-    scoped to exactly one bucket, so there's no separate name to parse out.
+    name is a GeoServer workspace; for S3, a Portolan layer's folder
+    ("s3:<conn>:<folder>", see portolan_layers.collection_id), or None for
+    a whole bucket without a catalog.json ("s3:<conn>").
     """
     parts = collection_id.split(":", 2)
     if parts[0] == "s3" and len(parts) == 2:
         return "s3", parts[1], None
+    if parts[0] == "s3" and len(parts) == 3 and parts[2]:
+        return "s3", parts[1], portolan_layers.folder_from_name(parts[2])
     if parts[0] == "gs" and len(parts) == 3:
         return "gs", parts[1], parts[2]
     raise ValueError(f"Unknown collection id: {collection_id}")
@@ -77,10 +87,14 @@ def _list_pmtiles_objects(client) -> list[dict[str, Any]]:
 
 
 def _list_s3_collections(user: "User") -> list[dict[str, Any]]:
-    results = []
+    results: list[dict[str, Any]] = []
     for conn in S3Connection.objects.filter(owner=user):
         try:
             client = get_s3_client(str(conn.id), user)
+            layers = portolan_layers.list_layers(client, str(conn.id))
+            if layers is not None:
+                results.extend(portolan_layers.summary(conn, layer) for layer in layers)
+                continue
             objects = _list_pmtiles_objects(client)
         except Exception:
             continue
@@ -125,6 +139,24 @@ def _list_geoserver_collections(user: "User") -> list[dict[str, Any]]:
     return results
 
 
+def _find_collection(user: "User", collection_id: str) -> dict[str, Any] | None:
+    """A collection's list_collections entry, without listing everything.
+
+    A Portolan layer's collection is looked up in its own bucket only.
+    """
+    try:
+        kind, conn_id, name = parse_collection_id(collection_id)
+    except ValueError:
+        return None
+    if kind == "s3" and name is not None:
+        conn = _get_owned_s3_connection(user, conn_id)
+        if conn is None:
+            return None
+        layer = portolan_layers.find_layer(get_s3_client(conn_id, user), conn_id, name)
+        return portolan_layers.summary(conn, layer) if layer else None
+    return next((c for c in list_collections(user) if c["id"] == collection_id), None)
+
+
 def list_collections(user: "User") -> list[dict[str, Any]]:
     """Every non-empty S3 bucket and GeoServer workspace, as STAC collection summaries."""
     return _list_s3_collections(user) + _list_geoserver_collections(user)
@@ -158,10 +190,18 @@ def build_root_catalog(request, user: "User") -> dict[str, Any]:
     }
 
 
-def build_collection_json(request, user: "User", collection_id: str) -> dict[str, Any] | None:
-    match = next((c for c in list_collections(user) if c["id"] == collection_id), None)
+def build_collection_json(
+    request, user: "User", collection_id: str, match: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """`match` is the collection's list_collections entry, if already at hand."""
+    if match is None:
+        match = _find_collection(user, collection_id)
     if match is None:
         return None
+    if "portolan" in match:
+        _, conn_id, _ = parse_collection_id(collection_id)
+        client = get_s3_client(conn_id, user)
+        return portolan_layers.collection_json(request, client, conn_id, match["portolan"])
 
     self_href = request.build_absolute_uri(f"/api/stac/collections/{collection_id}")
 
@@ -316,6 +356,9 @@ def list_items(request, user: "User", collection_id: str) -> list[dict[str, Any]
         if conn is None:
             return None
         client = get_s3_client(conn_id, user)
+        if name is not None:
+            layer = portolan_layers.find_layer(client, conn_id, name)
+            return [portolan_layers.item(request, client, conn_id, layer)] if layer else None
         objects = _list_pmtiles_objects(client)
         return [_s3_item(request, collection_id, conn, obj, user) for obj in objects]
 
@@ -343,6 +386,12 @@ def get_item(request, user: "User", collection_id: str, item_id: str) -> dict[st
         if conn is None:
             return None
         client = get_s3_client(conn_id, user)
+        if name is not None:
+            layer = portolan_layers.find_layer(client, conn_id, name)
+            if layer is None:
+                return None
+            found = portolan_layers.item(request, client, conn_id, layer)
+            return found if found["id"] == item_id else None
         obj = next((o for o in _list_pmtiles_objects(client) if o["key"] == item_id), None)
         return _s3_item(request, collection_id, conn, obj, user) if obj else None
 
