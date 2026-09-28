@@ -192,9 +192,8 @@ def start_geopackage_conversion(job_id, user, tables):
     return job
 
 
-def run_conversion(job_id, create_collection=True, collection_id=None):
-    """Returns the id of the LayerCollection its layers were grouped into, if any."""
-    return run_cng_lite_conversion(
+def run_conversion(job_id):
+    run_cng_lite_conversion(
         job_id,
         kind=KIND,
         endpoint=ENDPOINT,
@@ -209,6 +208,4 @@ def run_conversion(job_id, create_collection=True, collection_id=None):
             "thumbnail": True,
             **({"tables": job.layers} if job.layers else {}),
         },
-        create_collection=create_collection,
-        collection_id=collection_id,
     )

@@ -204,6 +204,19 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _now_iso_ms() -> str:
+    """Now, to the millisecond - for a catalog's `updated`.
+
+    Anything reading the catalog is cached on its root catalog.json's ETag
+    (the STAC API, Map Explorer's layer groups), and a sub-catalog change
+    only reaches it by rewriting the root with a new `updated`. At
+    one-second resolution, two changes within a second (deleting two of a
+    GeoPackage's layers in a row) left the root byte-identical - same ETag,
+    stale layers served from the cache.
+    """
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
     """`source_layer` must match the PMTiles file's own internal vector
     layer name (from its tippecanoe-written metadata), not the collection
@@ -606,7 +619,7 @@ def _write_catalog(s3_client, catalog: dict, folder: str = "") -> None:
     for doc_link in _ROOT_DOC_LINKS:
         if not any(link.get("href") == doc_link["href"] for link in links):
             links.append(dict(doc_link))
-    catalog["updated"] = _now_iso()
+    catalog["updated"] = _now_iso_ms()
     prefix = f"{folder}/" if folder else ""
     is_root = not folder
     for key, body, content_type in (
@@ -808,11 +821,13 @@ def prune_root_catalog(s3_client, deleted_key: str) -> None:
 
 
 def catalog_collections(s3_client) -> list[dict[str, str]] | None:
-    """[{'folder', 'title'}, ...] for every layer collection in the bucket's catalog.
+    """[{'folder', 'title', 'catalog', 'catalog_title'}, ...] for every layer collection.
 
     Follows child links from the root catalog.json into sub-catalogs (a
-    GeoPackage's layer group). `folder` is relative to the bucket root.
-    None if the bucket has no (readable) root catalog.json.
+    GeoPackage's layer group). `folder` is relative to the bucket root;
+    `catalog` is the folder of the catalog linking it - "" for the root, or
+    its sub-catalog's - and `catalog_title` that catalog's title. None if
+    the bucket has no (readable) root catalog.json.
     """
     root = _load_json(s3_client, CATALOG_KEY)
     if root is None:
@@ -822,13 +837,21 @@ def catalog_collections(s3_client) -> list[dict[str, str]] | None:
 
     def walk(catalog: dict, catalog_folder: str, depth: int) -> None:
         prefix = f"{catalog_folder}/" if catalog_folder else ""
+        catalog_title = catalog.get("title") or catalog_folder
         for link in catalog.get("links", []):
             if link.get("rel") != "child":
                 continue
             path = posixpath.normpath(prefix + str(link.get("href", "")).removeprefix("./"))
             if path.endswith("/collection.json"):
                 folder = path.removesuffix("/collection.json")
-                found.append({"folder": folder, "title": link.get("title") or folder})
+                found.append(
+                    {
+                        "folder": folder,
+                        "title": link.get("title") or folder,
+                        "catalog": catalog_folder,
+                        "catalog_title": catalog_title if catalog_folder else "",
+                    }
+                )
             elif path.endswith(f"/{CATALOG_KEY}") and depth < 4:
                 sub_folder = path.removesuffix(f"/{CATALOG_KEY}")
                 sub_catalog = _load_json(s3_client, path) if sub_folder not in seen else None

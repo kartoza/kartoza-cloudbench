@@ -6,8 +6,8 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.s3 import geopackage_convert
-from apps.s3.cng_lite import _add_to_collection, job_directory
-from apps.s3.models import CngLiteJob, LayerCollection, LayerCollectionItem
+from apps.s3.cng_lite import job_directory
+from apps.s3.models import CngLiteJob
 
 
 @pytest.fixture
@@ -102,10 +102,9 @@ def test_raster_job_runs_after_vector_from_the_moved_source_into_its_group(inspe
         CngLiteJob.objects.filter(pk=job_id).update(
             source_key="maps/castelobranco/source/CasteloBranco.gpkg"
         )
-        return "group-1"
 
-    def raster_run(job_id, collection_id=None):
-        calls.append(("raster", job_id, collection_id))
+    def raster_run(job_id):
+        calls.append(("raster", job_id))
         # By now the raster job reads the source from where the vector job moved it.
         assert CngLiteJob.objects.get(pk=job_id).source_key == (
             "maps/castelobranco/source/CasteloBranco.gpkg"
@@ -117,7 +116,7 @@ def test_raster_job_runs_after_vector_from_the_moved_source_into_its_group(inspe
     ):
         geopackage_convert._run_in_turn(inspected.id, raster.id)
 
-    assert calls == [("vector", inspected.id), ("raster", raster.id, "group-1")]
+    assert calls == [("vector", inspected.id), ("raster", raster.id)]
 
 
 @pytest.mark.django_db
@@ -129,7 +128,7 @@ def test_raster_job_still_runs_if_the_vector_job_blows_up(inspected):
         patch("apps.s3.geopackage_convert.cog.run_conversion") as raster_run,
     ):
         geopackage_convert._run_in_turn(inspected.id, RASTER_ID)
-    raster_run.assert_called_once_with(RASTER_ID, collection_id=None)
+    raster_run.assert_called_once_with(RASTER_ID)
 
 
 @pytest.mark.django_db
@@ -156,18 +155,3 @@ def test_convert_endpoint_accepts_layers_and_tables(inspected):
         )
     assert legacy.status_code == 202
     assert legacy.json()["conversionJobIds"] == [str(inspected.id)]
-
-
-@pytest.mark.django_db
-def test_raster_layers_join_the_vector_jobs_map_explorer_group(inspected):
-    group = LayerCollection.objects.create(
-        owner_id="7", connection_id="conn", bucket="bucket", name="CasteloBranco", source_name="x"
-    )
-    LayerCollectionItem.objects.create(collection=group, name="Roads", key="a/roads.pmtiles")
-    raster = Mock(id="r", kind="cog")
-
-    assert _add_to_collection(group.id, raster, [{"name": "DEM", "key": "a/dem_3857.tif"}])
-    assert sorted(group.items.values_list("name", "format")) == [("DEM", "cog"), ("Roads", "")]
-    # No such group (e.g. the vector half published nothing): the caller makes its own.
-    missing = "00000000-0000-0000-0000-000000000000"
-    assert _add_to_collection(missing, raster, []) is False

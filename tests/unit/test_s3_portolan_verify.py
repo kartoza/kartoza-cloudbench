@@ -99,8 +99,8 @@ def published_bucket():
 
 def test_catalog_layers_lists_every_child_folder():
     assert portolan_verify.catalog_layers(published_bucket()) == [
-        {"folder": "roads", "title": "Roads"},
-        {"folder": "old", "title": "Old"},
+        {"folder": "roads", "title": "Roads", "catalog": "", "catalog_title": ""},
+        {"folder": "old", "title": "Old", "catalog": "", "catalog_title": ""},
     ]
     assert portolan_verify.catalog_layers(FakeBucket({})) == []
 
@@ -292,4 +292,6 @@ def test_catalog_layers_include_geopackage_sub_catalog_layers():
     assert portolan_verify.catalog_layers(bucket)[-1] == {
         "folder": "gpkg/highway",
         "title": "Highway",
+        "catalog": "gpkg",
+        "catalog_title": "gpkg",  # the sub-catalog has no title of its own here
     }

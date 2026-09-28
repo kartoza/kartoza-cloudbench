@@ -64,7 +64,15 @@ def list_layers(client, conn_id: str) -> list[dict[str, Any]] | None:
             collection = json.loads(client.get_object(f"{ref['folder']}/collection.json"))
         except Exception:
             continue
-        layers.append({"folder": ref["folder"], "collection": collection})
+        layers.append(
+            {
+                "folder": ref["folder"],
+                "collection": collection,
+                # The sub-catalog (GeoPackage layer group) holding it; "" for the root.
+                "catalog": ref["catalog"],
+                "catalog_title": ref["catalog_title"],
+            }
+        )
     cache.set(cache_key, layers, CACHE_TTL)
     return layers
 

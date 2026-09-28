@@ -357,9 +357,10 @@ def validate_pmtiles(output, name=""):
     return output.read(7) == b"PMTiles"
 
 
-def run_conversion(job_id, create_collection=True, collection_id=None):
-    """Returns the id of the LayerCollection its layers were grouped into, if any."""
-    return run_cng_lite_conversion(
+def run_conversion(job_id, create_collection=True):  # noqa: ARG001
+    """`create_collection` is no longer used (layer groups come from the catalog;
+    see layer_groups) - still accepted for the portolan_backfill command."""
+    run_cng_lite_conversion(
         job_id,
         kind=KIND,
         endpoint=ENDPOINT,
@@ -371,6 +372,4 @@ def run_conversion(job_id, create_collection=True, collection_id=None):
             **({"layers": job.layers} if job.layers else {}),
         },
         group_results=group_results,
-        create_collection=create_collection,
-        collection_id=collection_id,
     )

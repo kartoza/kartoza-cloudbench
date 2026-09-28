@@ -23,74 +23,13 @@ from django.utils import timezone
 from . import portolan
 from .client import get_s3_client
 from .geopackage import is_geopackage
-from .models import CngLiteJob, LayerCollection, LayerCollectionItem, S3Connection
+from .models import CngLiteJob, S3Connection
 
 logger = logging.getLogger(__name__)
 
 
 def _provider_name(user):
     return user.get_username() or user.email or f"CloudBench user {user.pk}"
-
-
-def _create_collection(job, items):
-    """Groups a job's published layers into a LayerCollection for Map Explorer.
-
-    `items` is [{'name', 'key'}, ...] — one per logical layer, already
-    pointing at its Portolan-published data file. Returns the collection's
-    id (None if nothing was grouped). Best-effort: a failure here shouldn't
-    undo the conversion that already succeeded and already landed in S3.
-    """
-    if not items:
-        return None
-    try:
-        collection = LayerCollection.objects.create(
-            owner_id=job.owner_id,
-            connection_id=job.connection_id,
-            bucket=job.bucket,
-            name=PurePosixPath(job.source_name).stem,
-            source_name=job.source_name,
-        )
-        LayerCollectionItem.objects.bulk_create(
-            [
-                LayerCollectionItem(
-                    collection=collection,
-                    name=item["name"],
-                    key=item["key"],
-                    format=job.kind,
-                )
-                for item in items
-            ]
-        )
-    except Exception:
-        logger.exception(
-            "Job %s: failed to create a layer collection (files were still uploaded)", job.id
-        )
-        return None
-    return collection.id
-
-
-def _add_to_collection(collection_id, job, items):
-    """Add a job's published layers to an existing LayerCollection.
-
-    For the raster half of a GeoPackage converted as both vector layers and
-    raster tables (see geopackage_convert), so the upload stays one group.
-    Returns whether the collection existed to add to.
-    """
-    collection = LayerCollection.objects.filter(pk=collection_id).first()
-    if collection is None:
-        return False
-    try:
-        LayerCollectionItem.objects.bulk_create(
-            [
-                LayerCollectionItem(
-                    collection=collection, name=item["name"], key=item["key"], format=job.kind
-                )
-                for item in items
-            ]
-        )
-    except Exception:
-        logger.exception("Job %s: failed to extend layer collection %s", job.id, collection_id)
-    return True
 
 
 class TargetExists(Exception):
@@ -141,15 +80,12 @@ def check_target(s3_client, key, source_name, replace):
 def _clear_for_replace(job, s3_client):
     """Clear the folder a confirmed-replace upload publishes into.
 
-    Removes everything there (so no stale files - e.g. GeoPackage layers not
-    re-selected - outlive the replacement) and the Map Explorer groups that
-    pointed into it.
+    Removes everything there, so no stale files - e.g. GeoPackage layers not
+    re-selected - outlive the replacement (Map Explorer's layer groups are
+    read from the catalog, so they follow; see layer_groups).
     """
     folder = target_folder(job.output_key, job.source_name)
     s3_client.delete_prefix(f"{folder}/")
-    LayerCollection.objects.filter(
-        connection_id=job.connection_id, items__key__startswith=f"{folder}/"
-    ).distinct().delete()
 
 
 def _staged_geopackage(job):
@@ -359,8 +295,6 @@ def run_conversion(
     output_content_type,
     group_results,
     build_extra_payload=None,
-    create_collection=True,
-    collection_id=None,
 ):
     """Run a conversion job, then publish each result as its own Portolan layer.
 
@@ -376,15 +310,9 @@ def run_conversion(
     Any layers/tables cng-lite skipped (rather than failing the whole job)
     are recorded on `job.error`, even though the job itself still completes.
 
-    `create_collection=False` skips grouping a GeoPackage's layers into a new
-    LayerCollection — for re-running an already-published job (see the
-    portolan_backfill command), whose original collection still exists.
-    `collection_id` adds them to that existing LayerCollection instead (the
-    raster half of a GeoPackage converted both ways; see geopackage_convert).
-
-    Returns the id of the LayerCollection the layers were grouped into, if any.
+    A GeoPackage's layers need no grouping step: its sub-catalog is its
+    layer group (see apps.s3.layer_groups).
     """
-    group_id = None
     close_old_connections()
     directory = job_directory(kind, job_id)
     # Usually already created by the staging step (start_conversion/
@@ -453,12 +381,10 @@ def run_conversion(
             provider_name = _provider_name(owner)
             host_email = host_contact_email(job.connection_id)
 
-            collection_items = []
             output_keys = []
             for layer in layers:
                 folder = f"{base_prefix}/{layer['layer_id']}" if base_prefix else layer["layer_id"]
                 data_assets = []
-                dest_keys = {}
                 info = None
                 table_info = None
                 for asset in layer["assets"]:
@@ -481,7 +407,6 @@ def run_conversion(
                             "file": file_info[asset["item"]["name"]],
                         }
                     )
-                    dest_keys[asset["role"]] = dest_key
                     # A GeoParquet asset's info is its schema (and a bbox in
                     # its own CRS); the WGS84 bbox/zoom/layer names always
                     # come from the PMTiles or COG.
@@ -513,19 +438,6 @@ def run_conversion(
                         else ""
                     ),
                 )
-                # The "visual" (renderable) asset is what Map Explorer opens —
-                # a plain PMTiles layer has only that; a COG layer's other
-                # asset is its original-CRS file, kept for download/GIS use.
-                primary_key = dest_keys.get("visual") or dest_keys.get("data")
-                collection_items.append({"name": layer["title"], "key": primary_key})
-
-        # Only a GeoPackage groups several layers from one upload; a shapefile
-        # or TIFF is a single standalone layer, so it gets no collection.
-        if is_geopackage(job.source_name) and collection_items:
-            if collection_id and _add_to_collection(collection_id, job, collection_items):
-                group_id = collection_id
-            elif create_collection:
-                group_id = _create_collection(job, collection_items)
 
         if layer_errors:
             logger.warning(
@@ -563,4 +475,3 @@ def run_conversion(
     finally:
         shutil.rmtree(directory, ignore_errors=True)
         close_old_connections()
-    return group_id

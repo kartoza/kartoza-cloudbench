@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.s3 import portolan
 from apps.s3.cng_lite import download_result
-from apps.s3.models import CngLiteJob, LayerCollection
+from apps.s3.models import CngLiteJob
 from apps.s3.pmtiles import (
     cancel_geopackage_inspection,
     group_results,
@@ -377,12 +377,6 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         )
         assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", layer_key)
         assert conversion_job.to_dict()["outputPath"] == f"s3://bucket/{layer_key}"
-        # Only a GeoPackage upload is grouped into a collection; a shapefile isn't.
-        if source_name.endswith(".gpkg"):
-            collection = LayerCollection.objects.get()
-            assert collection.items.get().key == layer_key
-        else:
-            assert not LayerCollection.objects.exists()
     else:
         assert conversion_job.status == "failed"
         assert conversion_job.error
