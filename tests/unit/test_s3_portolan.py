@@ -1,5 +1,6 @@
 """Portolan collection generation for converted layers."""
 
+import hashlib
 import json
 from unittest.mock import Mock
 
@@ -372,3 +373,35 @@ def test_default_vector_style_draws_points():
 )
 def test_is_thumbnail_result(name, expected):
     assert portolan.is_thumbnail_result(name) is expected
+
+
+def test_sha256_multihash_prefixes_the_hex_digest():
+    digest = hashlib.sha256(b"roads").digest()
+    checksum = portolan.sha256_multihash(digest)
+    assert checksum == "1220" + digest.hex()
+    assert len(checksum) == 4 + 64
+
+
+CHECKSUMMED_ASSETS = [
+    {**asset, "file": {"checksum": f"1220{'ab' * 32}", "size": 100 + i}}
+    for i, asset in enumerate(VECTOR_ASSETS)
+]
+
+
+def test_assets_and_pmtiles_link_carry_file_checksum_and_size():
+    collection = collection_for(CHECKSUMMED_ASSETS)
+
+    data = collection["assets"]["data"]
+    assert data["file:checksum"] == f"1220{'ab' * 32}"
+    assert data["file:size"] == 100
+    [pmtiles_link] = [link for link in collection["links"] if link["rel"] == "pmtiles"]
+    assert pmtiles_link["file:size"] == 101
+    assert not any(key.startswith("file:") for key in collection["assets"]["style-default"])
+    assert portolan.FILE_SCHEMA in collection["stac_extensions"]
+
+
+def test_no_file_extension_without_checksums():
+    """Layers from before checksums (or assets without them) declare no File extension."""
+    collection = collection_for(VECTOR_ASSETS)
+    assert portolan.FILE_SCHEMA not in collection["stac_extensions"]
+    assert not any(key.startswith("file:") for key in collection["assets"]["data"])
