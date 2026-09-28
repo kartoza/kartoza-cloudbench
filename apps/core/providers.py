@@ -46,7 +46,7 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "description": "S3-compatible object storage (MinIO, AWS S3, etc.)",
         "enabled": True,
         "experimental": False,
-    }
+    },
     # {
     #     "id": "iceberg",
     #     "name": "Apache Iceberg",
