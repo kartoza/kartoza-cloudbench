@@ -41,6 +41,10 @@ import {
   LayerGroupsDashboard,
 } from './dashboards'
 
+// Around every preview panel: the same padding as the overview panels
+// (e.g. S3ConnectionPanel's p={4}), so previews don't run to the edges.
+const PREVIEW_PADDING = 4
+
 export default function MainContent() {
   const selectedNode = useTreeStore((state) => state.selectedNode)
   const activePreview = useUIStore((state) => state.activePreview)
@@ -120,7 +124,7 @@ export default function MainContent() {
   // Show PostgreSQL query panel if active
   if (activePGQuery) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <QueryPanel
           key={`pg-${activePGQuery.serviceName}:${activePGQuery.schemaName || 'public'}:${activePGQuery.tableName || ''}`}
           serviceName={activePGQuery.serviceName}
@@ -136,7 +140,7 @@ export default function MainContent() {
   // Show Jupyter panel if active
   if (activeJupyterPreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <JupyterPanel
           key={`jupyter-${activeJupyterPreview.connectionId}`}
           connectionId={activeJupyterPreview.connectionId}
@@ -153,7 +157,7 @@ export default function MainContent() {
   // Show Iceberg table preview if active
   if (activeIcebergPreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <IcebergTablePreview
           key={`iceberg-${activeIcebergPreview.connectionId}:${activeIcebergPreview.namespace}:${activeIcebergPreview.tableName}`}
           connectionId={activeIcebergPreview.connectionId}
@@ -169,7 +173,7 @@ export default function MainContent() {
   // Show DuckDB query panel if active
   if (activeDuckDBQuery) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <DuckDBQueryPanel
           key={`duckdb-${activeDuckDBQuery.connectionId}:${activeDuckDBQuery.bucketName}:${activeDuckDBQuery.objectKey}`}
           connectionId={activeDuckDBQuery.connectionId}
@@ -185,7 +189,7 @@ export default function MainContent() {
   // Show QGIS preview if active
   if (activeQGISPreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <QGISMapPreview
           key={`qgis-${activeQGISPreview.projectId}`}
           projectId={activeQGISPreview.projectId}
@@ -200,7 +204,7 @@ export default function MainContent() {
   // Key only uses connectionId so the map persists when switching layers
   if (activeGeoNodePreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <GeoNodeMapPreview
           key={`geonode-${activeGeoNodePreview.connectionId}`}
           geonodeUrl={activeGeoNodePreview.geonodeUrl}
@@ -217,7 +221,7 @@ export default function MainContent() {
   // Show S3 preview if active
   if (activeS3Preview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <S3LayerPreview
           key={`s3-${activeS3Preview.connectionId}:${activeS3Preview.bucketName}:${activeS3Preview.objectKey}`}
           connectionId={activeS3Preview.connectionId}
@@ -232,7 +236,7 @@ export default function MainContent() {
   // Show inline PMTiles/COG map preview if active (S3 connection tree)
   if (activeS3MapPreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <S3MapPreview
           key={`s3map-${activeS3MapPreview.connectionId}:${activeS3MapPreview.bucketName}:${activeS3MapPreview.objectKey}`}
           connectionId={activeS3MapPreview.connectionId}
@@ -248,7 +252,7 @@ export default function MainContent() {
   // Show inline markdown/JSON/text preview if active (S3 connection tree)
   if (activeS3TextPreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         <S3TextPreview
           key={`s3text-${activeS3TextPreview.connectionId}:${activeS3TextPreview.objectKey}`}
           connectionId={activeS3TextPreview.connectionId}
@@ -266,7 +270,7 @@ export default function MainContent() {
   // Using key prop to force remount when layer changes, ensuring iframe and metadata fully refresh
   if (activePreview) {
     return (
-      <Box flex="1" display="flex" flexDirection="column" minH="0">
+      <Box flex="1" display="flex" flexDirection="column" minH="0" p={PREVIEW_PADDING}>
         {previewMode === '3d' ? (
           <Globe3DPreview
             key={`3d-${activePreview.workspace}:${activePreview.layerName}`}

@@ -8,6 +8,7 @@ import { TreeNodeRow } from '../TreeNodeRow'
 import { DataStoreContentsNode } from './DataStoreContentsNode'
 import { CoverageStoreContentsNode } from './CoverageStoreContentsNode'
 import type { ItemNodeProps } from '../types'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 export function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodeProps) {
   const nodeId = generateNodeId(type, connectionId, workspace, name)
@@ -226,7 +227,7 @@ export function ItemNode({ connectionId, workspace, name, type, storeType }: Ite
       />
       {isExpanded && type === 'datastore' && (
         featureTypesError ? (
-          <Text fontSize="xs" color="red.500" px={2} py={2} ml={6 * 4}>
+          <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(6)}>
             Error loading datasets: {(featureTypesError as Error).message}
           </Text>
         ) : (
@@ -240,7 +241,7 @@ export function ItemNode({ connectionId, workspace, name, type, storeType }: Ite
       )}
       {isExpanded && type === 'coveragestore' && (
         coveragesError ? (
-          <Text fontSize="xs" color="red.500" px={2} py={2} ml={6 * 4}>
+          <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(6)}>
             Error loading coverages: {(coveragesError as Error).message}
           </Text>
         ) : (

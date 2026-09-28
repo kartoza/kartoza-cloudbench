@@ -7,6 +7,7 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { S3ConnectionNode } from './S3ConnectionNode'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 export function S3StorageRootNode() {
   const nodeId = 's3storage-root'
@@ -63,7 +64,7 @@ export function S3StorageRootNode() {
       {isExpanded && (
         <>
           {!s3Connections || s3Connections.length === 0 ? (
-            <Box px={2} py={3} ml={2 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(2)}>
               <Text color="gray.500" fontSize="sm">
                 No S3 connections. Click + to add one.
               </Text>

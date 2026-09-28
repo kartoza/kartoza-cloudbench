@@ -6,6 +6,7 @@ import type { TreeNode, IcebergConnection } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { IcebergNamespaceNode } from './IcebergNamespaceNode'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 interface IcebergConnectionNodeProps {
   connection: IcebergConnection
@@ -114,7 +115,7 @@ export function IcebergConnectionNode({ connection }: IcebergConnectionNodeProps
       {isExpanded && (
         <>
           {!namespaces || namespaces.length === 0 ? (
-            <Box px={2} py={2} ml={3 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(3)}>
               <Text fontSize="xs" color="gray.500">
                 {subtitle}
               </Text>

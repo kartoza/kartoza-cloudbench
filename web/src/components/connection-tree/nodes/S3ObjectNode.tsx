@@ -7,12 +7,13 @@ import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import type { S3ObjectNodeProps } from '../types'
 import { isMapExplorerFormat, isMapPreviewable, isQueryable } from '../../../utils/s3ObjectFormat'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 function isReadme(key: string): boolean {
   return /^readme\.md$/i.test(key.split('/').filter(Boolean).pop() || '')
 }
 
-export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps) {
+export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3ObjectNodeProps) {
   const nodeId = generateNodeId('s3object', connectionId, bucket, object.key)
   const isExpanded = useTreeStore((state) => state.isExpanded(nodeId))
   const toggleNode = useTreeStore((state) => state.toggleNode)
@@ -170,21 +171,27 @@ export function S3ObjectNode({ connectionId, bucket, object }: S3ObjectNodeProps
         onDownloadData={!object.isFolder ? handleDownloadData : undefined}
         downloadDataLabel={displayName}
         onRefresh={object.isFolder ? handleRefresh : undefined}
-        level={4}
+        level={level}
         isLeaf={!object.isFolder}
         count={object.isFolder && children ? children.length : undefined}
       />
       {object.isFolder && isExpanded && children && (
         <>
           {children.length === 0 ? (
-            <Box px={2} py={1} ml={5 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1} ml={treeIndent(level + 1)}>
               <Text fontSize="xs" color="gray.400">
                 Empty folder
               </Text>
             </Box>
           ) : (
             children.map((child) => (
-              <S3ObjectNode key={child.key} connectionId={connectionId} bucket={bucket} object={child} />
+              <S3ObjectNode
+                key={child.key}
+                connectionId={connectionId}
+                bucket={bucket}
+                object={child}
+                level={level + 1}
+              />
             ))
           )}
         </>

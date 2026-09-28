@@ -32,7 +32,13 @@ import {
   FiPlus,
   FiBook,
 } from 'react-icons/fi'
-import { getNodeIconComponent, getNodeColor } from './utils'
+import {
+  getNodeIconComponent,
+  getNodeColor,
+  treeIndent,
+  TREE_BORDER_PX,
+  TREE_SELECTED_BORDER_PX,
+} from './utils'
 import type { TreeNodeRowProps } from './types'
 
 export function TreeNodeRow({
@@ -67,11 +73,15 @@ export function TreeNodeRow({
     isSelected ? 'kartoza.50' : 'transparent',
     isSelected ? 'kartoza.900' : 'transparent'
   )
-  const hoverBg = useColorModeValue('gray.50', 'gray.700')
+  const hoverBg = useColorModeValue('gray.100', 'whiteAlpha.100')
+  // A hairline under each row, starting at its indent (so it follows the hierarchy).
+  const separatorColor = useColorModeValue('gray.100', 'whiteAlpha.100')
   const textColor = useColorModeValue('gray.800', 'gray.100')
   const selectedTextColor = useColorModeValue('kartoza.700', 'kartoza.200')
   const borderColor = useColorModeValue('kartoza.500', 'kartoza.400')
   const chevronColor = useColorModeValue('gray.500', 'gray.400')
+  const guideColor = useColorModeValue('gray.200', 'whiteAlpha.200')
+  const borderPx = isSelected ? TREE_SELECTED_BORDER_PX : TREE_BORDER_PX
   const nodeColor = getNodeColor(node.type)
   const NodeIcon = getNodeIconComponent(node.type)
   const isEnabled = isOnline == undefined ? true : isOnline ?? true;
@@ -79,24 +89,27 @@ export function TreeNodeRow({
   return (
     <Flex
       align="center"
-      py={2}
-      px={2}
-      ml={(level-1) * 2}
+      py={1}
+      pr={2}
+      // 8px from the row's edge to the chevron, whatever the border width.
+      pl={`${8 - borderPx}px`}
+      ml={treeIndent(level)}
       cursor={isEnabled ? 'pointer' : 'not-allowed'}
       opacity={isEnabled ? 1 : 0.4}
       bg={bgColor}
-      borderLeft={isSelected ? '3px solid' : '3px solid transparent'}
-      borderLeftColor={isSelected ? borderColor : 'transparent'}
+      // A child row's left border (the same at every depth), or the selected accent.
+      borderLeft={`${borderPx}px solid`}
+      borderLeftColor={isSelected ? borderColor : level > 1 ? guideColor : 'transparent'}
+      borderBottom="1px solid"
+      borderBottomColor={separatorColor}
       _hover={{
         bg: isSelected ? bgColor : hoverBg,
         '& .chevron-icon': { color: 'kartoza.500' },
       }}
-      borderRadius="md"
       transition="all 0.15s ease"
       onClick={onClick}
       role="group"
       mr={1}
-      my={0.5}
     >
       {!isLeaf && (
         <Box w={4} mr={2} color={chevronColor} className="chevron-icon" transition="color 0.15s">
@@ -114,12 +127,8 @@ export function TreeNodeRow({
         <OnlineStatusIndicator isOnline={isOnline} />
       )}
       <Box
-        p={1.5}
-        borderRadius="md"
-        bg={isSelected ? `${nodeColor.split('.')[0]}.100` : 'transparent'}
+        p={1}
         mr={2}
-        transition="background 0.15s"
-        _groupHover={{ bg: `${nodeColor.split('.')[0]}.50` }}
       >
         <Icon
           as={NodeIcon}

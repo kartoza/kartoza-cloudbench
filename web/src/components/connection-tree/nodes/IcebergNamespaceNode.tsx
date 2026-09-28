@@ -6,6 +6,7 @@ import type { TreeNode, IcebergNamespace } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { IcebergTableNode } from './IcebergTableNode'
+import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
 
 interface IcebergNamespaceNodeProps {
   connectionId: string
@@ -92,7 +93,7 @@ export function IcebergNamespaceNode({ connectionId, connectionName, namespace }
       {isExpanded && (
         <>
           {!tables || tables.length === 0 ? (
-            <Box px={2} py={2} ml={4 * 4}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(4)}>
               <Text fontSize="xs" color="gray.400">
                 No tables in this namespace.
               </Text>

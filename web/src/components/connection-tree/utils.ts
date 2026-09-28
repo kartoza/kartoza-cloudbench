@@ -228,3 +228,21 @@ export function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): strin
       return 'gray.500'
   }
 }
+
+// Indentation for a tree row at `level` (1 = a top-level section), in Chakra
+// space units (3 = 12px per level) — the one scale shared by node rows, their
+// loading/empty/error placeholders and dataset rows, so every level lines up.
+export const TREE_INDENT = 3
+
+export function treeIndent(level: number): number {
+  return Math.max(0, level - 1) * TREE_INDENT
+}
+
+// A child row's left border: the same thin line at every depth (the selected
+// row's accent is a little wider, with its padding reduced to match).
+export const TREE_BORDER_PX = 1
+export const TREE_SELECTED_BORDER_PX = 2
+
+// Left padding that puts a placeholder's text under its sibling rows' icons
+// (row padding + chevron column; see TreeNodeRow).
+export const TREE_PLACEHOLDER_PL = 8
