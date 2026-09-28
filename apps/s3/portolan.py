@@ -46,6 +46,8 @@ UNSPECIFIED_LICENSE_FILE = "LICENSE.md"
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 THUMBNAIL_MEDIA_TYPE = "image/png"
+GEOPACKAGE_MEDIA_TYPE = "application/geopackage+sqlite3"
+SOURCE_FOLDER = "source"
 THUMBNAIL_FILENAME = "thumbnail.png"
 _THUMBNAIL_SUFFIX = "_thumbnail.png"
 
@@ -95,6 +97,15 @@ def thumbnail_asset(item: dict) -> dict:
         "role": "thumbnail",
         "media_type": THUMBNAIL_MEDIA_TYPE,
     }
+
+
+def _asset_href(filename: str) -> str:
+    """An asset's href relative to its collection folder.
+
+    Assets normally sit in the layer's own folder ("./roads.parquet"); a
+    GeoPackage's shared source is given as a path already ("../source/x.gpkg").
+    """
+    return filename if filename.startswith(("./", "../")) else f"./{filename}"
 
 
 def _asset_media_type(asset: dict, kind: str) -> str:
@@ -290,11 +301,12 @@ def build_collection_json(
         if media_type == PMTILES_MEDIA_TYPE and has_geoparquet:
             continue
         assets[asset["role"]] = {
-            "href": f"./{asset['filename']}",
+            "href": _asset_href(asset["filename"]),
             "type": media_type,
             "title": {
                 PARQUET_MEDIA_TYPE: f"{title} (GeoParquet)",
                 THUMBNAIL_MEDIA_TYPE: f"{title} thumbnail",
+                GEOPACKAGE_MEDIA_TYPE: f"Original GeoPackage ({posixpath.basename(asset['filename'])})",
             }.get(media_type, title),
             "roles": [asset["role"]],
             **_file_fields(asset),
@@ -382,6 +394,7 @@ def build_readme(
     table_info: dict | None = None,
     license_url: str = "",
     thumbnail: bool = False,
+    source_href: str = "",
 ) -> str:
     lines = [f"# {title}", ""]
     if thumbnail:
@@ -396,7 +409,11 @@ def build_readme(
             f"**License:** not specified (see [{UNSPECIFIED_LICENSE_FILE}]"
             f"(./{UNSPECIFIED_LICENSE_FILE}))"
         )
-    lines.append(f"**Source file:** {source_name}")
+    lines.append(
+        f"**Source file:** [{source_name}]({source_href})"
+        if source_href
+        else f"**Source file:** {source_name}"
+    )
     lines.append("")
     lines.append("## Contents")
     if kind == "pmtiles":
@@ -420,8 +437,13 @@ def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) 
         (
             f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
             if asset["role"] == "thumbnail"
-            else f"- Data file: `./{asset['filename']}` "
-            f"({_asset_media_type(asset, kind)}, {asset['role']})"
+            else (
+                f"- Source: `{_asset_href(asset['filename'])}` (the original upload this "
+                "layer was converted from; not cloud-native - query the data file instead)"
+                if asset["role"] == "source"
+                else f"- Data file: `./{asset['filename']}` "
+                f"({_asset_media_type(asset, kind)}, {asset['role']})"
+            )
         )
         for asset in data_assets
     )
@@ -901,6 +923,9 @@ def finalize_layer(
             table_info=table_info,
             license_url=license_url,
             thumbnail=any(asset["role"] == "thumbnail" for asset in data_assets),
+            source_href=next(
+                (_asset_href(a["filename"]) for a in data_assets if a["role"] == "source"), ""
+            ),
         )
         agents = build_agents_md(title=title, layer_id=layer_id, kind=kind, data_assets=data_assets)
 
