@@ -25,7 +25,7 @@ class StacCollectionListView(APIView):
     def get(self, request):
         user = request.user
         collections = [
-            catalog.build_collection_json(request, user, summary["id"])
+            catalog.build_collection_json(request, user, summary["id"], match=summary)
             for summary in catalog.list_collections(user)
         ]
         return Response(
