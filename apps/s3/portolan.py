@@ -533,6 +533,20 @@ def _write_root_catalog(s3_client, catalog: dict) -> None:
         s3_client.put_object(key=key, body=body.encode("utf-8"), content_type=content_type)
 
 
+def touch_root_catalog(s3_client) -> None:
+    """Rewrite catalog.json (and its docs) with a new `updated` time.
+
+    For changes to a layer's collection.json made outside a publish - so
+    anything keyed on catalog.json's ETag (the STAC API's cache) notices.
+    """
+    try:
+        catalog = _load_json(s3_client, CATALOG_KEY)
+        if catalog:
+            _write_root_catalog(s3_client, catalog)
+    except Exception:
+        logger.exception("Failed to touch root catalog.json")
+
+
 def ensure_root_catalog(s3_client, *, folder: str, title: str) -> None:
     """Create (or extend) the bucket-root catalog.json with a child link.
 

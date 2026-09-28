@@ -32,6 +32,7 @@ import {
   FiMap,
   FiChevronRight,
   FiArrowLeft,
+  FiShield,
 } from 'react-icons/fi'
 import { SiAmazons3 } from 'react-icons/si'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -228,6 +229,18 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
               >
                 Upload
               </Button>
+              <Tooltip label="Check published layers' files against the checksums in their catalog entries" fontSize="xs">
+                <Button
+                  variant="outline"
+                  color="white"
+                  borderColor="whiteAlpha.400"
+                  _hover={{ bg: 'whiteAlpha.200' }}
+                  leftIcon={<FiShield />}
+                  onClick={() => openDialog('s3verify', { mode: 'view', data: { connectionId } })}
+                >
+                  Verify checksums
+                </Button>
+              </Tooltip>
             </HStack>
           </Flex>
         </CardBody>

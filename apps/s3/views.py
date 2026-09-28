@@ -29,7 +29,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import portolan
+from . import portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import expire_stalled_job
 from .cog import (
@@ -1122,4 +1122,62 @@ class S3PresignedURLView(APIView):
             return Response(
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
+# ============================================================================
+# Portolan checksum verification
+# ============================================================================
+
+
+class S3PortolanLayersView(APIView):
+    """The layers a connection's bucket catalog lists (for verifying them one by one)."""
+
+    def get(self, request, conn_id):
+        try:
+            client = get_s3_client(conn_id, request.user)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"layers": portolan_verify.catalog_layers(client)})
+
+
+class S3PortolanVerifyView(APIView):
+    """Re-hash one published layer's files and compare with its collection.json.
+
+    One layer per request, so the frontend can show progress and a large
+    bucket never becomes one long request.
+    """
+
+    def post(self, request, conn_id):
+        folder = str(request.data.get("folder") or "").strip().strip("/")
+        if not folder:
+            return Response({"error": "folder is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            client = get_s3_client(conn_id, request.user)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(portolan_verify.verify_layer(client, folder))
+
+
+class S3PortolanRecordView(APIView):
+    """Record checksums for one layer published before they existed.
+
+    From its files as they are now; refused (409) for a layer that already
+    has checksums, since re-recording would accept any change since.
+    """
+
+    def post(self, request, conn_id):
+        folder = str(request.data.get("folder") or "").strip().strip("/")
+        if not folder:
+            return Response({"error": "folder is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            client = get_s3_client(conn_id, request.user)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            return Response(portolan_verify.record_checksums(client, folder))
+        except portolan_verify.AlreadyRecorded:
+            return Response(
+                {"error": "This layer already has checksums; re-publish it to replace them."},
+                status=status.HTTP_409_CONFLICT,
             )

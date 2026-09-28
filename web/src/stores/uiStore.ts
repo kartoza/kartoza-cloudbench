@@ -28,6 +28,7 @@ export type DialogType =
   | 'pgupload'
   | 's3connection'
   | 's3upload'
+  | 's3verify'
   | 'pointcloud'
   | 'qgisproject'
   | 'qgispreview'
