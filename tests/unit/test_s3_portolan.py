@@ -465,9 +465,8 @@ def test_geopackage_layers_are_published_into_a_sub_catalog():
     assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
         "./castelo-branco/catalog.json"
     ]
-    assert (
-        b"[Castelo Branco](./castelo-branco/README.md) (layer group)"
-        in (bucket.objects["README.md"])
+    assert b"[Castelo Branco](./castelo-branco/README.md) (layer group)" in (
+        bucket.objects["README.md"]
     )
 
 

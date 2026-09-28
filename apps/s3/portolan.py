@@ -519,9 +519,11 @@ def build_catalog_agents_md(catalog: dict, *, is_root: bool = True) -> str:
     """A catalog's AGENTS.md: a map of where each layer's files are."""
     layer_lines = (
         "\n".join(
-            f"- `{title}`: sub-catalog `./{folder}/{CATALOG_KEY}` (its layers are listed there)"
-            if is_catalog
-            else f"- `{title}`: `./{folder}/collection.json` (notes: `./{folder}/AGENTS.md`)"
+            (
+                f"- `{title}`: sub-catalog `./{folder}/{CATALOG_KEY}` (its layers are listed there)"
+                if is_catalog
+                else f"- `{title}`: `./{folder}/collection.json` (notes: `./{folder}/AGENTS.md`)"
+            )
             for title, folder, is_catalog in _catalog_children(catalog)
         )
         or "- (none published yet)"
