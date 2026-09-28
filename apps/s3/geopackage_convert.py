@@ -84,8 +84,7 @@ def _share_staged_source(vector, raster):
 
 
 def _run_in_turn(vector_id, raster_id):
-    """Convert the vector layers, then the raster tables.
-    """
+    """Convert the vector layers, then the raster tables."""
     group_id = None
     try:
         group_id = pmtiles.run_conversion(vector_id)
