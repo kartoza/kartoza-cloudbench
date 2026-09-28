@@ -69,6 +69,15 @@ interface LayerProgressStatus {
 // 20-80% "converting" progress window and cng-lite's processing order
 // (job.layers), so the picked GeoPackage layers show individual progress
 // instead of one opaque bar.
+// A row in the GeoPackage picker: a vector layer (-> PMTiles) or raster table (-> COG).
+interface GpkgItem {
+  key: string
+  name: string
+  kind: 'vector' | 'raster'
+  geometryType?: string
+  featureCount?: number
+}
+
 function layerConversionStatuses(job: ConversionJob): LayerProgressStatus[] | null {
   const layers = job.layers
   if (!layers || layers.length === 0) return null
@@ -141,12 +150,44 @@ export default function S3UploadDialog() {
   const [gpkgJobId, setGpkgJobId] = useState<string | null>(null)
   // Which pipeline the inspected GeoPackage is headed for — set once
   // inspection reveals whether it has vector layers or raster tables.
-  const [gpkgFormat, setGpkgFormat] = useState<'pmtiles' | 'cog'>('pmtiles')
   const [gpkgLayers, setGpkgLayers] = useState<api.GeoPackageLayer[] | null>(null)
   const [gpkgRasterTables, setGpkgRasterTables] = useState<api.GeoPackageRasterTable[] | null>(null)
   const [selectedLayerNames, setSelectedLayerNames] = useState<Set<string>>(new Set())
-  // Items shown in the picker table, whichever kind they are.
-  const gpkgItems = gpkgLayers ?? gpkgRasterTables
+  // Every job a GeoPackage confirm started, in the order they run (vector
+  // layers, then raster tables); conversionJobId is the one being followed.
+  const [conversionJobIds, setConversionJobIds] = useState<string[]>([])
+  // The earlier of those jobs, once finished (shown above the last one's result).
+  const [earlierJobs, setEarlierJobs] = useState<ConversionJob[]>([])
+  // Items shown in the picker table: vector layers and raster tables, keyed
+  // by kind so a layer and a table sharing a name stay distinct.
+  const gpkgItems: GpkgItem[] | null =
+    gpkgLayers || gpkgRasterTables
+      ? [
+          ...(gpkgLayers ?? []).map((layer) => ({
+            key: `vector:${layer.name}`,
+            name: layer.name,
+            kind: 'vector' as const,
+            geometryType: layer.geometryType,
+            featureCount: layer.featureCount,
+          })),
+          ...(gpkgRasterTables ?? []).map((table) => ({
+            key: `raster:${table.name}`,
+            name: table.name,
+            kind: 'raster' as const,
+          })),
+        ]
+      : null
+  const selectedItems = gpkgItems?.filter((item) => selectedLayerNames.has(item.key)) ?? []
+  const selectedVector = selectedItems.filter((item) => item.kind === 'vector')
+  const selectedRaster = selectedItems.filter((item) => item.kind === 'raster')
+  const hasVectorItems = !!gpkgItems?.some((item) => item.kind === 'vector')
+  const hasRasterItems = !!gpkgItems?.some((item) => item.kind === 'raster')
+  const itemNoun = (count: number, kinds: GpkgItem[]) => {
+    const vector = kinds.some((item) => item.kind === 'vector')
+    const raster = kinds.some((item) => item.kind === 'raster')
+    const noun = vector && raster ? 'item' : raster ? 'raster table' : 'layer'
+    return count === 1 ? noun : `${noun}s`
+  }
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
@@ -196,19 +237,30 @@ export default function S3UploadDialog() {
     setLicenseUrl('')
     setIsInspecting(false)
     setGpkgJobId(null)
-    setGpkgFormat('pmtiles')
+    setConversionJobIds([])
     setGpkgLayers(null)
     setGpkgRasterTables(null)
     setSelectedLayerNames(new Set())
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
+  // When the followed job finishes: move on to the next one if a GeoPackage
+  // confirm started several (its raster tables after its vector layers),
+  // keeping this one's outcome; once the last one completes, reset the form.
   useEffect(() => {
-    if (conversionJob?.status === 'completed') {
+    if (!conversionJob || !conversionJobId) return
+    if (!['completed', 'failed', 'cancelled'].includes(conversionJob.status)) return
+    if (conversionJob.status === 'completed') {
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
-      resetInputs()
     }
-  }, [conversionJob?.status, connectionId, queryClient, resetInputs])
+    const next = conversionJobIds[conversionJobIds.indexOf(conversionJobId) + 1]
+    if (next) {
+      setEarlierJobs((jobs) => [...jobs, conversionJob])
+      setConversionJobId(next)
+      return
+    }
+    if (conversionJob.status === 'completed') resetInputs()
+  }, [conversionJob, conversionJobId, conversionJobIds, connectionId, queryClient, resetInputs])
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -217,6 +269,7 @@ export default function S3UploadDialog() {
       setUploadProgress(0)
       setUploadResult(null)
       setConversionJobId(null)
+      setEarlierJobs([])
     }
   }, [isOpen, resetInputs])
 
@@ -250,7 +303,7 @@ export default function S3UploadDialog() {
     setCompanionFiles(files.filter((component) => component !== file))
     setUploadResult(null)
     setGpkgJobId(null)
-    setGpkgFormat('pmtiles')
+    setConversionJobIds([])
     setGpkgLayers(null)
     setGpkgRasterTables(null)
     setSelectedLayerNames(new Set())
@@ -323,15 +376,15 @@ export default function S3UploadDialog() {
           return
         }
         setGpkgJobId(jobId)
-        if (layers.length > 0) {
-          setGpkgFormat('pmtiles')
-          setGpkgLayers(layers)
-          setSelectedLayerNames(new Set(layers.map((layer) => layer.name)))
-        } else {
-          setGpkgFormat('cog')
-          setGpkgRasterTables(rasterTables)
-          setSelectedLayerNames(new Set(rasterTables.map((table) => table.name)))
-        }
+        // Offer both kinds; everything starts selected.
+        setGpkgLayers(layers)
+        setGpkgRasterTables(rasterTables)
+        setSelectedLayerNames(
+          new Set([
+            ...layers.map((layer) => `vector:${layer.name}`),
+            ...rasterTables.map((table) => `raster:${table.name}`),
+          ])
+        )
       } catch (err) {
         toast({
           title: 'Could not read GeoPackage',
@@ -405,23 +458,29 @@ export default function S3UploadDialog() {
     }
   }
 
-  const toggleLayer = (name: string) => {
+  const toggleLayer = (key: string) => {
     setSelectedLayerNames((prev) => {
       const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
   const handleConfirmLayers = async () => {
-    if (!gpkgJobId || selectedLayerNames.size === 0 || isUploading || isConverting) return
+    if (!gpkgJobId || selectedItems.length === 0 || isUploading || isConverting) return
 
     setIsUploading(true)
     setUploadResult(null)
 
     try {
-      const result = await api.convertGeoPackageLayers(gpkgJobId, Array.from(selectedLayerNames), gpkgFormat)
+      setEarlierJobs([])
+      const result = await api.convertGeoPackage(
+        gpkgJobId,
+        selectedVector.map((item) => item.name),
+        selectedRaster.map((item) => item.name)
+      )
+      setConversionJobIds(result.conversionJobIds ?? (result.conversionJobId ? [result.conversionJobId] : []))
 
       setUploadResult({
         success: result.success,
@@ -740,13 +799,13 @@ export default function S3UploadDialog() {
             <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
               <HStack justify="space-between" mb={3}>
                 <Text fontWeight="600" color="gray.700" fontSize="md">
-                  Select {gpkgFormat === 'cog' ? 'raster tables' : 'layers'} to convert ({selectedLayerNames.size}/{gpkgItems.length})
+                  Select {itemNoun(2, gpkgItems)} to convert ({selectedItems.length}/{gpkgItems.length})
                 </Text>
                 <HStack spacing={1}>
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={() => setSelectedLayerNames(new Set(gpkgItems.map((item) => item.name)))}
+                    onClick={() => setSelectedLayerNames(new Set(gpkgItems.map((item) => item.key)))}
                   >
                     Select All
                   </Button>
@@ -760,32 +819,39 @@ export default function S3UploadDialog() {
                   <Thead position="sticky" top={0} bg="gray.50">
                     <Tr>
                       <Th width="1%" />
-                      <Th>{gpkgFormat === 'cog' ? 'Table' : 'Layer'}</Th>
-                      {gpkgFormat === 'pmtiles' && <Th>Geometry</Th>}
-                      {gpkgFormat === 'pmtiles' && <Th isNumeric>Features</Th>}
+                      <Th>{hasVectorItems ? 'Layer' : 'Table'}</Th>
+                      {hasVectorItems && hasRasterItems && <Th>Type</Th>}
+                      {hasVectorItems && <Th>Geometry</Th>}
+                      {hasVectorItems && <Th isNumeric>Features</Th>}
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {gpkgItems.map((item) => {
-                      const layer = gpkgFormat === 'pmtiles' ? (item as api.GeoPackageLayer) : null
-                      return (
-                        <Tr key={item.name} cursor="pointer" onClick={() => toggleLayer(item.name)}>
-                          <Td onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              isChecked={selectedLayerNames.has(item.name)}
-                              onChange={() => toggleLayer(item.name)}
-                            />
+                    {gpkgItems.map((item) => (
+                      <Tr key={item.key} cursor="pointer" onClick={() => toggleLayer(item.key)}>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            isChecked={selectedLayerNames.has(item.key)}
+                            onChange={() => toggleLayer(item.key)}
+                          />
+                        </Td>
+                        <Td fontSize="sm" fontWeight="500">{item.name}</Td>
+                        {hasVectorItems && hasRasterItems && (
+                          <Td>
+                            <Badge colorScheme={item.kind === 'vector' ? 'blue' : 'orange'} variant="subtle" fontSize="xs">
+                              {item.kind === 'vector' ? 'Vector' : 'Raster'}
+                            </Badge>
                           </Td>
-                          <Td fontSize="sm" fontWeight="500">{item.name}</Td>
-                          {layer && (
-                            <>
-                              <Td fontSize="sm" color="gray.500">{layer.geometryType}</Td>
-                              <Td fontSize="sm" color="gray.500" isNumeric>{layer.featureCount.toLocaleString()}</Td>
-                            </>
-                          )}
-                        </Tr>
-                      )
-                    })}
+                        )}
+                        {hasVectorItems && (
+                          <>
+                            <Td fontSize="sm" color="gray.500">{item.geometryType ?? '-'}</Td>
+                            <Td fontSize="sm" color="gray.500" isNumeric>
+                              {item.featureCount !== undefined ? item.featureCount.toLocaleString() : '-'}
+                            </Td>
+                          </>
+                        )}
+                      </Tr>
+                    ))}
                   </Tbody>
                 </Table>
               </Box>
@@ -798,7 +864,11 @@ export default function S3UploadDialog() {
             <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
               <HStack mb={2}>
                 <Icon as={FiRefreshCw} className="spin" color="blue.500" />
-                <Text fontWeight="600" color="gray.700" fontSize="md">Converting layers...</Text>
+                <Text fontWeight="600" color="gray.700" fontSize="md">
+                  {conversionJob.targetFormat === 'cog' ? 'Converting raster tables...' : 'Converting layers...'}
+                  {conversionJobIds.length > 1 &&
+                    ` (${conversionJobIds.indexOf(conversionJobId ?? '') + 1} of ${conversionJobIds.length})`}
+                </Text>
               </HStack>
               <Progress
                 value={conversionJob.progress}
@@ -930,6 +1000,30 @@ export default function S3UploadDialog() {
                 </motion.div>
               )}
 
+              {/* A GeoPackage converted both ways: how its first job (the
+                  vector layers) went, above the last one's result. */}
+              {earlierJobs.map((job) => (
+                <Alert
+                  key={job.id}
+                  status={job.status === 'completed' ? (job.error ? 'warning' : 'success') : 'error'}
+                  borderRadius="lg"
+                  variant="subtle"
+                  py={2}
+                >
+                  <AlertIcon boxSize={4} />
+                  <Box>
+                    <Text fontSize="xs" fontWeight="500">
+                      {job.targetFormat === 'cog' ? 'Raster tables' : 'Vector layers'}: {job.message}
+                    </Text>
+                    {job.error && (
+                      <Text fontSize="xs" color="gray.600">
+                        {job.error}
+                      </Text>
+                    )}
+                  </Box>
+                </Alert>
+              ))}
+
               {conversionJob && conversionJob.status === 'completed' && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
@@ -1033,12 +1127,12 @@ export default function S3UploadDialog() {
                 onClick={handleConfirmLayers}
                 isLoading={isUploading || isConverting}
                 loadingText="Converting..."
-                isDisabled={selectedLayerNames.size === 0}
+                isDisabled={selectedItems.length === 0}
                 borderRadius="lg"
                 px={6}
                 leftIcon={<FiUpload />}
               >
-                Convert {selectedLayerNames.size} {gpkgFormat === 'cog' ? 'Table' : 'Layer'}{selectedLayerNames.size === 1 ? '' : 's'}
+                Convert {selectedItems.length} {itemNoun(selectedItems.length, selectedItems)}
               </Button>
             ) : (
               <Button

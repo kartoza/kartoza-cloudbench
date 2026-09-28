@@ -36,12 +36,12 @@ def _create_collection(job, items):
     """Groups a job's published layers into a LayerCollection for Map Explorer.
 
     `items` is [{'name', 'key'}, ...] — one per logical layer, already
-    pointing at its Portolan-published data file. Best-effort: a failure
-    here shouldn't undo the conversion that already succeeded and already
-    landed in S3.
+    pointing at its Portolan-published data file. Returns the collection's
+    id (None if nothing was grouped). Best-effort: a failure here shouldn't
+    undo the conversion that already succeeded and already landed in S3.
     """
     if not items:
-        return
+        return None
     try:
         collection = LayerCollection.objects.create(
             owner_id=job.owner_id,
@@ -65,6 +65,32 @@ def _create_collection(job, items):
         logger.exception(
             "Job %s: failed to create a layer collection (files were still uploaded)", job.id
         )
+        return None
+    return collection.id
+
+
+def _add_to_collection(collection_id, job, items):
+    """Add a job's published layers to an existing LayerCollection.
+
+    For the raster half of a GeoPackage converted as both vector layers and
+    raster tables (see geopackage_convert), so the upload stays one group.
+    Returns whether the collection existed to add to.
+    """
+    collection = LayerCollection.objects.filter(pk=collection_id).first()
+    if collection is None:
+        return False
+    try:
+        LayerCollectionItem.objects.bulk_create(
+            [
+                LayerCollectionItem(
+                    collection=collection, name=item["name"], key=item["key"], format=job.kind
+                )
+                for item in items
+            ]
+        )
+    except Exception:
+        logger.exception("Job %s: failed to extend layer collection %s", job.id, collection_id)
+    return True
 
 
 class TargetExists(Exception):
@@ -334,6 +360,7 @@ def run_conversion(
     group_results,
     build_extra_payload=None,
     create_collection=True,
+    collection_id=None,
 ):
     """Run a conversion job, then publish each result as its own Portolan layer.
 
@@ -352,7 +379,12 @@ def run_conversion(
     `create_collection=False` skips grouping a GeoPackage's layers into a new
     LayerCollection — for re-running an already-published job (see the
     portolan_backfill command), whose original collection still exists.
+    `collection_id` adds them to that existing LayerCollection instead (the
+    raster half of a GeoPackage converted both ways; see geopackage_convert).
+
+    Returns the id of the LayerCollection the layers were grouped into, if any.
     """
+    group_id = None
     close_old_connections()
     directory = job_directory(kind, job_id)
     # Usually already created by the staging step (start_conversion/
@@ -489,8 +521,11 @@ def run_conversion(
 
         # Only a GeoPackage groups several layers from one upload; a shapefile
         # or TIFF is a single standalone layer, so it gets no collection.
-        if create_collection and is_geopackage(job.source_name):
-            _create_collection(job, collection_items)
+        if is_geopackage(job.source_name) and collection_items:
+            if collection_id and _add_to_collection(collection_id, job, collection_items):
+                group_id = collection_id
+            elif create_collection:
+                group_id = _create_collection(job, collection_items)
 
         if layer_errors:
             logger.warning(
@@ -528,3 +563,4 @@ def run_conversion(
     finally:
         shutil.rmtree(directory, ignore_errors=True)
         close_old_connections()
+    return group_id

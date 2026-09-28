@@ -39,6 +39,7 @@ from .cog import (
     start_geopackage_conversion as start_cog_geopackage_conversion,
 )
 from .duckdb import get_duckdb_engine
+from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
 from .models import CngLiteJob, LayerCollection, S3Connection
 from .pmtiles import (
     cancel_geopackage_inspection,
@@ -1075,22 +1076,33 @@ class S3GeoPackageConvertView(APIView):
     """Confirm which layers/tables to convert for a previously-inspected GeoPackage job."""
 
     def post(self, request, job_id):
+        """Start converting the chosen layers.
+
+        `layers` (vector) and `tables` (raster) may both be given, converting
+        each kind as its own job into the same layer group; the older
+        `layers` + `format` form converts one kind.
+        """
         layers = request.data.get("layers")
+        tables = request.data.get("tables")
         target_format = request.data.get("format", "pmtiles")
         try:
-            if target_format == "cog":
-                job = start_cog_geopackage_conversion(job_id, request.user, layers)
+            if tables is not None:
+                jobs = start_geopackage_conversions(job_id, request.user, layers, tables)
+            elif target_format == "cog":
+                jobs = [start_cog_geopackage_conversion(job_id, request.user, layers)]
             else:
-                job = start_geopackage_conversion(job_id, request.user, layers)
+                jobs = [start_geopackage_conversion(job_id, request.user, layers)]
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             {
                 "success": True,
                 "message": "File accepted for CloudNativeGIS conversion",
-                "key": job.output_key,
-                "size": job.input_size,
-                "conversionJobId": str(job.id),
+                "key": jobs[0].output_key,
+                "size": jobs[0].input_size,
+                # The jobs run in this order; the first is the one to follow first.
+                "conversionJobId": str(jobs[0].id),
+                "conversionJobIds": [str(job.id) for job in jobs],
             },
             status=status.HTTP_202_ACCEPTED,
         )
