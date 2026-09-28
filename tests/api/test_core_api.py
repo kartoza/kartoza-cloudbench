@@ -122,8 +122,8 @@ class TestProvidersAPI:
             "/api/providers/",
             {
                 "providers": [
-                    {"id": "s3", "enabled": True},
-                    {"id": "iceberg", "enabled": True},
+                    {"id": "s3", "enabled": False},
+                    {"id": "geonode", "enabled": False},
                 ]
             },
             format="json",
@@ -132,9 +132,9 @@ class TestProvidersAPI:
 
         data = response.json()
         s3 = next(p for p in data["providers"] if p["id"] == "s3")
-        iceberg = next(p for p in data["providers"] if p["id"] == "iceberg")
-        assert s3["enabled"] is True
-        assert iceberg["enabled"] is True
+        geonode = next(p for p in data["providers"] if p["id"] == "geonode")
+        assert s3["enabled"] is False
+        assert geonode["enabled"] is False
 
     def test_disable_provider(self, api_client: APIClient) -> None:
         """Test disabling an enabled provider."""
