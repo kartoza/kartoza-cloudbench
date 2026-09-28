@@ -232,6 +232,68 @@ class TestProvidersManager:
         assert "geoserver" in provider_ids
         assert "postgres" in provider_ids  # Should be merged from defaults
 
+    def test_removed_providers_dropped(self, providers_manager: ProvidersManager) -> None:
+        """Test that providers no longer in the defaults are dropped on load."""
+        config_path = providers_manager._config_path()
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+
+        stale_config = {
+            "providers": [
+                {
+                    "id": "geoserver",
+                    "name": "GeoServer",
+                    "description": "Test",
+                    "enabled": False,
+                    "experimental": False,
+                },
+                {
+                    "id": "removed-provider",
+                    "name": "Removed",
+                    "description": "No longer a default",
+                    "enabled": True,
+                    "experimental": True,
+                },
+            ]
+        }
+        with open(config_path, "w") as f:
+            json.dump(stale_config, f)
+
+        new_manager = ProvidersManager(providers_manager._user)
+
+        provider_ids = {p.id for p in new_manager.list_providers()}
+        assert "removed-provider" not in provider_ids
+        # The user's enabled state for remaining providers is kept
+        assert new_manager.is_provider_enabled("geoserver") is False
+
+    def test_metadata_taken_from_defaults(self, providers_manager: ProvidersManager) -> None:
+        """Test that stored metadata is replaced by the defaults on load."""
+        config_path = providers_manager._config_path()
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+
+        stale_config = {
+            "providers": [
+                {
+                    "id": "geoserver",
+                    "name": "Old name",
+                    "description": "Old description",
+                    "enabled": False,
+                    "experimental": True,
+                }
+            ]
+        }
+        with open(config_path, "w") as f:
+            json.dump(stale_config, f)
+
+        new_manager = ProvidersManager(providers_manager._user)
+
+        default = next(p for p in DEFAULT_PROVIDERS if p["id"] == "geoserver")
+        provider = new_manager.get_provider("geoserver")
+        assert provider is not None
+        assert provider.name == default["name"]
+        assert provider.description == default["description"]
+        assert provider.experimental == default["experimental"]
+        assert provider.enabled is False
+
 
 class TestProviderHelperFunctions:
     """Tests for provider helper functions."""
