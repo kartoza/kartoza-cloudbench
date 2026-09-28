@@ -405,30 +405,38 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setLayers((prev) => prev.filter((l) => l.id !== layerId))
   }, [])
 
-  // "Open on map" from the catalogue: show that one layer on its own —
-  // replacing whatever was on the map — and zoom to it (addLayer does).
+  // "Open on map" from the catalogue: show that layer (or a GeoPackage's
+  // layers) on its own — replacing whatever was on the map — and zoom to it
+  // (addLayer does).
   const openOnMap = useCallback(
-    (target: MapTarget) => {
+    (targets: MapTarget[]) => {
       setView('map')
       for (const layer of layersRef.current) handleRemoveLayer(layer.id)
       if (!mapReady) {
         // Picked up by the catalog load once the map is ready (as a URL restore is).
-        pendingLayerRefsRef.current = [target]
+        pendingLayerRefsRef.current = targets.map(({ connectionId, bucketName, key }) => ({
+          connectionId,
+          bucketName,
+          key,
+        }))
         return
       }
-      // Prefer the discovered entry (it carries the connection name); fall back
-      // to the catalogue's own details for a layer uploaded since that listing.
-      const option = availableLayers.find(
-        (o) => o.connectionId === target.connectionId && o.bucketName === target.bucketName && o.key === target.key
-      ) ?? {
-        connectionId: target.connectionId,
-        connectionName: '',
-        bucketName: target.bucketName,
-        key: target.key,
-        name: layerNameFromKey(target.key, 'pmtiles'),
-        format: 'pmtiles' as const,
+      for (const target of targets) {
+        // Prefer the discovered entry (it carries the connection name); fall back
+        // to the catalogue's own details for a layer uploaded since that listing.
+        const format = target.format ?? 'pmtiles'
+        const option = availableLayers.find(
+          (o) => o.connectionId === target.connectionId && o.bucketName === target.bucketName && o.key === target.key
+        ) ?? {
+          connectionId: target.connectionId,
+          connectionName: '',
+          bucketName: target.bucketName,
+          key: target.key,
+          name: target.name ?? layerNameFromKey(target.key, format),
+          format,
+        }
+        addLayer(option)
       }
-      addLayer(option)
     },
     [setView, handleRemoveLayer, mapReady, availableLayers, addLayer]
   )
@@ -479,8 +487,9 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         </HStack>
       </Flex>
 
-      {/* Body */}
-      <Box position="relative" flex={1} bg="gray.50">
+      {/* Body - minH={0}: a flex child otherwise grows to fit its content, so a
+          long catalogue pushed past the screen instead of scrolling inside. */}
+      <Box position="relative" flex={1} minH={0} bg="gray.50">
         {view === 'catalogue' && <StacCataloguePage onOpenOnMap={openOnMap} />}
 
         <Box ref={overlayContainer} position="absolute" inset={0} display={view === 'catalogue' ? 'none' : 'block'}>

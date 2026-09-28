@@ -120,6 +120,7 @@ urlpatterns = [
         name="s3-portolan-record",
     ),
     # Layer collections (grouped layers from one GeoPackage upload)
+    path("s3/catalogue", views.S3CatalogueView.as_view(), name="s3-catalogue"),
     path(
         "s3/collections",
         views.S3LayerCollectionListView.as_view(),

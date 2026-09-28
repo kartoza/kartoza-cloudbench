@@ -69,30 +69,6 @@ export async function listPmtilesObjects(connectionId: string): Promise<S3Pmtile
   return listObjectsByExtensions(connectionId, ['.pmtiles'])
 }
 
-// Each published layer folder's thumbnail (rendered from its default style
-// on upload — see apps.s3.portolan.THUMBNAIL_FILENAME).
-const THUMBNAIL_SUFFIX = '/thumbnail.png'
-
-export interface S3PmtilesCatalogObject extends S3PmtilesObject {
-  // Key of the layer folder's thumbnail.png, when it has one.
-  thumbnailKey?: string
-}
-
-/** PMTiles objects plus their layer folders' thumbnails, from one bucket listing. */
-export async function listPmtilesWithThumbnails(connectionId: string): Promise<S3PmtilesCatalogObject[]> {
-  const objects = await listObjectsByExtensions(connectionId, ['.pmtiles', THUMBNAIL_SUFFIX])
-  const thumbnails = new Set(
-    objects.filter((obj) => obj.key.toLowerCase().endsWith(THUMBNAIL_SUFFIX)).map((obj) => obj.key)
-  )
-  return objects
-    .filter((obj) => obj.key.toLowerCase().endsWith('.pmtiles'))
-    .map((obj) => {
-      const slash = obj.key.lastIndexOf('/')
-      const thumbnailKey = slash === -1 ? 'thumbnail.png' : `${obj.key.slice(0, slash)}${THUMBNAIL_SUFFIX}`
-      return thumbnails.has(thumbnailKey) ? { ...obj, thumbnailKey } : obj
-    })
-}
-
 export async function listCogObjects(connectionId: string): Promise<S3PmtilesObject[]> {
   const objects = await listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
   // maplibre-cog-protocol only renders Web Mercator COGs. cng-lite's COG
@@ -144,6 +120,49 @@ export async function getLayerCollections(): Promise<LayerCollectionSummary[]> {
 
 export async function getLayerCollection(id: string): Promise<LayerCollectionDetail> {
   const response = await fetch(`${API_BASE}/s3/collections/${encodeURIComponent(id)}`)
+  return handleResponse(response)
+}
+
+export interface CatalogueLayerEntry {
+  kind: 'layer'
+  name: string
+  // The file Map Explorer renders: a PMTiles, or an EPSG:3857 COG.
+  key: string
+  format: 'pmtiles' | 'cog'
+  folder: string
+  thumbnailKey: string | null
+  size: number | null
+  updated: string | null
+}
+
+// A GeoPackage: its sub-catalog and the layers/tables published from it.
+export interface CatalogueGroupEntry {
+  kind: 'group'
+  id: string
+  name: string
+  folder: string
+  sourceName: string
+  sourceKey: string | null
+  itemCount: number
+  thumbnailKey: string | null
+  updated: string
+  layers: CatalogueLayerEntry[]
+}
+
+export type CatalogueEntry = CatalogueLayerEntry | CatalogueGroupEntry
+
+export interface CatalogueConnection {
+  connectionId: string
+  connectionName: string
+  bucket: string
+  // False when the bucket has no catalog and its map-ready files were scanned instead.
+  fromCatalog: boolean
+  entries: CatalogueEntry[]
+}
+
+// Every S3 connection's layers and GeoPackages, in its catalog's hierarchy.
+export async function getCatalogue(): Promise<CatalogueConnection[]> {
+  const response = await fetch(`${API_BASE}/s3/catalogue`)
   return handleResponse(response)
 }
 
