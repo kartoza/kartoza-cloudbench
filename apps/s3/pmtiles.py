@@ -11,6 +11,7 @@ from django.conf import settings
 from . import portolan
 from .client import get_s3_client
 from .cng_lite import (
+    check_target,
     cng_lite_headers,
     job_directory,
     request_json,
@@ -43,10 +44,11 @@ def group_results(job, results):
         groups.setdefault(path.stem, {})[role] = item
 
     layers = []
+    taken = set()
     for stem, items in groups.items():
         title_stem = stem if is_multi else PurePosixPath(job.source_name).stem
         title = portolan.prettify(title_stem)
-        layer_id = portolan.sanitize_layer_id(title_stem)
+        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
         assets = []
         if "data" in items:
             assets.append(
@@ -170,7 +172,9 @@ def start_conversion(
     companion_files=(),
     license_id=portolan.DEFAULT_LICENSE,
     license_url="",
+    replace=False,
 ):
+    """Start converting an upload; raises TargetExists unless `replace` (see check_target)."""
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
@@ -180,6 +184,7 @@ def start_conversion(
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     s3_client = get_s3_client(connection_id, user)
+    check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
         owner_id=user.username,
@@ -190,6 +195,7 @@ def start_conversion(
         input_size=input_size,
         license=license_id,
         license_url=license_url,
+        replace_existing=replace,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
@@ -225,7 +231,13 @@ def start_conversion(
 
 
 def inspect_geopackage(
-    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE, license_url=""
+    uploaded_file,
+    key,
+    connection_id,
+    user,
+    license_id=portolan.DEFAULT_LICENSE,
+    license_url="",
+    replace=False,
 ):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
@@ -234,6 +246,9 @@ def inspect_geopackage(
     expected to let the user pick layers, then call start_geopackage_conversion
     (vector layers -> PMTiles) or cog.start_geopackage_conversion (raster
     tables -> COG, for a GeoPackage that turns out to have no vector layers).
+
+    Raises TargetExists if the GeoPackage's folder already holds data and
+    `replace` isn't set (see check_target).
 
     Returns (job, layers, raster_tables).
     """
@@ -245,6 +260,7 @@ def inspect_geopackage(
         raise ValueError("The GeoPackage exceeds the upload size limit.")
 
     s3_client = get_s3_client(connection_id, user)
+    check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
         owner_id=user.username,
@@ -256,6 +272,7 @@ def inspect_geopackage(
         message="Waiting for layer selection",
         license=license_id,
         license_url=license_url,
+        replace_existing=replace,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)

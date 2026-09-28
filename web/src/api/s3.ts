@@ -187,7 +187,10 @@ export async function uploadToS3(
   companionFiles: File[] = [],
   license?: string,
   // Terms of an "other" license (sent as the collection's rel=license link).
-  licenseUrl?: string
+  licenseUrl?: string,
+  // Confirmed replacing the layer (or GeoPackage layer group) folder the
+  // conversion publishes into; without it an existing folder is a 409.
+  replace?: boolean
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -212,6 +215,9 @@ export async function uploadToS3(
   }
   if (licenseUrl) {
     formData.append('licenseUrl', licenseUrl)
+  }
+  if (replace) {
+    formData.append('replace', 'true')
   }
 
   return new Promise((resolve, reject) => {
@@ -261,13 +267,15 @@ export async function inspectGeoPackage(
   file: File,
   key?: string,
   license?: string,
-  licenseUrl?: string
+  licenseUrl?: string,
+  replace?: boolean
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
   if (key) formData.append('key', key)
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
+  if (replace) formData.append('replace', 'true')
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }
@@ -371,4 +379,26 @@ export async function verifyPortolanLayer(connectionId: string, folder: string):
     body: JSON.stringify({ folder }),
   })
   return handleResponse<PortolanLayerCheck>(response)
+}
+
+// Where a converted upload would be published, and whether that folder
+// already holds a layer (or GeoPackage layer group) — asked before sending
+// the file, so an overwrite can be confirmed first.
+export interface PortolanTarget {
+  folder: string
+  exists: boolean
+  kind: 'layer' | 'layer group'
+}
+
+export async function checkPortolanTarget(
+  connectionId: string,
+  filename: string,
+  key?: string
+): Promise<PortolanTarget> {
+  const response = await fetch(`${API_BASE}/s3/portolan/target/${encodeURIComponent(connectionId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, key }),
+  })
+  return handleResponse<PortolanTarget>(response)
 }

@@ -67,6 +67,65 @@ def _create_collection(job, items):
         )
 
 
+class TargetExists(Exception):
+    """The upload would publish into a folder that already holds data.
+
+    Raised unless the upload was confirmed to replace it (`replace=True`),
+    so an upload never silently overwrites an existing layer.
+    """
+
+    def __init__(self, folder, is_group):
+        super().__init__(folder)
+        self.folder = folder
+        self.is_group = is_group
+
+
+def target_folder(key, source_name):
+    """The folder an upload publishes into, known before converting anything.
+
+    A shapefile/TIFF becomes one layer folder, a GeoPackage one sub-catalog
+    folder of layers - either way named after the uploaded file, beside the
+    upload key (see run_conversion / group_results).
+    """
+    parent = str(PurePosixPath(key).parent)
+    parent = "" if parent in ("", ".") else parent
+    name = portolan.sanitize_layer_id(PurePosixPath(source_name).stem)
+    folder = f"{parent}/{name}" if parent else name
+    # Every job's raw upload is kept under "<parent>/sources/"; replacing a
+    # layer folder of that name would delete them.
+    if name == "sources":
+        raise ValueError('"sources" is reserved for uploaded source files; rename the file.')
+    return folder
+
+
+def folder_exists(s3_client, folder):
+    return bool(
+        s3_client.list_objects(prefix=f"{folder}/", delimiter="", max_keys=1).get("objects")
+    )
+
+
+def check_target(s3_client, key, source_name, replace):
+    """Raise TargetExists if the upload's folder holds data and `replace` isn't set."""
+    folder = target_folder(key, source_name)
+    if not replace and folder_exists(s3_client, folder):
+        raise TargetExists(folder, is_group=is_geopackage(source_name))
+    return folder
+
+
+def _clear_for_replace(job, s3_client):
+    """Clear the folder a confirmed-replace upload publishes into.
+
+    Removes everything there (so no stale files - e.g. GeoPackage layers not
+    re-selected - outlive the replacement) and the Map Explorer groups that
+    pointed into it.
+    """
+    folder = target_folder(job.output_key, job.source_name)
+    s3_client.delete_prefix(f"{folder}/")
+    LayerCollection.objects.filter(
+        connection_id=job.connection_id, items__key__startswith=f"{folder}/"
+    ).distinct().delete()
+
+
 def host_contact_email(connection_id):
     """The Portolan `host` contact: the connection's own, else the server default."""
     try:
@@ -282,6 +341,8 @@ def run_conversion(
                 file_info[item["name"]] = {"size": size, "checksum": checksum}
 
             update_job(job.id, progress=85, message="Publishing to catalog")
+            if job.replace_existing:
+                _clear_for_replace(job, s3_client)
             layers = group_results(job, results)
             base_prefix = str(PurePosixPath(job.output_key).parent)
             base_prefix = "" if base_prefix in ("", ".") else base_prefix

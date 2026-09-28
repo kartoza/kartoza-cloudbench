@@ -143,6 +143,11 @@ describe('XHR upload helpers', () => {
     form = FakeXHR.instances[2].sent as FormData
     expect(form.get('license')).toBe('other')
     expect(form.get('licenseUrl')).toBe('https://example.org/terms')
+    expect(form.get('replace')).toBeNull() // only sent once an overwrite is confirmed
+
+    await uploadToS3('c1', file, undefined, true, 'cog', undefined, undefined, undefined, [], 'other', undefined, true)
+    form = FakeXHR.instances[3].sent as FormData
+    expect(form.get('replace')).toBe('true')
 
     FakeXHR.next = { status: 400, body: '{"error":"bad"}' }
     await expect(uploadToS3('c1', file)).rejects.toThrow('bad')

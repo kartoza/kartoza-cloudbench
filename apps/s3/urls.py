@@ -110,6 +110,11 @@ urlpatterns = [
         name="s3-portolan-verify",
     ),
     path(
+        "s3/portolan/target/<str:conn_id>",
+        views.S3PortolanTargetView.as_view(),
+        name="s3-portolan-target",
+    ),
+    path(
         "s3/portolan/record/<str:conn_id>",
         views.S3PortolanRecordView.as_view(),
         name="s3-portolan-record",
