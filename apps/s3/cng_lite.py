@@ -126,6 +126,67 @@ def _clear_for_replace(job, s3_client):
     ).distinct().delete()
 
 
+def _staged_geopackage(job):
+    """The GeoPackage the upload staged on local disk, if it's still there.
+    """
+    for kind in ("pmtiles", "cog"):
+        path = job_directory(kind, job.id) / "source.gpkg"
+        if path.exists():
+            return path
+    return None
+
+
+def _publish_source(job, s3_client, catalog_folder):
+    """Move a GeoPackage's original upload into its layer group's folder.
+
+    From where it was staged for conversion ("<parent>/sources/<job>/") to
+    "<group>/source/<name>", so it's kept once beside the layers it produced
+    and goes with them if the group is deleted. Uploaded from the local copy
+    when there is one (hashed on the way, for file:checksum/size), else
+    copied within S3. Returns each layer's `source` asset (href relative to
+    a layer folder), or None if the move failed - best-effort, like the
+    rest of the catalog metadata.
+    """
+    name = PurePosixPath(job.source_name).name
+    dest_key = f"{catalog_folder}/{portolan.SOURCE_FOLDER}/{name}"
+    file = None
+    try:
+        local = _staged_geopackage(job)
+        if local:
+            digest = hashlib.sha256()
+            with local.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            with local.open("rb") as source:
+                s3_client.client.upload_fileobj(
+                    source,
+                    job.bucket,
+                    dest_key,
+                    ExtraArgs={"ContentType": portolan.GEOPACKAGE_MEDIA_TYPE},
+                )
+            file = {
+                "checksum": portolan.sha256_multihash(digest.digest()),
+                "size": local.stat().st_size,
+            }
+        else:
+            s3_client.client.copy(
+                {"Bucket": job.bucket, "Key": job.source_key}, job.bucket, dest_key
+            )
+        if job.source_key and job.source_key != dest_key:
+            s3_client.delete_object(job.source_key)
+        job.source_key = dest_key
+        update_job(job.id, source_key=dest_key)
+    except Exception:
+        logger.exception("Job %s: couldn't move the GeoPackage into %s", job.id, dest_key)
+        return None
+    return {
+        "filename": f"../{portolan.SOURCE_FOLDER}/{name}",
+        "role": "source",
+        "media_type": portolan.GEOPACKAGE_MEDIA_TYPE,
+        "file": file,
+    }
+
+
 def host_contact_email(connection_id):
     """The Portolan `host` contact: the connection's own, else the server default."""
     try:
@@ -353,6 +414,11 @@ def run_conversion(
                 gpkg_id = portolan.sanitize_layer_id(source_stem)
                 catalog_folder = f"{base_prefix}/{gpkg_id}" if base_prefix else gpkg_id
                 base_prefix = catalog_folder
+            # A GeoPackage's original is kept once in its group folder and
+            # listed as each of its layers' `source` asset.
+            source_asset = (
+                _publish_source(job, s3_client, catalog_folder) if catalog_folder else None
+            )
             provider_name = _provider_name(owner)
             host_email = host_contact_email(job.connection_id)
 
@@ -399,7 +465,7 @@ def run_conversion(
                     layer_id=layer["layer_id"],
                     title=layer["title"],
                     kind=kind,
-                    data_assets=data_assets,
+                    data_assets=[*data_assets, source_asset] if source_asset else data_assets,
                     license_id=job.license,
                     license_url=job.license_url,
                     provider_name=provider_name,
