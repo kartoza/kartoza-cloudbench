@@ -283,18 +283,19 @@ export async function inspectGeoPackage(
   return handleResponse(response)
 }
 
-// Confirm which layers/tables to convert for a previously-inspected
-// GeoPackage job. `format` selects which pipeline handles it — 'pmtiles'
-// (vector layers, the default) or 'cog' (raster tables).
-export async function convertGeoPackageLayers(
+// Convert an inspected GeoPackage's chosen vector layers (-> PMTiles +
+// GeoParquet) and raster tables (-> COG) together, into one layer group.
+// Both kinds start their own job, run one after the other: see
+// conversionJobIds in the result.
+export async function convertGeoPackage(
   jobId: string,
   layers: string[],
-  format: 'pmtiles' | 'cog' = 'pmtiles'
+  tables: string[]
 ): Promise<S3UploadResult> {
   const response = await fetch(`${API_BASE}/s3/gpkg/convert/${encodeURIComponent(jobId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ layers, format }),
+    body: JSON.stringify({ layers, tables }),
   })
   return handleResponse<S3UploadResult>(response)
 }

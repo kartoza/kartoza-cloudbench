@@ -633,6 +633,9 @@ export interface S3UploadResult {
   key: string
   size: number
   conversionJobId?: string // If conversion was started
+  // Every job started, in the order they run (a GeoPackage converted as both
+  // vector layers and raster tables runs two); conversionJobId is the first.
+  conversionJobIds?: string[]
 }
 
 // S3 Preview metadata for layer preview

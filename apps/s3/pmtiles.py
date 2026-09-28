@@ -357,8 +357,9 @@ def validate_pmtiles(output, name=""):
     return output.read(7) == b"PMTiles"
 
 
-def run_conversion(job_id, create_collection=True):
-    run_cng_lite_conversion(
+def run_conversion(job_id, create_collection=True, collection_id=None):
+    """Returns the id of the LayerCollection its layers were grouped into, if any."""
+    return run_cng_lite_conversion(
         job_id,
         kind=KIND,
         endpoint=ENDPOINT,
@@ -371,4 +372,5 @@ def run_conversion(job_id, create_collection=True):
         },
         group_results=group_results,
         create_collection=create_collection,
+        collection_id=collection_id,
     )
