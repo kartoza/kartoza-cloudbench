@@ -152,6 +152,8 @@ const theme = extendTheme({
     heading: "'Nunito', -apple-system, BlinkMacSystemFont, sans-serif",
     body: "'Nunito', -apple-system, BlinkMacSystemFont, sans-serif",
     mono: "'JetBrains Mono', SFMono-Regular, Menlo, Consolas, monospace",
+    // The CloudBench wordmark in the header.
+    brand: "'Roboto', -apple-system, BlinkMacSystemFont, sans-serif",
   },
   styles: {
     global: {
