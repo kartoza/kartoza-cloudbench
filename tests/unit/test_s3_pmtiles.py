@@ -1,5 +1,6 @@
 """CloudNativeGIS Lite PMTiles conversion contract and failure handling."""
 
+import hashlib
 import io
 import json
 import zipfile
@@ -11,6 +12,8 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
+from apps.s3 import portolan
+from apps.s3.cng_lite import download_result
 from apps.s3.models import CngLiteJob, LayerCollection
 from apps.s3.pmtiles import (
     cancel_geopackage_inspection,
@@ -453,12 +456,31 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
     }
     collection = json.loads(written["folder/roads/collection.json"])
     assert collection["assets"]["data"]["href"] == "./roads.parquet"
+
+    def file_fields(name):
+        """file:checksum/file:size of exactly the bytes cng-lite returned."""
+        content = results[name][0]
+        return {
+            "file:checksum": "1220" + hashlib.sha256(content).hexdigest(),
+            "file:size": len(content),
+        }
+
     assert collection["assets"]["thumbnail"] == {
         "href": "./thumbnail.png",
         "type": "image/png",
         "title": "Roads thumbnail",
         "roles": ["thumbnail"],
+        **file_fields("output_thumbnail.png"),
     }
+    assert {k: v for k, v in collection["assets"]["data"].items() if k.startswith("file:")} == (
+        file_fields("output.parquet")
+    )
+    [pmtiles_link] = [link for link in collection["links"] if link["rel"] == "pmtiles"]
+    assert pmtiles_link["file:checksum"] == file_fields("output.pmtiles")["file:checksum"]
+    assert pmtiles_link["file:size"] == file_fields("output.pmtiles")["file:size"]
+    # The style editor rewrites the style in place, so it never gets a checksum.
+    assert not any(k.startswith("file:") for k in collection["assets"]["style-default"])
+    assert portolan.FILE_SCHEMA in collection["stac_extensions"]
     assert b"![Roads](./thumbnail.png)" in written["folder/roads/README.md"]
     assert collection["table:columns"] == columns
     # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
@@ -537,3 +559,21 @@ def test_cancel_geopackage_inspection_rejects_already_confirmed_job(gpkg_inspect
         start_geopackage_conversion(job.id, owner, [layer["name"] for layer in layers])
     with pytest.raises(ValueError, match="already started"):
         cancel_geopackage_inspection(job.id, owner)
+
+
+@pytest.mark.parametrize("size", [0, 5, 3 * 1024 * 1024 + 7])  # empty, tiny, several chunks
+def test_download_result_hashes_exactly_the_bytes_it_writes(tmp_path, size):
+    content = bytes(i % 251 for i in range(size))
+    client = httpx.Client(
+        base_url="http://cloudnativegis/",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=content)),
+    )
+    destination = tmp_path / "result"
+
+    written, checksum = download_result(
+        client, "/api/v1/jobs/j/result/x.bin", destination, lambda _output, _name: True, "bad"
+    )
+
+    assert written == size
+    assert destination.read_bytes() == content
+    assert checksum == "1220" + hashlib.sha256(content).hexdigest()

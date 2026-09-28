@@ -6,6 +6,7 @@ cng-lite endpoint to submit to, how to sanity-check the downloaded result,
 and what content type to store it with in S3.
 """
 
+import hashlib
 import logging
 import shutil
 import time
@@ -180,7 +181,14 @@ def wait_for_results(client, job_id, cng_job_id, deadline):
 
 
 def download_result(client, result_path, destination, validate_result, invalid_result_message):
+    """Stream one cng-lite result file to `destination`.
+
+    Returns (size, checksum): the byte count and the SHA-256 multihash of
+    exactly the bytes that get uploaded to S3 — hashed as they stream in,
+    for the Portolan collection's file:size/file:checksum.
+    """
     size = 0
+    digest = hashlib.sha256()
     with client.stream("GET", result_path.lstrip("/")) as response:
         response.raise_for_status()
         with destination.open("wb") as output:
@@ -188,11 +196,12 @@ def download_result(client, result_path, destination, validate_result, invalid_r
                 size += len(chunk)
                 if size > settings.UPLOAD_MAX_FILE_SIZE:
                     raise ValueError("The generated file exceeds the upload size limit.")
+                digest.update(chunk)
                 output.write(chunk)
     with destination.open("rb") as output:
         if not validate_result(output, PurePosixPath(result_path).name):
             raise ValueError(invalid_result_message)
-    return size
+    return size, portolan.sha256_multihash(digest.digest())
 
 
 def run_conversion(
@@ -261,13 +270,16 @@ def run_conversion(
 
             update_job(job.id, progress=70, message="Downloading converted file(s)")
             local_paths = {}
+            file_info = {}
             total_size = 0
             for index, item in enumerate(results):
                 local_path = directory / f"result-{index}"
-                total_size += download_result(
+                size, checksum = download_result(
                     client, item["result_url"], local_path, validate_result, invalid_result_message
                 )
+                total_size += size
                 local_paths[item["name"]] = local_path
+                file_info[item["name"]] = {"size": size, "checksum": checksum}
 
             update_job(job.id, progress=85, message="Publishing to catalog")
             layers = group_results(job, results)
@@ -301,6 +313,7 @@ def run_conversion(
                             "filename": asset["filename"],
                             "role": asset["role"],
                             "media_type": media_type,
+                            "file": file_info[asset["item"]["name"]],
                         }
                     )
                     dest_keys[asset["role"]] = dest_key

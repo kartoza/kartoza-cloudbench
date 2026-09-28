@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 PORTOLAN_SCHEMA = "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json"
 WEB_MAP_LINKS_SCHEMA = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
 TABLE_SCHEMA = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+FILE_SCHEMA = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+# Multihash prefix for SHA-256: function code 0x12, digest length 0x20 (32 bytes).
+_SHA256_MULTIHASH_PREFIX = "1220"
 CATALOG_KEY = "catalog.json"
 
 # SPDX ids offered in the upload dialog; "other" is the safe default when
@@ -49,6 +52,28 @@ _MEDIA_TYPES = {
     "pmtiles": PMTILES_MEDIA_TYPE,
     "cog": "image/tiff; application=geotiff; profile=cloud-optimized",
 }
+
+
+def sha256_multihash(digest: bytes) -> str:
+    """A SHA-256 digest as the hex multihash Portolan's file:checksum requires."""
+    return _SHA256_MULTIHASH_PREFIX + digest.hex()
+
+
+def _file_fields(asset: dict) -> dict:
+    """An asset's file:checksum/file:size (File extension), if it has them.
+
+    Only data files written once per publish carry them (see
+    run_conversion); the style — which the style editor rewrites in place —
+    and regenerated docs never do, since Portolan counts a stale checksum
+    as a conformance failure.
+    """
+    file = asset.get("file") or {}
+    fields = {}
+    if file.get("checksum"):
+        fields["file:checksum"] = file["checksum"]
+    if file.get("size") is not None:
+        fields["file:size"] = file["size"]
+    return fields
 
 
 def is_thumbnail_result(name: str) -> bool:
@@ -255,6 +280,7 @@ def build_collection_json(
                 THUMBNAIL_MEDIA_TYPE: f"{title} thumbnail",
             }.get(media_type, title),
             "roles": [asset["role"]],
+            **_file_fields(asset),
         }
     assets["style-default"] = {
         "href": f"./styles/{style_filename}",
@@ -290,6 +316,7 @@ def build_collection_json(
                 "type": "application/vnd.pmtiles",
                 "title": "Web map tiles",
                 "pmtiles:layers": pmtiles_layers or [layer_id],
+                **_file_fields(visual),
             }
         )
 
@@ -313,6 +340,8 @@ def build_collection_json(
         "links": links,
         "updated": _now_iso(),
     }
+    if any("file:checksum" in obj for obj in [*assets.values(), *links]):
+        collection["stac_extensions"].append(FILE_SCHEMA)
     if table_info and table_info.get("columns"):
         collection["stac_extensions"].append(TABLE_SCHEMA)
         collection["table:columns"] = table_info["columns"]
