@@ -69,6 +69,30 @@ export async function listPmtilesObjects(connectionId: string): Promise<S3Pmtile
   return listObjectsByExtensions(connectionId, ['.pmtiles'])
 }
 
+// Each published layer folder's thumbnail (rendered from its default style
+// on upload — see apps.s3.portolan.THUMBNAIL_FILENAME).
+const THUMBNAIL_SUFFIX = '/thumbnail.png'
+
+export interface S3PmtilesCatalogObject extends S3PmtilesObject {
+  // Key of the layer folder's thumbnail.png, when it has one.
+  thumbnailKey?: string
+}
+
+/** PMTiles objects plus their layer folders' thumbnails, from one bucket listing. */
+export async function listPmtilesWithThumbnails(connectionId: string): Promise<S3PmtilesCatalogObject[]> {
+  const objects = await listObjectsByExtensions(connectionId, ['.pmtiles', THUMBNAIL_SUFFIX])
+  const thumbnails = new Set(
+    objects.filter((obj) => obj.key.toLowerCase().endsWith(THUMBNAIL_SUFFIX)).map((obj) => obj.key)
+  )
+  return objects
+    .filter((obj) => obj.key.toLowerCase().endsWith('.pmtiles'))
+    .map((obj) => {
+      const slash = obj.key.lastIndexOf('/')
+      const thumbnailKey = slash === -1 ? 'thumbnail.png' : `${obj.key.slice(0, slash)}${THUMBNAIL_SUFFIX}`
+      return thumbnails.has(thumbnailKey) ? { ...obj, thumbnailKey } : obj
+    })
+}
+
 export async function listCogObjects(connectionId: string): Promise<S3PmtilesObject[]> {
   const objects = await listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
   // maplibre-cog-protocol only renders Web Mercator COGs. cng-lite's COG

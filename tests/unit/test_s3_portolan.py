@@ -344,3 +344,31 @@ def test_catalogs_from_before_root_docs_gain_them_on_next_change():
     assert {"describedby", "agents"} <= {
         link["rel"] for link in json.loads(bucket.objects["catalog.json"])["links"]
     }
+
+
+def test_thumbnail_is_listed_apart_from_data_files():
+    assets = [*VECTOR_ASSETS, portolan.thumbnail_asset({"name": "roads_thumbnail.png"})]
+    agents = portolan.build_agents_md(
+        title="Roads", layer_id="roads", kind="pmtiles", data_assets=assets
+    )
+    assert "- Thumbnail: `./thumbnail.png` (PNG preview of the default style)" in agents
+    assert "Data file: `./thumbnail.png`" not in agents
+
+    collection = collection_for(assets)
+    assert collection["assets"]["thumbnail"]["roles"] == ["thumbnail"]
+    assert set(collection["assets"]) == {"data", "thumbnail", "style-default"}
+
+
+def test_default_vector_style_draws_points():
+    style = portolan.default_style_for_pmtiles("default", "roads.pmtiles")
+    circle = next(layer for layer in style["layers"] if layer["type"] == "circle")
+    assert circle["filter"] == ["==", ["geometry-type"], "Point"]
+    assert circle["paint"]["circle-color"] == "#2d7d9b"
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [("roads_thumbnail.png", True), ("output_cog_thumbnail.png", True), ("roads.png", False)],
+)
+def test_is_thumbnail_result(name, expected):
+    assert portolan.is_thumbnail_result(name) is expected

@@ -12,6 +12,7 @@ import {
   listAllLayerObjects,
   listCogObjects,
   listPmtilesObjects,
+  listPmtilesWithThumbnails,
   openStyleEditor,
   styleKeyForPmtiles,
 } from './mapExplorer'
@@ -78,6 +79,33 @@ describe('mapExplorer API', () => {
     expect(result.map((o) => o.key)).toEqual(['a/one.pmtiles', 'b/two.PMTILES'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/s3/objects/conn%201?')
+  })
+
+  it('listPmtilesWithThumbnails pairs each layer with its folder thumbnail', async () => {
+    stubFetch(() =>
+      json({
+        objects: [
+          object('roads/roads.pmtiles'),
+          object('roads/thumbnail.png'),
+          object('rivers/rivers.pmtiles'),
+          object('rivers/other.png'),
+          object('root.pmtiles'),
+          object('thumbnail.png'),
+        ],
+        prefixes: [],
+        isTruncated: false,
+      }),
+    )
+
+    const result = await listPmtilesWithThumbnails('conn')
+
+    expect(result.map((o) => [o.key, o.thumbnailKey])).toEqual([
+      ['roads/roads.pmtiles', 'roads/thumbnail.png'],
+      ['rivers/rivers.pmtiles', undefined],
+      ['root.pmtiles', undefined],
+    ])
+    // One bucket listing covers both the layers and their thumbnails.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('listCogObjects only keeps Web Mercator COGs', async () => {

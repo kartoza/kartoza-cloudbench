@@ -309,7 +309,7 @@ def run_conversion(
                     # come from the PMTiles or COG.
                     if media_type == portolan.PARQUET_MEDIA_TYPE:
                         table_info = asset["item"].get("info")
-                    elif info is None:
+                    elif media_type != portolan.THUMBNAIL_MEDIA_TYPE and info is None:
                         info = asset["item"].get("info")
 
                 portolan.finalize_layer(

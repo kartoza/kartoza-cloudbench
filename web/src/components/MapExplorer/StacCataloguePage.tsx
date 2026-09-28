@@ -9,16 +9,20 @@ import {
   Button,
   Link as ChakraLink,
   Tooltip,
+  Image,
+  Center,
 } from '@chakra-ui/react'
 import { getS3Connections } from '../../api/s3'
-import { listPmtilesObjects, getS3PresignedUrl, openStyleEditor } from '../../api/mapExplorer'
+import { listPmtilesWithThumbnails, getS3PresignedUrl, openStyleEditor } from '../../api/mapExplorer'
 import { getConnections } from '../../api/connection'
 import { getWorkspaces } from '../../api/workspace'
 import { getLayers } from '../../api/layer'
 
+// The layer "Open on map" shows (on its own) in Map Explorer.
 export interface MapTarget {
   connectionId: string
   bucketName: string
+  key: string
 }
 
 interface StyleTarget {
@@ -28,10 +32,17 @@ interface StyleTarget {
   name: string
 }
 
+// A layer's thumbnail.png in its S3 bucket (see listPmtilesWithThumbnails).
+interface ThumbnailTarget {
+  connectionId: string
+  key: string
+}
+
 interface CatalogueItem {
   id: string
   title: string
   description?: string
+  thumbnail?: ThumbnailTarget
   mapTarget?: MapTarget
   styleTarget?: StyleTarget
   downloadHref?: string
@@ -66,7 +77,7 @@ async function buildS3Sections(): Promise<CatalogueSection[]> {
 
   for (const connection of connections) {
     try {
-      const objects = await listPmtilesObjects(connection.id)
+      const objects = await listPmtilesWithThumbnails(connection.id)
       if (objects.length === 0) continue
       sections.push({
         id: `s3-${connection.id}`,
@@ -75,7 +86,8 @@ async function buildS3Sections(): Promise<CatalogueSection[]> {
           id: `s3-${connection.id}-${obj.key}`,
           title: obj.key.split('/').pop()?.replace(/\.pmtiles$/i, '') ?? obj.key,
           description: `${formatBytes(obj.size)} · Updated ${new Date(obj.lastModified).toLocaleDateString()}`,
-          mapTarget: { connectionId: connection.id, bucketName: connection.bucket },
+          thumbnail: obj.thumbnailKey ? { connectionId: connection.id, key: obj.thumbnailKey } : undefined,
+          mapTarget: { connectionId: connection.id, bucketName: connection.bucket, key: obj.key },
           styleTarget: {
             connectionId: connection.id,
             bucketName: connection.bucket,
@@ -140,6 +152,57 @@ async function buildGeoServerSections(): Promise<CatalogueSection[]> {
   return sections
 }
 
+const THUMBNAIL_HEIGHT = '140px'
+
+// Presigned rather than proxied: an <img> can't send the API token header.
+function CatalogueThumbnail({ target, alt }: { target?: ThumbnailTarget; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (!target) return
+    let cancelled = false
+    getS3PresignedUrl(target.connectionId, target.key)
+      .then((presigned) => {
+        if (!cancelled) setUrl(presigned)
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [target])
+
+  if (!target || failed) {
+    return (
+      <Center h={THUMBNAIL_HEIGHT} bg="gray.50" borderRadius="sm">
+        <Text fontSize="xs" color="gray.400">No preview</Text>
+      </Center>
+    )
+  }
+  if (!url) {
+    return (
+      <Center h={THUMBNAIL_HEIGHT} bg="gray.50" borderRadius="sm">
+        <Spinner size="sm" color="gray.400" />
+      </Center>
+    )
+  }
+  return (
+    <Image
+      src={url}
+      alt={alt}
+      h={THUMBNAIL_HEIGHT}
+      w="100%"
+      objectFit="contain"
+      bg="gray.50"
+      borderRadius="sm"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 export default function StacCataloguePage({ onOpenOnMap }: StacCataloguePageProps) {
   const [sections, setSections] = useState<CatalogueSection[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -201,6 +264,10 @@ export default function StacCataloguePage({ onOpenOnMap }: StacCataloguePageProp
                       borderRadius="md"
                       bg="white"
                     >
+                      {/* S3 layers only — GeoServer layers have no published thumbnail. */}
+                      {item.id.startsWith('s3-') && (
+                        <CatalogueThumbnail target={item.thumbnail} alt={`${item.title} preview`} />
+                      )}
                       <Text fontWeight="semibold">{item.title}</Text>
                       {item.description && (
                         <Text fontSize="sm" color="gray.600" noOfLines={2}>{item.description}</Text>
