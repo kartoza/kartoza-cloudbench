@@ -74,6 +74,9 @@ class CngLiteJob(models.Model):
     # Where an "other" license's terms live, written as the collection's
     # rel=license link (blank: a generated LICENSE.md says they're unknown).
     license_url = models.URLField(max_length=2000, blank=True, default="")
+    # The upload was confirmed to replace an existing layer (or GeoPackage
+    # layer group) folder: it's cleared before the new files are published.
+    replace_existing = models.BooleanField(default=False)
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,

@@ -187,6 +187,7 @@ def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path):
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
             "/api/s3/upload/s3-one",
             {
@@ -218,6 +219,7 @@ def test_upload_loose_shapefile_components_starts_conversion(settings, tmp_path)
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
             "/api/s3/upload/s3-one",
             {
@@ -252,6 +254,7 @@ def test_upload_without_convert_zips_loose_components(settings, tmp_path):
 
     with patch("apps.s3.views.get_s3_client") as get_client:
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         get_client.return_value.put_object.side_effect = capture_archive
         response = api.post(
             "/api/s3/upload/s3-one",
@@ -282,6 +285,7 @@ def conversion_job(settings, tmp_path, owner):
         patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         get_client.return_value.generate_presigned_url.return_value = (
             "http://cloudnativegis/presigned"
         )
@@ -532,6 +536,7 @@ def gpkg_inspect_job(settings, tmp_path, owner):
         patch("apps.s3.pmtiles.httpx.Client", return_value=client),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         get_client.return_value.generate_presigned_url.return_value = (
             "http://cloudnativegis/presigned"
         )

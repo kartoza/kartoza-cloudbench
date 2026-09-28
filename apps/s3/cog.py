@@ -8,7 +8,7 @@ from django.conf import settings
 
 from . import portolan
 from .client import get_s3_client
-from .cng_lite import job_directory, source_object_key
+from .cng_lite import check_target, job_directory, source_object_key
 from .cng_lite import run_conversion as run_cng_lite_conversion
 from .geopackage import is_geopackage, prepare_geopackage
 from .models import CngLiteJob
@@ -52,10 +52,11 @@ def group_results(job, results):
         groups[base]["visual" if is_3857 else "data"] = item
 
     layers = []
+    taken = set()
     for base in order:
         title_stem = base if is_multi else PurePosixPath(job.source_name).stem
         title = portolan.prettify(title_stem)
-        layer_id = portolan.sanitize_layer_id(title_stem)
+        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
         assets = []
         if "data" in groups[base]:
             assets.append(
@@ -98,14 +99,22 @@ def prepare_tiff(uploaded_file, destination):
 
 
 def start_conversion(
-    uploaded_file, key, connection_id, user, license_id=portolan.DEFAULT_LICENSE, license_url=""
+    uploaded_file,
+    key,
+    connection_id,
+    user,
+    license_id=portolan.DEFAULT_LICENSE,
+    license_url="",
+    replace=False,
 ):
+    """Start converting an upload; raises TargetExists unless `replace` (see check_target)."""
     if not settings.CLOUDNATIVEGIS_URL:
         raise ValueError("CloudNativeGIS URL is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     geopackage = is_geopackage(uploaded_file.name)
     s3_client = get_s3_client(connection_id, user)
+    check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
         owner_id=user.username,
@@ -116,6 +125,7 @@ def start_conversion(
         input_size=uploaded_file.size,
         license=license_id,
         license_url=license_url,
+        replace_existing=replace,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)

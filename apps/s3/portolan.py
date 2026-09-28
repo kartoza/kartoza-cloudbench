@@ -111,6 +111,20 @@ def sanitize_layer_id(name: str) -> str:
     return slug
 
 
+def unique_layer_id(layer_id: str, taken: set) -> str:
+    """`layer_id`, or "<id>-2", "<id>-3", ... if already `taken` (then taken too).
+
+    Layer names that differ only in case or punctuation ("Roads", "roads")
+    sanitize to the same id; without this they'd share - and overwrite -
+    one folder.
+    """
+    candidate, n = layer_id, 2
+    while candidate in taken:
+        candidate, n = f"{layer_id}-{n}", n + 1
+    taken.add(candidate)
+    return candidate
+
+
 def prettify(name: str) -> str:
     """Turn a filename stem/table name into a human-readable title."""
     words = [word for word in re.split(r"[-_\s]+", name or "") if word]

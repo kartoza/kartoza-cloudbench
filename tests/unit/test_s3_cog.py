@@ -127,6 +127,7 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
         patch("apps.s3.cog.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
             "/api/s3/upload/s3-one",
             {
@@ -158,6 +159,7 @@ def test_upload_accepts_chosen_license(settings, tmp_path):
         patch("apps.s3.cog.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
             "/api/s3/upload/s3-one",
             {
@@ -196,6 +198,7 @@ def test_upload_records_license_url(settings, tmp_path, license_id, license_url,
         patch("apps.s3.cog.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
             "/api/s3/upload/s3-one",
             {
@@ -265,6 +268,7 @@ def cog_job(settings, tmp_path, owner):
         patch("apps.s3.cog.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", owner)
 
 
@@ -370,6 +374,7 @@ def raster_gpkg_inspect_job(settings, tmp_path, owner):
         patch("apps.s3.pmtiles.httpx.Client", return_value=client),
     ):
         get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         get_client.return_value.generate_presigned_url.return_value = (
             "http://cloudnativegis/presigned"
         )

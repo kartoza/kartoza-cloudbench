@@ -23,6 +23,7 @@ import {
   Badge,
   Alert,
   AlertIcon,
+  Code,
   useColorModeValue,
   Table,
   Thead,
@@ -134,6 +135,9 @@ export default function S3UploadDialog() {
 
   // GeoPackage -> PMTiles/COG layer picker (QGIS-style "select items to add")
   const [isInspecting, setIsInspecting] = useState(false)
+  // The converted upload's folder already exists: waiting for the user to
+  // confirm replacing it (see handleUpload).
+  const [pendingReplace, setPendingReplace] = useState<api.PortolanTarget | null>(null)
   const [gpkgJobId, setGpkgJobId] = useState<string | null>(null)
   // Which pipeline the inspected GeoPackage is headed for — set once
   // inspection reveals whether it has vector layers or raster tables.
@@ -262,7 +266,12 @@ export default function S3UploadDialog() {
     e.preventDefault()
   }, [])
 
-  const handleUpload = async () => {
+  // A different file or target key means a different folder to check.
+  useEffect(() => {
+    setPendingReplace(null)
+  }, [selectedFile, customKey])
+
+  const handleUpload = async (replace = false) => {
     if (isUploading || isConverting || isInspecting) return
     if (!selectedFile || !connectionId) {
       toast({
@@ -272,6 +281,22 @@ export default function S3UploadDialog() {
         duration: 3000,
       })
       return
+    }
+    setPendingReplace(null)
+
+    // A conversion publishes into a layer folder (or, for a GeoPackage, a
+    // layer-group folder) named after the file: ask before replacing one
+    // that already exists, rather than sending the file to have it refused.
+    if (!replace && convertToCloudNative && cngLiteConnected) {
+      try {
+        const target = await api.checkPortolanTarget(connectionId, selectedFile.name, customKey || undefined)
+        if (target.exists) {
+          setPendingReplace(target)
+          return
+        }
+      } catch {
+        // The upload itself still refuses to overwrite (409) without replace.
+      }
     }
 
     // A GeoPackage going through cng-lite is inspected first — it may
@@ -283,7 +308,7 @@ export default function S3UploadDialog() {
       setUploadResult(null)
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
-          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl
+          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -339,7 +364,8 @@ export default function S3UploadDialog() {
         undefined,
         companionFiles,
         license,
-        requestedLicenseUrl
+        requestedLicenseUrl,
+        replace
       )
 
       setUploadResult({
@@ -969,6 +995,28 @@ export default function S3UploadDialog() {
           </VStack>
         </ModalBody>
 
+        {pendingReplace && (
+          <Alert status="warning" borderRadius={0} alignItems="flex-start" py={3}>
+            <AlertIcon />
+            <VStack align="stretch" spacing={2} flex="1">
+              <Text fontSize="sm">
+                A {pendingReplace.kind} already exists at <Code fontSize="xs">{pendingReplace.folder}/</Code>.
+                Replacing removes everything currently in that folder
+                {pendingReplace.kind === 'layer group' ? ', including layers you don\'t select this time,' : ''}
+                {' '}and publishes this upload there.
+              </Text>
+              <HStack justify="flex-end" spacing={2}>
+                <Button size="sm" variant="ghost" onClick={() => setPendingReplace(null)}>
+                  Keep existing
+                </Button>
+                <Button size="sm" colorScheme="red" onClick={() => handleUpload(true)}>
+                  Replace
+                </Button>
+              </HStack>
+            </VStack>
+          </Alert>
+        )}
+
         <ModalFooter
           gap={3}
           borderTop="1px solid"
@@ -995,7 +1043,7 @@ export default function S3UploadDialog() {
             ) : (
               <Button
                 colorScheme="orange"
-                onClick={handleUpload}
+                onClick={() => handleUpload()}
                 isLoading={isUploading || isConverting || isInspecting}
                 loadingText={isConverting ? 'Converting...' : isInspecting ? 'Reading GeoPackage...' : 'Uploading...'}
                 isDisabled={

@@ -31,7 +31,7 @@ from rest_framework.views import APIView
 
 from . import portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
-from .cng_lite import expire_stalled_job
+from .cng_lite import TargetExists, expire_stalled_job, folder_exists, target_folder
 from .cog import (
     start_conversion as start_cog_conversion,
 )
@@ -61,6 +61,22 @@ def _get_owned_connection(request, conn_id):
         return S3Connection.objects.filter(owner=request.user, id=conn_id).first()
     except (ValueError, ValidationError):
         return None
+
+
+def _wants_replace(data):
+    return str(data.get("replace", "false")).lower() == "true"
+
+
+def _target_exists_response(exc):
+    """409 for an upload that would overwrite an existing layer (see TargetExists)."""
+    what = "layer group" if exc.is_group else "layer"
+    return Response(
+        {
+            "error": f"A {what} already exists at {exc.folder}/. Confirm to replace it.",
+            "conflict": {"folder": exc.folder, "kind": what},
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
 
 
 def _requested_license(data):
@@ -932,6 +948,7 @@ class S3UploadView(APIView):
                             companion_files,
                             license_id,
                             license_url,
+                            replace=_wants_replace(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -941,9 +958,17 @@ class S3UploadView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
                         job = start_cog_conversion(
-                            uploaded_file, key, conn_id, request.user, license_id, license_url
+                            uploaded_file,
+                            key,
+                            conn_id,
+                            request.user,
+                            license_id,
+                            license_url,
+                            replace=_wants_replace(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
+                except TargetExists as exc:
+                    return _target_exists_response(exc)
                 except ValueError as exc:
                     return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
                 return Response(
@@ -1019,8 +1044,16 @@ class S3GeoPackageInspectView(APIView):
             )
         try:
             job, layers, raster_tables = inspect_geopackage(
-                uploaded_file, key, conn_id, request.user, license_id, license_url
+                uploaded_file,
+                key,
+                conn_id,
+                request.user,
+                license_id,
+                license_url,
+                replace=_wants_replace(request.data),
             )
+        except TargetExists as exc:
+            return _target_exists_response(exc)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except httpx.HTTPError as exc:
@@ -1181,3 +1214,32 @@ class S3PortolanRecordView(APIView):
                 {"error": "This layer already has checksums; re-publish it to replace them."},
                 status=status.HTTP_409_CONFLICT,
             )
+
+
+class S3PortolanTargetView(APIView):
+    """Where an upload would be published, and whether that folder already exists.
+
+    Lets the upload dialog ask before sending the file, rather than the
+    upload itself being refused (409) after transferring it.
+    """
+
+    def post(self, request, conn_id):
+        filename = str(request.data.get("filename") or "").strip()
+        if not filename:
+            return Response({"error": "filename is required"}, status=status.HTTP_400_BAD_REQUEST)
+        key = str(request.data.get("key") or "").strip() or filename
+        try:
+            client = get_s3_client(conn_id, request.user)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            folder = target_folder(key, filename)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "folder": folder,
+                "exists": folder_exists(client, folder),
+                "kind": "layer group" if filename.lower().endswith(".gpkg") else "layer",
+            }
+        )
