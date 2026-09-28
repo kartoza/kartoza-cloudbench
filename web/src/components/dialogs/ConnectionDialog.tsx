@@ -24,7 +24,6 @@ import {
   Box,
   useToast,
   Select,
-  Divider,
 } from '@chakra-ui/react'
 import { FiEye, FiEyeOff, FiServer, FiCheck, FiDatabase } from 'react-icons/fi'
 import { useUIStore } from '../../stores/uiStore'
@@ -357,63 +356,6 @@ export default function ConnectionDialog() {
                 onSuccess={handleBoughtExternally}
               />
             )}
-
-            {/* Connection Type Selector - only show for new connections */}
-            {!isEditMode && (
-              <FormControl>
-                <FormLabel fontWeight="500" color="gray.700">Connection Type</FormLabel>
-                <HStack spacing={3}>
-                  <motion.div style={{ flex: 1 }} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                    <Box
-                      as="button"
-                      type="button"
-                      onClick={() => setConnectionType('geoserver')}
-                      w="100%"
-                      p={4}
-                      borderRadius="lg"
-                      border="2px solid"
-                      borderColor={connectionType === 'geoserver' ? 'blue.500' : 'gray.200'}
-                      bg={connectionType === 'geoserver' ? 'blue.50' : 'white'}
-                      transition="all 0.2s"
-                      _hover={{ borderColor: 'blue.300' }}
-                    >
-                      <VStack spacing={1}>
-                        <Icon as={FiServer} boxSize={6} color={connectionType === 'geoserver' ? 'blue.500' : 'gray.400'} />
-                        <Text fontWeight="500" color={connectionType === 'geoserver' ? 'blue.700' : 'gray.600'}>
-                          GeoServer
-                        </Text>
-                        <Text fontSize="xs" color="gray.500">Web map server</Text>
-                      </VStack>
-                    </Box>
-                  </motion.div>
-                  <motion.div style={{ flex: 1 }} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                    <Box
-                      as="button"
-                      type="button"
-                      onClick={() => setConnectionType('postgresql')}
-                      w="100%"
-                      p={4}
-                      borderRadius="lg"
-                      border="2px solid"
-                      borderColor={connectionType === 'postgresql' ? 'blue.500' : 'gray.200'}
-                      bg={connectionType === 'postgresql' ? 'blue.50' : 'white'}
-                      transition="all 0.2s"
-                      _hover={{ borderColor: 'blue.300' }}
-                    >
-                      <VStack spacing={1}>
-                        <Icon as={FiDatabase} boxSize={6} color={connectionType === 'postgresql' ? 'blue.500' : 'gray.400'} />
-                        <Text fontWeight="500" color={connectionType === 'postgresql' ? 'blue.700' : 'gray.600'}>
-                          PostgreSQL
-                        </Text>
-                        <Text fontSize="xs" color="gray.500">Database service</Text>
-                      </VStack>
-                    </Box>
-                  </motion.div>
-                </HStack>
-              </FormControl>
-            )}
-
-            <Divider />
 
             {/* GeoServer Form */}
             <AnimatePresence mode="wait">

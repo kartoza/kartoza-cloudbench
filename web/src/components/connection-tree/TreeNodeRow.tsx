@@ -304,20 +304,20 @@ export function TreeNodeRow({
             />
           </Tooltip>
         )}
-        {onDelete && ableToDelete && (
-          <Tooltip label="Delete" fontSize="xs">
-            <IconButton
-              aria-label="Delete"
-              icon={<FiTrash2 size={14} />}
-              size="xs"
-              variant="ghost"
-              colorScheme="red"
-              onClick={onDelete}
-              _hover={{ bg: 'red.50' }}
-            />
-          </Tooltip>
-        )}
       </Flex>
+      {onDelete && ableToDelete && (
+        <Tooltip label="Delete" fontSize="xs">
+          <IconButton
+            aria-label="Delete"
+            icon={<FiTrash2 size={14} />}
+            size="xs"
+            variant="ghost"
+            colorScheme="red"
+            onClick={onDelete}
+            _hover={{ bg: 'red.50' }}
+          />
+        </Tooltip>
+      )}
       {/* Admin link - always visible for connections */}
       {isEnabled && onOpenAdmin && (
         <Tooltip label="Open Website" fontSize="xs">

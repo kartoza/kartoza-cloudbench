@@ -45,36 +45,36 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "name": "S3 Storage",
         "description": "S3-compatible object storage (MinIO, AWS S3, etc.)",
         "enabled": True,
-        "experimental": True,
+        "experimental": False,
     },
-    {
-        "id": "iceberg",
-        "name": "Apache Iceberg",
-        "description": "Apache Iceberg data lakehouse tables",
-        "enabled": False,
-        "experimental": True,
-    },
-    {
-        "id": "qgis",
-        "name": "QGIS Projects",
-        "description": "Local QGIS project files",
-        "enabled": False,
-        "experimental": True,
-    },
-    {
-        "id": "qfieldcloud",
-        "name": "QFieldCloud",
-        "description": "Cloud-based mobile GIS data synchronization",
-        "enabled": False,
-        "experimental": True,
-    },
-    {
-        "id": "mergin",
-        "name": "Mergin Maps",
-        "description": "Field data collection and synchronization platform",
-        "enabled": False,
-        "experimental": True,
-    },
+    # {
+    #     "id": "iceberg",
+    #     "name": "Apache Iceberg",
+    #     "description": "Apache Iceberg data lakehouse tables",
+    #     "enabled": False,
+    #     "experimental": True,
+    # },
+    # {
+    #     "id": "qgis",
+    #     "name": "QGIS Projects",
+    #     "description": "Local QGIS project files",
+    #     "enabled": False,
+    #     "experimental": True,
+    # },
+    # {
+    #     "id": "qfieldcloud",
+    #     "name": "QFieldCloud",
+    #     "description": "Cloud-based mobile GIS data synchronization",
+    #     "enabled": False,
+    #     "experimental": True,
+    # },
+    # {
+    #     "id": "mergin",
+    #     "name": "Mergin Maps",
+    #     "description": "Field data collection and synchronization platform",
+    #     "enabled": False,
+    #     "experimental": True,
+    # },
 ]
 
 
@@ -136,15 +136,17 @@ class ProvidersManager:
             data = json.load(f)
 
         try:
-            # Merge with defaults to ensure new providers are added
+            # The defaults define which providers exist and their metadata;
+            # only the user's enabled state is taken from the file.
             loaded_config = ProvidersConfig.model_validate(data)
-            loaded_ids = {p.id for p in loaded_config.providers}
+            enabled_by_id = {p.id: p.enabled for p in loaded_config.providers}
 
-            for default_provider in DEFAULT_PROVIDERS:
-                if default_provider["id"] not in loaded_ids:
-                    loaded_config.providers.append(ProviderConfig(**default_provider))
-
-            return loaded_config
+            return ProvidersConfig(
+                providers=[
+                    ProviderConfig(**{**p, "enabled": enabled_by_id.get(p["id"], p["enabled"])})
+                    for p in DEFAULT_PROVIDERS
+                ]
+            )
         except (json.JSONDecodeError, ValueError):
             # Corrupted config, return default
             return ProvidersConfig(providers=[ProviderConfig(**p) for p in DEFAULT_PROVIDERS])

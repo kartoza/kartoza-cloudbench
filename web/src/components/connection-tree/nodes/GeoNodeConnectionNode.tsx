@@ -100,6 +100,16 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
     })
   }
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    openDialog('confirm', {
+      mode: 'delete',
+      title: 'Delete GeoNode Connection',
+      message: `Are you sure you want to delete "${connection.name}"?`,
+      data: { geonodeConnectionId: connection.id },
+    })
+  }
+
   const handleOpenAdmin = (e: React.MouseEvent) => {
     e.stopPropagation()
     // GeoServer admin URL is typically the base URL + /web
@@ -118,6 +128,7 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
         isOnline={isOnline}
         onOpenAdmin={handleOpenAdmin}
         onUpload={handleUpload}
+        onDelete={handleDelete}
         level={2}
       />
       {isExpanded && (

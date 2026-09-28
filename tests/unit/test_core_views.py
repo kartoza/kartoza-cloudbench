@@ -57,40 +57,40 @@ class TestProvidersView:
         assert response.status_code == 200
         ids = {p["id"] for p in response.data["providers"]}
         assert "geoserver" in ids
-        assert "iceberg" in ids
+        assert "s3" in ids
 
     def test_put_updates_enabled_state(self, api_client_as):
         client = api_client_as()
         response = client.put(
-            "/api/providers/", {"providers": [{"id": "iceberg", "enabled": True}]}, format="json"
+            "/api/providers/", {"providers": [{"id": "s3", "enabled": False}]}, format="json"
         )
         assert response.status_code == 200
-        iceberg = next(p for p in response.data["providers"] if p["id"] == "iceberg")
-        assert iceberg["enabled"] is True
+        s3 = next(p for p in response.data["providers"] if p["id"] == "s3")
+        assert s3["enabled"] is False
 
         # Persisted, not just echoed back.
         again = client.get("/api/providers/")
-        iceberg_again = next(p for p in again.data["providers"] if p["id"] == "iceberg")
-        assert iceberg_again["enabled"] is True
+        s3_again = next(p for p in again.data["providers"] if p["id"] == "s3")
+        assert s3_again["enabled"] is False
 
     def test_put_ignores_updates_missing_id_or_enabled(self, api_client_as):
         client = api_client_as()
         response = client.put(
             "/api/providers/",
-            {"providers": [{"id": "iceberg"}, {"enabled": True}]},
+            {"providers": [{"id": "s3"}, {"enabled": False}]},
             format="json",
         )
         assert response.status_code == 200
-        iceberg = next(p for p in response.data["providers"] if p["id"] == "iceberg")
-        assert iceberg["enabled"] is False  # unchanged from the default
+        s3 = next(p for p in response.data["providers"] if p["id"] == "s3")
+        assert s3["enabled"] is True  # unchanged from the default
 
     def test_providers_are_scoped_per_user(self, api_client_as):
         api_client_as("alice").put(
-            "/api/providers/", {"providers": [{"id": "iceberg", "enabled": True}]}, format="json"
+            "/api/providers/", {"providers": [{"id": "s3", "enabled": False}]}, format="json"
         )
         bob_response = api_client_as("bob").get("/api/providers/")
-        iceberg = next(p for p in bob_response.data["providers"] if p["id"] == "iceberg")
-        assert iceberg["enabled"] is False
+        s3 = next(p for p in bob_response.data["providers"] if p["id"] == "s3")
+        assert s3["enabled"] is True
 
 
 class TestSettingsView:

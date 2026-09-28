@@ -153,6 +153,15 @@ export default function ConfirmDialog() {
           status: 'success',
           duration: 2000,
         })
+      } else if (data?.geonodeConnectionId) {
+        // Delete GeoNode connection
+        await api.deleteGeoNodeConnection(data.geonodeConnectionId as string)
+        queryClient.invalidateQueries({ queryKey: ['geonodeconnections'] })
+        toast({
+          title: 'GeoNode connection removed',
+          status: 'success',
+          duration: 2000,
+        })
       } else if (data?.connectionId && !data?.workspace) {
         // Delete connection
         await removeConnection(data.connectionId as string)
