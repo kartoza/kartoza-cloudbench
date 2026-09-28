@@ -135,8 +135,8 @@ export interface LayerCollectionDetail extends LayerCollectionSummary {
   items: LayerCollectionItem[]
 }
 
-// Lists the current user's layer collections — one is created automatically
-// per GeoPackage upload, grouping every layer/table it produced.
+// Lists the current user's layer collections — one per GeoPackage published to
+// a bucket (its Portolan sub-catalog), grouping every layer/table it produced.
 export async function getLayerCollections(): Promise<LayerCollectionSummary[]> {
   const response = await fetch(`${API_BASE}/s3/collections`)
   return handleResponse(response)

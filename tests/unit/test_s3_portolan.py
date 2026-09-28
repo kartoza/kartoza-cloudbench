@@ -465,8 +465,9 @@ def test_geopackage_layers_are_published_into_a_sub_catalog():
     assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
         "./castelo-branco/catalog.json"
     ]
-    assert b"[Castelo Branco](./castelo-branco/README.md) (layer group)" in (
-        bucket.objects["README.md"]
+    assert (
+        b"[Castelo Branco](./castelo-branco/README.md) (layer group)"
+        in (bucket.objects["README.md"])
     )
 
 
@@ -500,8 +501,14 @@ def test_catalog_collections_follows_sub_catalogs():
     publish_gpkg_layer(bucket, "highway", "Highway")
 
     assert portolan.catalog_collections(bucket) == [
-        {"folder": "roads", "title": "Roads"},
-        {"folder": "castelo-branco/highway", "title": "Highway"},
+        {"folder": "roads", "title": "Roads", "catalog": "", "catalog_title": ""},
+        # A GeoPackage layer: its sub-catalog is its layer group.
+        {
+            "folder": "castelo-branco/highway",
+            "title": "Highway",
+            "catalog": "castelo-branco",
+            "catalog_title": "Castelo Branco",
+        },
     ]
     assert portolan.catalog_collections(FakeBucket()) is None
 
@@ -512,7 +519,7 @@ def test_deleting_a_geopackage_layer_prunes_its_sub_catalog():
     publish_gpkg_layer(bucket, "building", "Building")
     root_before = bucket.objects["catalog.json"]
 
-    with patch("apps.s3.portolan._now_iso", return_value="2099-01-01T00:00:00Z"):
+    with patch("apps.s3.portolan._now_iso_ms", return_value="2099-01-01T00:00:00.000Z"):
         portolan.prune_root_catalog(bucket, "castelo-branco/highway/")
 
     sub = bucket.json("castelo-branco/catalog.json")
@@ -538,4 +545,6 @@ def test_deleting_the_geopackage_folder_removes_its_sub_catalog_from_the_root():
     assert [
         link["href"] for link in bucket.json("catalog.json")["links"] if link["rel"] == "child"
     ] == ["./roads/collection.json"]
-    assert portolan.catalog_collections(bucket) == [{"folder": "roads", "title": "Roads"}]
+    assert portolan.catalog_collections(bucket) == [
+        {"folder": "roads", "title": "Roads", "catalog": "", "catalog_title": ""}
+    ]

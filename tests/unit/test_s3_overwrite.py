@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from apps.s3 import cog, pmtiles, portolan
 from apps.s3.cng_lite import target_folder
-from apps.s3.models import CngLiteJob, LayerCollection, LayerCollectionItem
+from apps.s3.models import CngLiteJob
 
 GPKG_MAGIC = b"SQLite format 3\x00"
 
@@ -181,7 +181,7 @@ def test_target_endpoint_reports_before_uploading(api):
 
 
 @pytest.mark.django_db
-def test_replace_clears_the_folder_and_its_map_explorer_groups_before_publishing():
+def test_replace_clears_the_folder_before_publishing():
     from apps.s3.cng_lite import _clear_for_replace
 
     job = CngLiteJob.objects.create(
@@ -194,21 +194,9 @@ def test_replace_clears_the_folder_and_its_map_explorer_groups_before_publishing
         input_size=1,
         replace_existing=True,
     )
-    stale = LayerCollection.objects.create(
-        owner_id="7", connection_id="conn", bucket="bucket", name="old", source_name="x.gpkg"
-    )
-    LayerCollectionItem.objects.create(
-        collection=stale, name="Highway", key="maps/castelo-branco/highway/highway.pmtiles"
-    )
-    unrelated = LayerCollection.objects.create(
-        owner_id="7", connection_id="conn", bucket="bucket", name="other", source_name="y.gpkg"
-    )
-    LayerCollectionItem.objects.create(
-        collection=unrelated, name="Roads", key="maps/castelo-branco-2/roads/roads.pmtiles"
-    )
     client = Mock()
 
     _clear_for_replace(job, client)
 
+    # Map Explorer's group for it is read from the catalog, so it goes with the folder.
     client.delete_prefix.assert_called_once_with("maps/castelo-branco/")
-    assert list(LayerCollection.objects.values_list("name", flat=True)) == ["other"]

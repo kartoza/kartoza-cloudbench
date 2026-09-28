@@ -29,7 +29,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import portolan, portolan_verify
+from . import layer_groups, portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import TargetExists, expire_stalled_job, folder_exists, target_folder
 from .cog import (
@@ -40,7 +40,7 @@ from .cog import (
 )
 from .duckdb import get_duckdb_engine
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
-from .models import CngLiteJob, LayerCollection, S3Connection
+from .models import CngLiteJob, S3Connection
 from .pmtiles import (
     cancel_geopackage_inspection,
     inspect_geopackage,
@@ -1117,29 +1117,31 @@ class S3GeoPackageConvertView(APIView):
 
 
 class S3LayerCollectionListView(APIView):
-    """List the current user's layer collections (one per GeoPackage upload)."""
+    """List the user's layer groups: one per GeoPackage published to a bucket.
+
+    Read from each bucket's Portolan catalog (see apps.s3.layer_groups).
+    """
 
     def get(self, request):
-        connection_id = request.query_params.get("connectionId")
-        bucket = request.query_params.get("bucket")
-        collections = LayerCollection.objects.filter(owner_id=request.user.username)
-        if connection_id:
-            collections = collections.filter(connection_id=connection_id)
-        if bucket:
-            collections = collections.filter(bucket=bucket)
-        return Response([collection.to_dict() for collection in collections])
+        try:
+            groups = layer_groups.list_groups(
+                request.user,
+                connection_id=request.query_params.get("connectionId"),
+                bucket=request.query_params.get("bucket"),
+            )
+        except (ValueError, ValidationError):  # a malformed connectionId
+            groups = []
+        return Response([{k: v for k, v in group.items() if k != "items"} for group in groups])
 
 
 class S3LayerCollectionDetailView(APIView):
-    """A single layer collection with its full layer list."""
+    """A single layer group with its full layer list."""
 
     def get(self, request, collection_id):
-        collection = LayerCollection.objects.filter(
-            pk=collection_id, owner_id=request.user.username
-        ).first()
-        if not collection:
+        group = layer_groups.get_group(request.user, collection_id)
+        if not group:
             return Response({"error": "Collection not found"}, status=status.HTTP_404_NOT_FOUND)
-        return Response(collection.to_dict(include_items=True))
+        return Response(group)
 
 
 class S3PresignedURLView(APIView):

@@ -84,14 +84,17 @@ def _share_staged_source(vector, raster):
 
 
 def _run_in_turn(vector_id, raster_id):
-    """Convert the vector layers, then the raster tables."""
-    group_id = None
+    """Convert the vector layers, then the raster tables.
+
+    Both land in the one sub-catalog, which is the upload's Map Explorer
+    layer group (see layer_groups).
+    """
     try:
-        group_id = pmtiles.run_conversion(vector_id)
+        pmtiles.run_conversion(vector_id)
     except Exception:
         logger.exception("GeoPackage vector job %s failed unexpectedly", vector_id)
     finally:
         vector = CngLiteJob.objects.filter(pk=vector_id).first()
         if vector is not None:
             CngLiteJob.objects.filter(pk=raster_id).update(source_key=vector.source_key)
-        cog.run_conversion(raster_id, collection_id=group_id)
+        cog.run_conversion(raster_id)

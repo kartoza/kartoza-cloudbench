@@ -18,7 +18,7 @@ from apps.s3.cog import (
 from apps.s3.cog import (
     start_geopackage_conversion as start_geopackage_cog_conversion,
 )
-from apps.s3.models import CngLiteJob, LayerCollection
+from apps.s3.models import CngLiteJob
 from apps.s3.pmtiles import inspect_geopackage
 
 GPKG_MAGIC = b"SQLite format 3\x00"
@@ -338,8 +338,6 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
             "s3://bucket/folder/raster/raster.tif",
             "s3://bucket/folder/raster/raster_3857.tif",
         }
-        # A standalone TIFF is a single layer — only GeoPackages get a collection.
-        assert not LayerCollection.objects.exists()
     else:
         assert cog_job.status == "failed"
         assert cog_job.error
