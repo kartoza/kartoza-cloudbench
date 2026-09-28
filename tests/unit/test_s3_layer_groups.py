@@ -205,3 +205,101 @@ def test_group_id_round_trips_nested_folders():
     assert value == "conn-1:maps~castelo"
     assert layer_groups.parse_group_id(value) == ("conn-1", "maps/castelo")
     assert layer_groups.parse_group_id("no-separator") is None
+
+
+# -- The catalogue page ---------------------------------------------------------
+
+
+class ListingBucket(FakeBucket):
+    """A FakeBucket that can also be listed, for buckets without a catalog."""
+
+    def list_objects(self, prefix="", delimiter="/", max_keys=1000, continuation_token=None):
+        keys = sorted(self.objects)
+        start = int(continuation_token or 0)
+        page = keys[start : start + max_keys]
+        more = start + max_keys < len(keys)
+        return {
+            "objects": [
+                {"key": key, "size": len(self.objects[key]), "lastModified": "2026-09-28"}
+                for key in page
+            ],
+            "isTruncated": more,
+            "nextContinuationToken": str(start + max_keys) if more else None,
+        }
+
+
+@pytest.mark.django_db
+def test_catalogue_follows_the_catalog_hierarchy(api, serve, connection):
+    bucket = castelo_bucket()
+    publish(
+        bucket,
+        "rivers",
+        "Rivers",
+        [
+            {"filename": "rivers.pmtiles", "role": "visual", "file": {"size": 42}},
+            {"filename": "thumbnail.png", "role": "thumbnail"},
+        ],
+    )
+    serve(bucket)
+
+    [section] = api.get("/api/s3/catalogue").json()
+
+    assert section["connectionId"] == str(connection.id)
+    assert (section["connectionName"], section["bucket"]) == ("MinIO", "data")
+    assert section["fromCatalog"] is True
+    by_name = {entry["name"]: entry for entry in section["entries"]}
+    assert set(by_name) == {"Roads", "Castelo Branco", "Rivers"}
+
+    # Standalone layers are top-level cards, with their thumbnail and size.
+    rivers = by_name["Rivers"]
+    assert rivers["kind"] == "layer"
+    assert (rivers["key"], rivers["format"]) == ("rivers/rivers.pmtiles", "pmtiles")
+    assert rivers["thumbnailKey"] == "rivers/thumbnail.png"
+    assert rivers["size"] == 42
+    assert by_name["Roads"]["thumbnailKey"] is None
+
+    # A GeoPackage is one card holding its layers - vector and raster.
+    group = by_name["Castelo Branco"]
+    assert group["kind"] == "group"
+    assert group["id"] == f"{connection.id}:maps~castelo"
+    assert (group["sourceName"], group["itemCount"]) == ("CasteloBranco.gpkg", 2)
+    assert group["sourceKey"] == "maps/castelo/source/CasteloBranco.gpkg"
+    assert sorted((layer["name"], layer["key"], layer["format"]) for layer in group["layers"]) == [
+        ("DEM", "maps/castelo/dem/dem_3857.tif", "cog"),
+        ("Highway", "maps/castelo/highway/highway.pmtiles", "pmtiles"),
+    ]
+
+
+@pytest.mark.django_db
+def test_catalogue_without_a_catalog_scans_for_map_ready_files(api, serve, connection):
+    bucket = ListingBucket()
+    for key in (
+        "old/roads.pmtiles",
+        "old/thumbnail.png",
+        "dem/dem.tif",  # original CRS: Map Explorer can't render it
+        "dem/dem_3857.tif",
+        "maps/sources/11111111-2222-3333-4444-555555555555/roads.pmtiles",  # a staged upload
+        "notes.txt",
+    ):
+        bucket.objects[key] = b"x" * 3
+    serve(bucket)
+
+    [section] = api.get("/api/s3/catalogue").json()
+
+    assert section["fromCatalog"] is False
+    assert [
+        (entry["kind"], entry["name"], entry["key"], entry["format"], entry["thumbnailKey"])
+        for entry in section["entries"]
+    ] == [
+        ("layer", "dem_3857", "dem/dem_3857.tif", "cog", None),
+        ("layer", "roads", "old/roads.pmtiles", "pmtiles", "old/thumbnail.png"),
+    ]
+
+
+@pytest.mark.django_db
+def test_catalogue_leaves_out_empty_and_unreachable_buckets(api, serve, owner, connection):
+    serve(ListingBucket())
+    assert api.get("/api/s3/catalogue").json() == []
+
+    with patch("apps.s3.layer_groups.get_s3_client", side_effect=RuntimeError("down")):
+        assert api.get("/api/s3/catalogue").json() == []

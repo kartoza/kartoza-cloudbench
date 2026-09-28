@@ -12,7 +12,7 @@ import {
   listAllLayerObjects,
   listCogObjects,
   listPmtilesObjects,
-  listPmtilesWithThumbnails,
+  getCatalogue,
   openStyleEditor,
   styleKeyForPmtiles,
 } from './mapExplorer'
@@ -81,31 +81,12 @@ describe('mapExplorer API', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/s3/objects/conn%201?')
   })
 
-  it('listPmtilesWithThumbnails pairs each layer with its folder thumbnail', async () => {
-    stubFetch(() =>
-      json({
-        objects: [
-          object('roads/roads.pmtiles'),
-          object('roads/thumbnail.png'),
-          object('rivers/rivers.pmtiles'),
-          object('rivers/other.png'),
-          object('root.pmtiles'),
-          object('thumbnail.png'),
-        ],
-        prefixes: [],
-        isTruncated: false,
-      }),
-    )
+  it('getCatalogue reads the catalogue endpoint', async () => {
+    const catalogue = [{ connectionId: 'c', connectionName: 'MinIO', bucket: 'b', fromCatalog: true, entries: [] }]
+    stubFetch(() => json(catalogue))
 
-    const result = await listPmtilesWithThumbnails('conn')
-
-    expect(result.map((o) => [o.key, o.thumbnailKey])).toEqual([
-      ['roads/roads.pmtiles', 'roads/thumbnail.png'],
-      ['rivers/rivers.pmtiles', undefined],
-      ['root.pmtiles', undefined],
-    ])
-    // One bucket listing covers both the layers and their thumbnails.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(await getCatalogue()).toEqual(catalogue)
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/s3\/catalogue$/)
   })
 
   it('listCogObjects only keeps Web Mercator COGs', async () => {

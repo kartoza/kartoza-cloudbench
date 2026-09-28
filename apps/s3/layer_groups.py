@@ -1,4 +1,4 @@
-"""Map Explorer's layer groups, read from the bucket's Portolan catalog.
+"""Map Explorer's layer groups and the catalogue page, read from the bucket's catalog.
 
 A GeoPackage is published as a Portolan sub-catalog holding a folder per
 layer (see portolan.ensure_sub_catalog); each such sub-catalog is a layer
@@ -13,6 +13,7 @@ of name/key/format).
 
 import logging
 import posixpath
+import re
 from typing import Any
 
 from apps.stac import portolan_layers
@@ -68,6 +69,15 @@ def _source_name(layers: list[dict[str, Any]], fallback: str) -> str:
         if source and source.get("href"):
             return str(posixpath.basename(source["href"]))
     return fallback
+
+
+def _source_key(layers: list[dict[str, Any]]) -> str | None:
+    """The bucket key of the group's original upload, if its layers keep one."""
+    for layer in layers:
+        source = layer["collection"].get("assets", {}).get("source")
+        if source and source.get("href"):
+            return str(posixpath.normpath(posixpath.join(layer["folder"], source["href"])))
+    return None
 
 
 def _connection_groups(conn, client) -> list[dict[str, Any]]:
@@ -131,3 +141,153 @@ def get_group(user, value: str) -> dict[str, Any] | None:
         return None
     client = get_s3_client(str(conn.id), user)
     return next((group for group in _connection_groups(conn, client) if group["id"] == value), None)
+
+
+# -- The catalogue page ---------------------------------------------------------
+
+# A job's staged upload ("<parent>/sources/<job uuid>/<file>"), not a layer.
+_SOURCE_ARTIFACT = re.compile(
+    r"(^|/)sources/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/"
+)
+
+
+def _layer_entry(layer: dict[str, Any]) -> dict[str, Any] | None:
+    """A published layer as a catalogue card: its renderable file, thumbnail, size."""
+    item = _layer_item(layer)
+    if item is None:
+        return None
+    collection = layer["collection"]
+    folder = layer["folder"]
+    thumbnail = collection.get("assets", {}).get("thumbnail")
+    renderable = (
+        next((link for link in collection.get("links", []) if link.get("rel") == "pmtiles"), None)
+        or collection.get("assets", {}).get("visual")
+        or {}
+    )
+    return {
+        "kind": "layer",
+        **item,
+        "folder": folder,
+        "thumbnailKey": (
+            posixpath.normpath(posixpath.join(folder, thumbnail["href"]))
+            if thumbnail and thumbnail.get("href")
+            else None
+        ),
+        "size": renderable.get("file:size"),
+        "updated": collection.get("updated"),
+    }
+
+
+def _catalog_entries(conn, layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Top-level layers and GeoPackage groups, in the catalog's order."""
+    entries: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, Any]] = {}
+    for layer in layers:
+        entry = _layer_entry(layer)
+        if entry is None:
+            continue
+        folder = layer.get("catalog")
+        if not folder:
+            entries.append(entry)
+            continue
+        if folder not in groups:
+            groups[folder] = {
+                "kind": "group",
+                "id": group_id(str(conn.id), folder),
+                "name": layer.get("catalog_title") or posixpath.basename(folder),
+                "folder": folder,
+                "layers": [],
+                "_members": [],
+            }
+            entries.append(groups[folder])
+        groups[folder]["layers"].append(entry)
+        groups[folder]["_members"].append(layer)
+    for group in groups.values():
+        members = group.pop("_members")
+        group["sourceName"] = _source_name(members, group["name"])
+        group["sourceKey"] = _source_key(members)
+        group["itemCount"] = len(group["layers"])
+        group["thumbnailKey"] = next(
+            (entry["thumbnailKey"] for entry in group["layers"] if entry["thumbnailKey"]), None
+        )
+        group["updated"] = max((entry["updated"] or "" for entry in group["layers"]), default="")
+    return entries
+
+
+def _scanned_entries(client) -> list[dict[str, Any]]:
+    """For a bucket without a catalog: its map-ready files, as standalone layers.
+
+    PMTiles and EPSG:3857 COGs (what Map Explorer renders), skipping jobs'
+    staged uploads; a sibling thumbnail.png is used when there is one.
+    """
+    objects: list[dict[str, Any]] = []
+    token = None
+    while True:
+        result = client.list_objects(
+            prefix="", delimiter="", max_keys=1000, continuation_token=token
+        )
+        objects.extend(result["objects"])
+        if not result.get("isTruncated"):
+            break
+        token = result.get("nextContinuationToken")
+    keys = {obj["key"] for obj in objects}
+    entries = []
+    for obj in objects:
+        key = obj["key"]
+        lower = key.lower()
+        if _SOURCE_ARTIFACT.search(key):
+            continue
+        if lower.endswith(".pmtiles"):
+            fmt = "pmtiles"
+        elif re.search(r"_3857\.tiff?$", lower):
+            fmt = "cog"
+        else:
+            continue
+        folder = posixpath.dirname(key)
+        thumbnail = f"{folder}/thumbnail.png" if folder else "thumbnail.png"
+        entries.append(
+            {
+                "kind": "layer",
+                "name": posixpath.splitext(posixpath.basename(key))[0],
+                "key": key,
+                "format": fmt,
+                "folder": folder,
+                "thumbnailKey": thumbnail if thumbnail in keys else None,
+                "size": obj.get("size"),
+                "updated": obj.get("lastModified"),
+            }
+        )
+    return entries
+
+
+def catalogue(user) -> list[dict[str, Any]]:
+    """Every S3 connection's layers for the catalogue page.
+
+    Per connection, its catalog's top-level layers and GeoPackage groups
+    (each with its layers), in catalog order - the same hierarchy the STAC
+    API serves - or, for a bucket without a catalog, its map-ready files.
+    Connections with nothing to show are left out.
+    """
+    sections = []
+    for conn in S3Connection.objects.filter(owner=user):
+        try:
+            client = get_s3_client(str(conn.id), user)
+            layers = portolan_layers.list_layers(client, str(conn.id))
+            from_catalog = layers is not None
+            entries = (
+                _catalog_entries(conn, layers) if layers is not None else _scanned_entries(client)
+            )
+        except Exception:
+            logger.warning("Couldn't read the catalogue of connection %s", conn.id, exc_info=True)
+            continue
+        if entries:
+            sections.append(
+                {
+                    "connectionId": str(conn.id),
+                    "connectionName": conn.name,
+                    "bucket": conn.bucket,
+                    "fromCatalog": from_catalog,
+                    "entries": entries,
+                }
+            )
+    return sections

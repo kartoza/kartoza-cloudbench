@@ -1145,6 +1145,13 @@ class S3GeoPackageConvertView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class S3CatalogueView(APIView):
+    """Every S3 connection's layers and GeoPackage groups, for the catalogue page."""
+
+    def get(self, request):
+        return Response(layer_groups.catalogue(request.user))
+
+
 class S3LayerCollectionListView(APIView):
     """List the user's layer groups: one per GeoPackage published to a bucket.
 
