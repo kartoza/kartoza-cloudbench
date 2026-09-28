@@ -278,3 +278,18 @@ def test_command_records_only_layers_without_checksums(connection, capsys):
     assert "RECORDED    MinIO/old" in out
     assert "OK          MinIO/roads" in out
     assert bucket.objects["roads/collection.json"] == roads_before
+
+
+def test_catalog_layers_include_geopackage_sub_catalog_layers():
+    bucket = published_bucket()
+    root = json.loads(bucket.objects["catalog.json"])
+    root["links"].append({"rel": "child", "href": "./gpkg/catalog.json", "title": "Gpkg"})
+    bucket.objects["catalog.json"] = json.dumps(root).encode()
+    bucket.objects["gpkg/catalog.json"] = json.dumps(
+        {"links": [{"rel": "child", "href": "./highway/collection.json", "title": "Highway"}]}
+    ).encode()
+
+    assert portolan_verify.catalog_layers(bucket)[-1] == {
+        "folder": "gpkg/highway",
+        "title": "Highway",
+    }

@@ -285,6 +285,13 @@ def run_conversion(
             layers = group_results(job, results)
             base_prefix = str(PurePosixPath(job.output_key).parent)
             base_prefix = "" if base_prefix in ("", ".") else base_prefix
+            catalog_folder = catalog_title = ""
+            if is_geopackage(job.source_name):
+                source_stem = PurePosixPath(job.source_name).stem
+                catalog_title = portolan.prettify(source_stem)
+                gpkg_id = portolan.sanitize_layer_id(source_stem)
+                catalog_folder = f"{base_prefix}/{gpkg_id}" if base_prefix else gpkg_id
+                base_prefix = catalog_folder
             provider_name = _provider_name(owner)
             host_email = host_contact_email(job.connection_id)
 
@@ -340,6 +347,13 @@ def run_conversion(
                     table_info=table_info,
                     host_name=settings.PORTOLAN_HOST_NAME,
                     host_email=host_email,
+                    catalog_folder=catalog_folder,
+                    catalog_title=catalog_title,
+                    catalog_description=(
+                        f"Layers from {job.source_name}, uploaded via CloudBench."
+                        if catalog_folder
+                        else ""
+                    ),
                 )
                 # The "visual" (renderable) asset is what Map Explorer opens —
                 # a plain PMTiles layer has only that; a COG layer's other

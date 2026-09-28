@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -266,6 +266,8 @@ def test_finalize_removes_stale_license_file_once_terms_are_known(license_id, li
 class FakeBucket:
     """Just enough of S3Client for the root catalog functions: an in-memory bucket."""
 
+    bucket_url = "http://minio:9000/bucket"
+
     def __init__(self):
         self.objects = {}
 
@@ -274,6 +276,12 @@ class FakeBucket:
 
     def put_object(self, key, body, content_type):
         self.objects[key] = body
+
+    def delete_object(self, key):
+        self.objects.pop(key, None)
+
+    def json(self, key):
+        return json.loads(self.objects[key])
 
 
 def test_publishing_writes_root_readme_and_agents_listing_every_layer():
@@ -405,3 +413,129 @@ def test_no_file_extension_without_checksums():
     collection = collection_for(VECTOR_ASSETS)
     assert portolan.FILE_SCHEMA not in collection["stac_extensions"]
     assert not any(key.startswith("file:") for key in collection["assets"]["data"])
+
+
+def publish_gpkg_layer(bucket, layer_id, title, catalog_folder="castelo-branco"):
+    portolan.finalize_layer(
+        bucket,
+        folder=f"{catalog_folder}/{layer_id}",
+        layer_id=layer_id,
+        title=title,
+        kind="pmtiles",
+        data_assets=[{"filename": f"{layer_id}.pmtiles", "role": "visual"}],
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="CasteloBranco.gpkg",
+        info={"bbox": [1, 2, 3, 4], "layers": [layer_id]},
+        catalog_folder=catalog_folder,
+        catalog_title="Castelo Branco",
+        catalog_description="Layers from CasteloBranco.gpkg, uploaded via CloudBench.",
+    )
+
+
+def test_geopackage_layers_are_published_into_a_sub_catalog():
+    bucket = FakeBucket()
+    publish_gpkg_layer(bucket, "highway", "Highway")
+    publish_gpkg_layer(bucket, "building", "Building")
+
+    # Each layer collection: id is its path, root is the bucket's, parent the group's.
+    highway = bucket.json("castelo-branco/highway/collection.json")
+    assert highway["id"] == "castelo-branco/highway"
+    links = {link["rel"]: link["href"] for link in highway["links"]}
+    assert links["root"] == "../../catalog.json"
+    assert links["parent"] == "../catalog.json"
+
+    # The sub-catalog: its own catalog.json + README.md + AGENTS.md (Portolan MUST).
+    sub = bucket.json("castelo-branco/catalog.json")
+    assert sub["type"] == "Catalog"
+    assert sub["id"] == "castelo-branco"
+    assert sub["title"] == "Castelo Branco"
+    sub_links = [(link["rel"], link["href"]) for link in sub["links"]]
+    assert ("root", "../catalog.json") in sub_links
+    assert ("parent", "../catalog.json") in sub_links
+    assert [href for rel, href in sub_links if rel == "child"] == [
+        "./highway/collection.json",
+        "./building/collection.json",
+    ]
+    assert b"| [Highway](./highway/README.md) |" in bucket.objects["castelo-branco/README.md"]
+    assert b"sub-catalog" in bucket.objects["castelo-branco/AGENTS.md"]
+
+    # The root links the sub-catalog once, not each layer.
+    root = bucket.json("catalog.json")
+    assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
+        "./castelo-branco/catalog.json"
+    ]
+    assert b"[Castelo Branco](./castelo-branco/README.md) (layer group)" in (
+        bucket.objects["README.md"]
+    )
+
+
+def test_top_level_layer_keeps_the_root_as_parent_and_its_path_as_id():
+    bucket = FakeBucket()
+    portolan.finalize_layer(
+        bucket,
+        folder="imports/roads",
+        layer_id="roads",
+        title="Roads",
+        kind="pmtiles",
+        data_assets=[{"filename": "roads.pmtiles", "role": "visual"}],
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="roads.zip",
+        info={"bbox": [1, 2, 3, 4], "layers": ["default"]},
+    )
+
+    collection = bucket.json("imports/roads/collection.json")
+    assert collection["id"] == "imports/roads"
+    links = {link["rel"]: link["href"] for link in collection["links"]}
+    assert links["root"] == links["parent"] == "../../catalog.json"
+    assert [
+        link["href"] for link in bucket.json("catalog.json")["links"] if link["rel"] == "child"
+    ] == ["./imports/roads/collection.json"]
+
+
+def test_catalog_collections_follows_sub_catalogs():
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+    publish_gpkg_layer(bucket, "highway", "Highway")
+
+    assert portolan.catalog_collections(bucket) == [
+        {"folder": "roads", "title": "Roads"},
+        {"folder": "castelo-branco/highway", "title": "Highway"},
+    ]
+    assert portolan.catalog_collections(FakeBucket()) is None
+
+
+def test_deleting_a_geopackage_layer_prunes_its_sub_catalog():
+    bucket = FakeBucket()
+    publish_gpkg_layer(bucket, "highway", "Highway")
+    publish_gpkg_layer(bucket, "building", "Building")
+    root_before = bucket.objects["catalog.json"]
+
+    with patch("apps.s3.portolan._now_iso", return_value="2099-01-01T00:00:00Z"):
+        portolan.prune_root_catalog(bucket, "castelo-branco/highway/")
+
+    sub = bucket.json("castelo-branco/catalog.json")
+    assert [link["href"] for link in sub["links"] if link["rel"] == "child"] == [
+        "./building/collection.json"
+    ]
+    assert b"Highway" not in bucket.objects["castelo-branco/README.md"]
+    # The root still links the group, and is rewritten so its ETag changes.
+    root = bucket.json("catalog.json")
+    assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
+        "./castelo-branco/catalog.json"
+    ]
+    assert bucket.objects["catalog.json"] != root_before
+
+
+def test_deleting_the_geopackage_folder_removes_its_sub_catalog_from_the_root():
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+    publish_gpkg_layer(bucket, "highway", "Highway")
+
+    portolan.prune_root_catalog(bucket, "castelo-branco/")
+
+    assert [
+        link["href"] for link in bucket.json("catalog.json")["links"] if link["rel"] == "child"
+    ] == ["./roads/collection.json"]
+    assert portolan.catalog_collections(bucket) == [{"folder": "roads", "title": "Roads"}]

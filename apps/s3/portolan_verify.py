@@ -38,22 +38,12 @@ class AlreadyRecorded(Exception):
 
 
 def catalog_layers(client) -> list[dict[str, str]]:
-    """[{'folder', 'title'}, ...] for each layer in the bucket's catalog.json.
+    """[{'folder', 'title'}, ...] for each layer in the bucket's catalog.
 
+    Includes layers inside sub-catalogs (a GeoPackage's layer group).
     Empty if the bucket has no (readable) catalog.json.
     """
-    try:
-        catalog = json.loads(client.get_object(portolan.CATALOG_KEY))
-    except Exception:
-        return []
-    layers = []
-    for link in catalog.get("links", []):
-        href = str(link.get("href", "")).removeprefix("./")
-        if link.get("rel") != "child" or not href.endswith("/collection.json"):
-            continue
-        folder = posixpath.normpath(href).removesuffix("/collection.json")
-        layers.append({"folder": folder, "title": link.get("title") or folder})
-    return layers
+    return portolan.catalog_collections(client) or []
 
 
 def _checksummed_files(collection: dict[str, Any]) -> list[dict[str, Any]]:
