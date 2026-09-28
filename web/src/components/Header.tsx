@@ -24,6 +24,7 @@ import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
 import { useProvidersStore } from '../stores/providersStore'
 import { useMemo } from "react";
+import JobsIndicator from './JobsIndicator'
 
 interface HeaderProps {
   onSearchClick?: () => void
@@ -294,6 +295,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
 
           {/* Action Icons */}
           <HStack spacing={1}>
+            <JobsIndicator />
             <Tooltip label="Map Explorer" placement="bottom">
               <IconButton
                 aria-label="Map Explorer"

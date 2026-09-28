@@ -40,6 +40,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { ConversionJob } from '../../types'
+import { layerConversionStatuses } from '../../utils/conversionJobs'
+import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
 // Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync. ("proprietary"
 // isn't offered: the Portolan spec forbids it — use "other" with a URL.)
@@ -60,15 +62,6 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-interface LayerProgressStatus {
-  name: string
-  status: 'done' | 'active' | 'pending'
-}
-
-// Derives a per-layer done/active/pending breakdown from the job's coarse
-// 20-80% "converting" progress window and cng-lite's processing order
-// (job.layers), so the picked GeoPackage layers show individual progress
-// instead of one opaque bar.
 // A row in the GeoPackage picker: a vector layer (-> PMTiles) or raster table (-> COG).
 interface GpkgItem {
   key: string
@@ -76,20 +69,6 @@ interface GpkgItem {
   kind: 'vector' | 'raster'
   geometryType?: string
   featureCount?: number
-}
-
-function layerConversionStatuses(job: ConversionJob): LayerProgressStatus[] | null {
-  const layers = job.layers
-  if (!layers || layers.length === 0) return null
-
-  const fraction = Math.min(1, Math.max(0, (job.progress - 20) / 60))
-  const activeIndex = Math.floor(fraction * layers.length)
-  const allDone = job.status === 'completed' || activeIndex >= layers.length
-
-  return layers.map((name, index) => ({
-    name,
-    status: allDone || index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
-  }))
 }
 
 // Helper to detect recommended conversion
@@ -429,6 +408,7 @@ export default function S3UploadDialog() {
 
       if (result.conversionJobId) {
         setConversionJobId(result.conversionJobId)
+        queryClient.invalidateQueries({ queryKey: CONVERSION_JOBS_QUERY_KEY })
       } else if (result.success) {
         resetInputs()
       }
@@ -493,6 +473,7 @@ export default function S3UploadDialog() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
+      queryClient.invalidateQueries({ queryKey: CONVERSION_JOBS_QUERY_KEY })
 
       toast({
         title: 'Conversion started',
@@ -881,6 +862,9 @@ export default function S3UploadDialog() {
               <Text fontSize="sm" color="gray.600" mt={2}>
                 {conversionJob.message}
               </Text>
+              <Text fontSize="xs" color="gray.500" mt={1}>
+                You can close this dialog: the conversion carries on, and its progress stays under Jobs in the header.
+              </Text>
               {(() => {
                 const layerStatuses = layerConversionStatuses(conversionJob)
                 if (!layerStatuses) return null
@@ -945,6 +929,9 @@ export default function S3UploadDialog() {
                 />
                 <Text fontSize="xs" color="gray.600" mt={1}>
                   {conversionJob.message}
+                </Text>
+                <Text fontSize="xs" color="gray.500">
+                  You can close this dialog: progress stays under Jobs in the header.
                 </Text>
                 {(() => {
                   const layerStatuses = layerConversionStatuses(conversionJob)
