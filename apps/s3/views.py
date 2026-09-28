@@ -16,7 +16,7 @@ import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -24,7 +24,9 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
+from django.db.models import Q
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -815,6 +817,36 @@ class S3ConversionToolsView(APIView):
         return Response({"tools": tools})
 
 
+# How long a finished conversion stays in the jobs list (the header's Jobs panel).
+RECENT_JOBS_WINDOW = timedelta(hours=24)
+RECENT_JOBS_LIMIT = 50
+
+
+def _recent_conversion_jobs(user):
+    """The user's running conversions and those finished recently, newest first.
+
+    Lets progress be followed from anywhere in the app - not just the
+    upload dialog that started it, which may have been closed or the page
+    refreshed. A GeoPackage still waiting for its layers to be picked is
+    left out: that step belongs to the open upload dialog. A running job
+    that stopped reporting is marked failed first (see expire_stalled_job).
+    """
+    awaiting_selection = Q(status="pending", layers__isnull=True, source_name__iendswith=".gpkg")
+    jobs = list(
+        CngLiteJob.objects.filter(owner_id=user.username)
+        .filter(
+            Q(status__in=["pending", "running"])
+            | Q(completed_at__gte=timezone.now() - RECENT_JOBS_WINDOW)
+        )
+        .exclude(awaiting_selection)
+        .order_by("-created_at")[:RECENT_JOBS_LIMIT]
+    )
+    for job in jobs:
+        if job.status in ("pending", "running"):
+            expire_stalled_job(job)
+    return jobs
+
+
 class S3ConversionJobsView(APIView):
     """Create and manage conversion jobs."""
 
@@ -862,12 +894,9 @@ class S3ConversionJobsView(APIView):
         )
 
     def get(self, request, job_id=None):
-        """Get job status."""
+        """Get one job's status - or, without a job id, list the user's jobs."""
         if not job_id:
-            return Response(
-                {"error": "Job ID required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response([job.to_dict() for job in _recent_conversion_jobs(request.user)])
 
         try:
             conversion_id = uuid.UUID(job_id)
