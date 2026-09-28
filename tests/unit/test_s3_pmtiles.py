@@ -364,13 +364,19 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     if outcome == "success":
         assert conversion_job.status == "completed"
         assert conversion_job.progress == 100
-        # Every layer gets its own Portolan folder ("folder/roads/").
-        assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", "folder/roads/roads.pmtiles")
-        assert conversion_job.to_dict()["outputPath"] == "s3://bucket/folder/roads/roads.pmtiles"
+        # Every layer gets its own Portolan folder ("folder/roads/"); a
+        # GeoPackage's layers sit inside its sub-catalog ("folder/roads/roads/").
+        layer_key = (
+            "folder/roads/roads/roads.pmtiles"
+            if source_name.endswith(".gpkg")
+            else "folder/roads/roads.pmtiles"
+        )
+        assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", layer_key)
+        assert conversion_job.to_dict()["outputPath"] == f"s3://bucket/{layer_key}"
         # Only a GeoPackage upload is grouped into a collection; a shapefile isn't.
         if source_name.endswith(".gpkg"):
             collection = LayerCollection.objects.get()
-            assert collection.items.get().key == "folder/roads/roads.pmtiles"
+            assert collection.items.get().key == layer_key
         else:
             assert not LayerCollection.objects.exists()
     else:

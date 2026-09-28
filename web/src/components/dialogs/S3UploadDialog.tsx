@@ -121,8 +121,6 @@ export default function S3UploadDialog() {
   const [convertToCloudNative, setConvertToCloudNative] = useState(true)
   const [targetFormat, setTargetFormat] = useState<string>('')
   const [recommendedFormat, setRecommendedFormat] = useState<string | null>(null)
-  const [createSubfolder, setCreateSubfolder] = useState(true) // For GeoPackage layer extraction
-  const [isGeoPackage, setIsGeoPackage] = useState(false)
   const [license, setLicense] = useState(LICENSE_CHOICES[0].id)
   const [licenseUrl, setLicenseUrl] = useState('')
   // Only an "other" license needs a link to its terms.
@@ -190,8 +188,6 @@ export default function S3UploadDialog() {
     setConvertToCloudNative(true)
     setTargetFormat('')
     setRecommendedFormat(null)
-    setCreateSubfolder(true)
-    setIsGeoPackage(false)
     setLicense(LICENSE_CHOICES[0].id)
     setLicenseUrl('')
     setIsInspecting(false)
@@ -230,9 +226,6 @@ export default function S3UploadDialog() {
           : detectRecommendedConversion(selectedFile.name)
       setRecommendedFormat(recommended)
       setTargetFormat(recommended || '')
-      // Detect if it's a GeoPackage
-      const ext = selectedFile.name.split('.').pop()?.toLowerCase()
-      setIsGeoPackage(ext === 'gpkg')
     }
   }, [selectedFile, showPMTiles, showCOG])
 
@@ -340,7 +333,9 @@ export default function S3UploadDialog() {
         convertToCloudNative && !!targetFormat,
         convertToCloudNative ? targetFormat || undefined : undefined,
         (progress) => setUploadProgress(progress),
-        isGeoPackage ? createSubfolder : undefined,
+        // A converted GeoPackage always gets its own folder (a Portolan
+        // sub-catalog of its layers, see apps.s3.cng_lite.run_conversion).
+        undefined,
         undefined,
         companionFiles,
         license,
@@ -687,27 +682,6 @@ export default function S3UploadDialog() {
                               </option>
                             )}
                           </Select>
-
-                          {/* GeoPackage-specific options */}
-                          {isGeoPackage && targetFormat === 'geoparquet' && (
-                            <Box p={2} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
-                              <Text fontSize="xs" color="blue.700" fontWeight="500" mb={1}>
-                                GeoPackage Layer Extraction
-                              </Text>
-                              <Text fontSize="xs" color="gray.600" mb={2}>
-                                All layers extracted as separate GeoParquet/Parquet files.
-                              </Text>
-                              <HStack justify="space-between">
-                                <Text fontSize="xs" color="gray.700">Create subfolder</Text>
-                                <Switch
-                                  isChecked={createSubfolder}
-                                  onChange={(e) => setCreateSubfolder(e.target.checked)}
-                                  colorScheme="blue"
-                                  size="sm"
-                                />
-                              </HStack>
-                            </Box>
-                          )}
 
                           {targetFormat && !canConvert(targetFormat) && (
                             <Alert status="warning" size="sm" borderRadius="md" py={1} px={2}>

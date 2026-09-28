@@ -266,3 +266,38 @@ def test_bucket_without_catalog_falls_back_to_pmtiles_scan(api, serve, connectio
     assert collection["id"] == f"s3:{connection.id}"
     items = api.get(f"/api/stac/collections/s3:{connection.id}/items").json()["features"]
     assert [item["id"] for item in items] == ["maps/roads.pmtiles"]
+
+
+@pytest.mark.django_db
+def test_geopackage_sub_catalog_layers_are_collections(api, serve, connection):
+    bucket = portolan_bucket()
+    root = json.loads(bucket.objects["catalog.json"])
+    root["links"].append(
+        {"rel": "child", "href": "./castelo-branco/catalog.json", "title": "Castelo Branco"}
+    )
+    bucket.objects["catalog.json"] = json.dumps(root).encode()
+    bucket.objects["castelo-branco/catalog.json"] = json.dumps(
+        {
+            "type": "Catalog",
+            "id": "castelo-branco",
+            "links": [
+                {"rel": "root", "href": "../catalog.json"},
+                {"rel": "parent", "href": "../catalog.json"},
+                {"rel": "child", "href": "./highway/collection.json", "title": "Highway"},
+            ],
+        }
+    ).encode()
+    bucket.objects["castelo-branco/highway/collection.json"] = layer_collection(
+        "castelo-branco/highway", "Highway", [9, 9, 10, 10]
+    ).encode()
+    serve(bucket)
+
+    ids = {c["id"] for c in api.get("/api/stac/collections").json()["collections"]}
+    highway_id = f"s3:{connection.id}:castelo-branco~highway"
+    assert highway_id in ids
+
+    [item] = api.get(f"/api/stac/collections/{highway_id}/items").json()["features"]
+    assert item["bbox"] == [9, 9, 10, 10]
+    assert item["assets"]["thumbnail"]["href"] == (
+        "https://signed.example/castelo-branco/highway/thumbnail.png"
+    )

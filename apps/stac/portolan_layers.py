@@ -40,11 +40,10 @@ def folder_from_name(name: str) -> str:
 
 
 def list_layers(client, conn_id: str) -> list[dict[str, Any]] | None:
-    """[{'folder', 'collection'}, ...] for each layer in the bucket's catalog.json.
+    """[{'folder', 'collection'}, ...] for each layer in the bucket's catalog.
 
-    None if the bucket has no (readable) catalog.json — the caller then
-    falls back to scanning for .pmtiles. A child whose collection.json is
-    missing or unreadable is skipped.
+    Follows sub-catalogs (a GeoPackage's layer group) from the root
+    catalog.json.
     """
     try:
         etag = client.get_object_info(portolan.CATALOG_KEY)["etag"]
@@ -55,23 +54,17 @@ def list_layers(client, conn_id: str) -> list[dict[str, Any]] | None:
     if cached is not None:
         return cast(list[dict[str, Any]], cached)
 
-    try:
-        catalog = json.loads(client.get_object(portolan.CATALOG_KEY))
-    except Exception:
-        logger.warning("Unreadable catalog.json in connection %s", conn_id, exc_info=True)
+    refs = portolan.catalog_collections(client)
+    if refs is None:
+        logger.warning("Unreadable catalog.json in connection %s", conn_id)
         return None
     layers = []
-    for link in catalog.get("links", []):
-        if link.get("rel") != "child":
-            continue
-        key = posixpath.normpath(str(link.get("href", "")).removeprefix("./"))
-        if not key.endswith("/collection.json"):
-            continue
+    for ref in refs:
         try:
-            collection = json.loads(client.get_object(key))
+            collection = json.loads(client.get_object(f"{ref['folder']}/collection.json"))
         except Exception:
             continue
-        layers.append({"folder": key.removesuffix("/collection.json"), "collection": collection})
+        layers.append({"folder": ref["folder"], "collection": collection})
     cache.set(cache_key, layers, CACHE_TTL)
     return layers
 
