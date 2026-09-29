@@ -8,6 +8,9 @@ credentials scoped to a single bucket anyway, so this also avoids
 requiring account-wide permissions like ListAllMyBuckets.
 """
 
+import base64
+import hashlib
+import logging
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
@@ -18,6 +21,23 @@ from botocore.exceptions import ClientError
 from django.core.exceptions import ValidationError
 
 from .models import S3Connection
+
+logger = logging.getLogger(__name__)
+
+
+def _add_content_md5(request, **_kwargs) -> None:
+    """Send Content-MD5 on DeleteObjects, as older S3 servers require.
+
+    botocore (1.36+) checksums DeleteObjects with CRC32 in place of the
+    Content-MD5 header, which older MinIO releases reject outright
+    ("MissingContentMD5") - so every folder delete failed there.
+    """
+    if "Content-MD5" not in request.headers:
+        body = request.body or b""
+        if isinstance(body, str):
+            body = body.encode()
+        request.headers["Content-MD5"] = base64.b64encode(hashlib.md5(body).digest()).decode()
+
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -96,6 +116,8 @@ class S3Client:
             region_name=region,
             config=config,
         )
+
+        self.client.meta.events.register("before-sign.s3.DeleteObjects", _add_content_md5)
 
         self.resource = boto3.resource(
             "s3",
@@ -297,11 +319,42 @@ class S3Client:
         paginator = self.client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-            for i in range(0, len(keys), 1000):
-                batch = keys[i : i + 1000]
-                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
-                deleted += len(batch)
+            deleted += self._delete_keys(keys)
+        self._delete_orphan_delete_markers(prefix)
         return deleted
+
+    def _delete_keys(self, keys: list[dict[str, str]]) -> int:
+        for i in range(0, len(keys), 1000):
+            self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": keys[i : i + 1000]})
+        return len(keys)
+
+    def _delete_orphan_delete_markers(self, prefix: str) -> None:
+        """Remove delete markers under `prefix` that hide no older version.
+
+        In a versioned (or versioning-suspended) bucket, deleting an object
+        leaves a delete marker, and MinIO keeps listing a folder that holds
+        only delete markers - so a deleted folder lingers in the tree,
+        looking empty, with nothing left for delete_prefix to delete. A
+        marker over no older version hides nothing: removing it restores no
+        data, and lets the folder go. Markers over older versions are kept,
+        so version history is never purged or brought back.
+
+        Best effort: without permission to list versions (or on a store that
+        doesn't support it), the folder is left as it is.
+        """
+        versioned: set[str] = set()
+        markers: list[dict[str, str]] = []
+        try:
+            paginator = self.client.get_paginator("list_object_versions")
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                versioned.update(version["Key"] for version in page.get("Versions", []))
+                markers.extend(
+                    {"Key": marker["Key"], "VersionId": marker["VersionId"]}
+                    for marker in page.get("DeleteMarkers", [])
+                )
+            self._delete_keys([marker for marker in markers if marker["Key"] not in versioned])
+        except ClientError:
+            logger.info("Couldn't clear delete markers under %s", prefix, exc_info=True)
 
     def generate_presigned_url(
         self,
