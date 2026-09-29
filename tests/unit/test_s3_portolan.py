@@ -567,6 +567,7 @@ class FakeCollectionBucket:
         self.objects[key] = body
         self.writes += 1
 
+
 def test_new_raster_layers_are_published_conformant():
     collection = collection_for(
         [
