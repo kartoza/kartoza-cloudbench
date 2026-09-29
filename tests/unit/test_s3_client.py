@@ -156,7 +156,69 @@ class TestS3Client:
             {},
             {"Bucket": "bkt", "Delete": {"Objects": [{"Key": "dir/a"}, {"Key": "dir/sub/b"}]}},
         )
+        s3client.stubber.add_response(
+            "list_object_versions", {}, {"Bucket": "bkt", "Prefix": "dir/"}
+        )
         assert s3client.delete_prefix("dir/") == 2
+
+    def test_delete_prefix_clears_delete_markers_hiding_nothing(self, s3client):
+        # A folder whose objects were deleted in a versioned bucket: MinIO
+        # still lists it, but only delete markers remain.
+        s3client.stubber.add_response(
+            "list_objects_v2", {"Contents": []}, {"Bucket": "bkt", "Prefix": "dir/"}
+        )
+        s3client.stubber.add_response(
+            "list_object_versions",
+            {
+                "DeleteMarkers": [
+                    {"Key": "dir/gone.pmtiles", "VersionId": "null"},
+                    {"Key": "dir/kept.pmtiles", "VersionId": "v2"},
+                ],
+                # An older version under this marker: removing it would restore the file.
+                "Versions": [{"Key": "dir/kept.pmtiles", "VersionId": "v1"}],
+            },
+            {"Bucket": "bkt", "Prefix": "dir/"},
+        )
+        s3client.stubber.add_response(
+            "delete_objects",
+            {},
+            {
+                "Bucket": "bkt",
+                "Delete": {"Objects": [{"Key": "dir/gone.pmtiles", "VersionId": "null"}]},
+            },
+        )
+        assert s3client.delete_prefix("dir/") == 0
+
+    def test_delete_prefix_without_version_listing_rights(self, s3client):
+        s3client.stubber.add_response(
+            "list_objects_v2",
+            {"Contents": [{"Key": "dir/a"}]},
+            {"Bucket": "bkt", "Prefix": "dir/"},
+        )
+        s3client.stubber.add_response(
+            "delete_objects", {}, {"Bucket": "bkt", "Delete": {"Objects": [{"Key": "dir/a"}]}}
+        )
+        s3client.stubber.add_client_error(
+            "list_object_versions", service_error_code="AccessDenied", http_status_code=403
+        )
+        assert s3client.delete_prefix("dir/") == 1
+
+    def test_delete_objects_sends_content_md5(self):
+        # Older MinIO rejects DeleteObjects without it (botocore sends CRC32 instead).
+        client = s3.S3Client("minio.test:9000", "bkt", "k", "s", use_ssl=False)
+        sent = {}
+
+        class Sent(Exception):
+            pass
+
+        def capture(request, **_kwargs):
+            sent.update(request.headers)
+            raise Sent
+
+        client.client.meta.events.register("before-send.s3.DeleteObjects", capture)
+        with pytest.raises(Sent):
+            client.client.delete_objects(Bucket="bkt", Delete={"Objects": [{"Key": "a"}]})
+        assert sent["Content-MD5"]
 
     def test_delete_prefix_refuses_empty_prefix(self, s3client):
         with pytest.raises(ValueError, match="empty prefix"):
