@@ -21,7 +21,13 @@ VECTOR_ASSETS = [
 
 
 def collection_for(
-    data_assets, kind="pmtiles", table_info=None, host=None, license_id="CC-BY-4.0", license_url=""
+    data_assets,
+    kind="pmtiles",
+    table_info=None,
+    host=None,
+    license_id="CC-BY-4.0",
+    license_url="",
+    bbox=(1, 2, 3, 4),
 ):
     return portolan.build_collection_json(
         layer_id="roads",
@@ -31,7 +37,7 @@ def collection_for(
         provider_name="admin",
         kind=kind,
         data_assets=data_assets,
-        bbox=[1, 2, 3, 4],
+        bbox=list(bbox),
         root_relative_path="../catalog.json",
         pmtiles_layers=["default"] if kind == "pmtiles" else None,
         table_info=table_info,
@@ -80,7 +86,7 @@ def test_cog_layer_assets_are_unchanged():
     )
 
     assert set(collection["assets"]) == {"data", "visual", "style-default"}
-    assert collection["assets"]["data"]["type"].startswith("image/tiff")
+    assert collection["assets"]["data"]["type"] == portolan.COG_MEDIA_TYPE
     assert not any(link["rel"] == "pmtiles" for link in collection["links"])
 
 
@@ -547,3 +553,28 @@ def test_deleting_the_geopackage_folder_removes_its_sub_catalog_from_the_root():
     assert portolan.catalog_collections(bucket) == [
         {"folder": "roads", "title": "Roads", "catalog": "", "catalog_title": ""}
     ]
+
+
+class FakeCollectionBucket:
+    def __init__(self, collection):
+        self.objects = {"dem/collection.json": json.dumps(collection).encode()}
+        self.writes = 0
+
+    def get_object(self, key):
+        return self.objects[key]
+
+    def put_object(self, key, body, content_type=None):
+        self.objects[key] = body
+        self.writes += 1
+
+def test_new_raster_layers_are_published_conformant():
+    collection = collection_for(
+        [
+            {"filename": "dem.tif", "role": "data"},
+            {"filename": "dem_3857.tif", "role": "visual"},
+        ],
+        kind="cog",
+        bbox=[-180.125, -90.125, 180.125, 90.125],
+    )
+    assert portolan.WEB_MAP_LINKS_SCHEMA not in collection["stac_extensions"]
+    assert collection["extent"]["spatial"]["bbox"] == [[-180.0, -90.0, 180.0, 90.0]]

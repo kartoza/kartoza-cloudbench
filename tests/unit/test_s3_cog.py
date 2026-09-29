@@ -1,5 +1,6 @@
 """CloudNativeGIS Lite COG conversion contract and failure handling."""
 
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -8,6 +9,7 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
+from apps.s3 import portolan
 from apps.s3.cog import (
     group_results,
     output_key,
@@ -334,6 +336,18 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
         uploaded_keys = {entry[2] for entry in uploaded}
         assert uploaded_keys == {"folder/raster/raster.tif", "folder/raster/raster_3857.tif"}
         assert cog_job.output_keys and len(cog_job.output_keys) == 2
+        # Both COGs carry the full COG media type Portolan requires (PTL-AST-006),
+        # in the bucket and in the catalog - not a plain "image/tiff".
+        assert {entry[3]["ExtraArgs"]["ContentType"] for entry in uploaded} == {
+            portolan.COG_MEDIA_TYPE
+        }
+        [collection_put] = [
+            c
+            for c in s3_client.put_object.call_args_list
+            if c.kwargs.get("key") == "folder/raster/collection.json"
+        ]
+        assets = json.loads(collection_put.kwargs["body"])["assets"]
+        assert assets["data"]["type"] == assets["visual"]["type"] == portolan.COG_MEDIA_TYPE
         assert set(cog_job.to_dict()["outputPaths"]) == {
             "s3://bucket/folder/raster/raster.tif",
             "s3://bucket/folder/raster/raster_3857.tif",
