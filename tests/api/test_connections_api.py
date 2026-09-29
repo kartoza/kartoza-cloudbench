@@ -10,7 +10,11 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.s3 import views
 from apps.s3.models import S3Connection
+
+# The real reachability check (the S3 tests below stub it out by default).
+_REAL_UNREACHABLE = views._unreachable_response
 
 
 @pytest.fixture
@@ -148,6 +152,12 @@ class TestS3ConnectionsAPI:
         api_client.force_authenticate(user=user)
         return api_client
 
+    @pytest.fixture(autouse=True)
+    def reachable(self):
+        """Saving tests the connection first; these endpoints don't exist, so pretend they do."""
+        with patch("apps.s3.views._unreachable_response", return_value=None) as check:
+            yield check
+
     def test_list_s3_connections_empty(self, api_client: APIClient) -> None:
         """Test listing S3 connections when empty."""
         response = api_client.get("/api/s3/connections")
@@ -282,6 +292,82 @@ class TestS3ConnectionsAPI:
         # Edited fields are tested as typed; only the omitted key comes from the DB.
         assert (kwargs["endpoint"], kwargs["bucket"]) == ("localhost:9001", "other-bucket")
         assert (kwargs["access_key"], kwargs["secret_key"]) == ("saved-key", "retyped-secret")
+
+    def test_unreachable_connection_is_not_saved(self, api_client: APIClient) -> None:
+        """A connection is only added once it can reach its bucket."""
+        payload = {
+            "name": "Typo",
+            "endpoint": "localhost:9000",
+            "bucket": "test-bucket",
+            "accessKey": "k",
+            "secretKey": "wrong",
+        }
+        # Undo the class-wide stub for this test: exercise the real check.
+        with (
+            patch.object(views, "_unreachable_response", _REAL_UNREACHABLE),
+            patch("apps.s3.views.S3Client") as client_cls,
+        ):
+            client_cls.return_value.test_connection.return_value = (False, "403 Forbidden")
+            refused = api_client.post("/api/s3/connections", payload, format="json")
+            client_cls.return_value.test_connection.return_value = (True, "ok")
+            added = api_client.post("/api/s3/connections", payload, format="json")
+
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST
+        assert "403 Forbidden" in refused.json()["error"]
+        assert added.status_code == status.HTTP_201_CREATED
+        assert S3Connection.objects.filter(name="Typo").count() == 1
+        # Tested with exactly the settings being saved.
+        assert client_cls.call_args.kwargs["secret_key"] == "wrong"
+
+    def test_edit_is_retested_only_when_connectivity_changes(self, api_client: APIClient) -> None:
+        conn_id = api_client.post(
+            "/api/s3/connections",
+            {
+                "name": "MinIO",
+                "endpoint": "localhost:9000",
+                "bucket": "b",
+                "accessKey": "k",
+                "secretKey": "s",
+            },
+            format="json",
+        ).json()["id"]
+        with (
+            patch.object(views, "_unreachable_response", _REAL_UNREACHABLE),
+            patch("apps.s3.views.S3Client") as client_cls,
+        ):
+            client_cls.return_value.test_connection.return_value = (False, "no such bucket")
+            # Renaming (blank keys mean "keep the saved ones") needs no test.
+            renamed = api_client.put(
+                f"/api/s3/connections/{conn_id}",
+                {"name": "Renamed", "accessKey": "", "secretKey": ""},
+                format="json",
+            )
+            assert renamed.status_code == status.HTTP_200_OK
+            client_cls.assert_not_called()
+
+            # A new bucket that can't be reached is refused, and nothing changes.
+            moved = api_client.put(
+                f"/api/s3/connections/{conn_id}", {"bucket": "missing"}, format="json"
+            )
+            assert moved.status_code == status.HTTP_400_BAD_REQUEST
+            assert S3Connection.objects.get(id=conn_id).bucket == "b"
+
+            client_cls.return_value.test_connection.return_value = (True, "ok")
+            moved = api_client.put(
+                f"/api/s3/connections/{conn_id}", {"bucket": "other"}, format="json"
+            )
+            assert moved.status_code == status.HTTP_200_OK
+            assert S3Connection.objects.get(id=conn_id).bucket == "other"
+
+    def test_invalid_endpoint_is_refused_not_crashed(self, api_client: APIClient) -> None:
+        with patch.object(views, "_unreachable_response", _REAL_UNREACHABLE):
+            response = api_client.post(
+                "/api/s3/connections",
+                {"name": "Bad", "endpoint": "http://[::bad", "bucket": "b"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not S3Connection.objects.filter(name="Bad").exists()
 
     def test_test_connection_rejects_another_users_connection(self, api_client: APIClient) -> None:
         """connectionId can't be used to borrow someone else's saved keys."""
