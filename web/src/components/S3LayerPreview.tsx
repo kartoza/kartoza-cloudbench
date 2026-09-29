@@ -60,6 +60,8 @@ export default function S3LayerPreview({
   const mapContainer = useRef<HTMLDivElement>(null)
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
+  // Whether the map has been on screen yet (a GeoParquet opens in the table).
+  const mapShown = useRef(false)
   const cesiumViewer = useRef<Cesium.Viewer | null>(null)
   // Point cloud refs
   const pointCloudMapContainer = useRef<HTMLDivElement>(null)
@@ -100,6 +102,8 @@ export default function S3LayerPreview({
     api.getS3PreviewMetadata(connectionId, objectKey)
       .then((data) => {
         setMetadata(data)
+        // A GeoParquet's attributes are usually what's wanted first; the map is a click away.
+        if (data.format === 'geoparquet') setViewMode('table')
         setIsLoading(false)
       })
       .catch((err) => {
@@ -641,17 +645,35 @@ export default function S3LayerPreview({
     }
   }, [mapLoaded, geoparquetData, metadata])
 
+  // A map created hidden (behind the table) has no size, so neither its
+  // canvas nor its fit to the layer's bounds is right: redo both the first
+  // time it's shown.
+  useEffect(() => {
+    if (!map.current || !mapLoaded || (viewMode !== '2d' && viewMode !== '3d')) return
+    map.current.resize()
+    if (!mapShown.current && metadata?.bounds) {
+      const { minX, minY, maxX, maxY } = metadata.bounds
+      map.current.fitBounds([minX, minY, maxX, maxY], { padding: 50, maxZoom: 15, duration: 0 })
+    }
+    mapShown.current = true
+  }, [viewMode, mapLoaded, metadata])
+
   // Update view mode (2D/3D) for MapLibre
   useEffect(() => {
     if (!map.current || !mapLoaded || viewMode === 'dem3d' || viewMode === 'table') return
 
     switch (viewMode) {
       case '2d':
-        map.current.easeTo({
-          pitch: 0,
-          bearing: 0,
-          duration: 500,
-        })
+        // Only when tilted or rotated: any camera animation cancels one in
+        // progress - such as the fit to the layer's bounds that starts as
+        // the map loads - leaving the map at its initial world view.
+        if (map.current.getPitch() !== 0 || map.current.getBearing() !== 0) {
+          map.current.easeTo({
+            pitch: 0,
+            bearing: 0,
+            duration: 500,
+          })
+        }
         map.current.setMaxPitch(0)
         break
       case '3d':
@@ -1437,7 +1459,7 @@ export default function S3LayerPreview({
             bg="white"
             p={4}
           >
-            {tableLoading ? (
+            {tableLoading || (metadata?.format === 'geoparquet' && geoparquetLoading) ? (
               <VStack justify="center" h="100%">
                 <Spinner size="xl" color="kartoza.500" />
                 <Text mt={2} color="gray.600">Loading attribute data...</Text>
