@@ -83,6 +83,12 @@ class TestS3ConnectionWorkflow:
         api_client.force_authenticate(user=user)
         return api_client, user
 
+    @pytest.fixture(autouse=True)
+    def reachable(self):
+        """Saving tests the connection first; these endpoints don't exist, so pretend they do."""
+        with patch("apps.s3.views._unreachable_response", return_value=None):
+            yield
+
     def test_list_s3_connections(self, authenticated_client) -> None:
         """Test listing S3 connections."""
         client, user = authenticated_client

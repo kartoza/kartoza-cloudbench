@@ -23,6 +23,7 @@ import {
   Box,
   useToast,
   Switch,
+  Tooltip,
   FormHelperText,
   Collapse,
 } from '@chakra-ui/react'
@@ -43,6 +44,30 @@ function deriveConnectionDefaults(endpoint: string): { useSSL: boolean; pathStyl
   const isAWS = host.endsWith('amazonaws.com')
   const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')
   return { useSSL: !isLocal, pathStyle: !isAWS }
+}
+
+interface ConnectivitySettings {
+  endpoint: string
+  bucket: string
+  accessKey: string
+  secretKey: string
+  region: string
+  useSSL: boolean
+  pathStyle: boolean
+}
+
+// The settings that decide whether a connection reaches its bucket, as one
+// comparable value: a passing test only counts for exactly these.
+function connectivityKey(settings: ConnectivitySettings): string {
+  return JSON.stringify([
+    settings.endpoint.trim(),
+    settings.bucket.trim(),
+    settings.accessKey,
+    settings.secretKey,
+    settings.region,
+    settings.useSSL,
+    settings.pathStyle,
+  ])
 }
 
 export default function S3ConnectionDialog() {
@@ -71,6 +96,10 @@ export default function S3ConnectionDialog() {
   const [isLoading, setIsLoading] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  // The settings the last passing test was run with.
+  const [testedKey, setTestedKey] = useState<string | null>(null)
+  // Editing: the saved connection's settings, which already work.
+  const [savedKey, setSavedKey] = useState<string | null>(null)
 
   const isOpen = activeDialog === 's3connection'
   const isEditMode = dialogData?.mode === 'edit'
@@ -90,6 +119,17 @@ export default function S3ConnectionDialog() {
         setUseSSL(conn.useSSL)
         setPathStyle(conn.pathStyle)
         setContactEmail(conn.contactEmail || '')
+        setSavedKey(
+          connectivityKey({
+            endpoint: conn.endpoint,
+            bucket: conn.bucket,
+            accessKey: '',
+            secretKey: '',
+            region: conn.region || '',
+            useSSL: conn.useSSL,
+            pathStyle: conn.pathStyle,
+          })
+        )
         // Flag as "touched" so re-typing the endpoint doesn't clobber this
         // connection's existing (possibly non-default) settings.
         setAdvancedTouched(true)
@@ -119,7 +159,16 @@ export default function S3ConnectionDialog() {
       setAdvancedTouched(false)
     }
     setTestResult(null)
+    setTestedKey(null)
+    setSavedKey(null)
   }, [isOpen, isEditMode, connectionId, toast])
+
+  const currentKey = connectivityKey({ endpoint, bucket, accessKey, secretKey, region, useSSL, pathStyle })
+  // Only a connection that's been shown to connect can be saved: a new one
+  // must pass a test, and so must an edit that changes how it connects
+  // (renaming, or a new contact email, doesn't). The backend checks too.
+  const isTested = testedKey === currentKey || (isEditMode && savedKey === currentKey)
+  const isTestStale = testResult?.success === true && testedKey !== currentKey
 
   const handleEndpointChange = (value: string) => {
     setEndpoint(value)
@@ -166,6 +215,7 @@ export default function S3ConnectionDialog() {
           : { accessKey, secretKey }),
       })
       setTestResult({...result, success: true})
+      setTestedKey(currentKey)
     } catch (err) {
       setTestResult({ success: false, message: (err as Error).message })
     } finally {
@@ -174,6 +224,7 @@ export default function S3ConnectionDialog() {
   }
 
   const handleSubmit = async () => {
+    if (!isTested) return
     setIsLoading(true)
 
     try {
@@ -423,13 +474,17 @@ export default function S3ConnectionDialog() {
                   style={{ width: '100%' }}
                 >
                   <Alert
-                    status={testResult.success ? 'success' : 'error'}
+                    status={isTestStale ? 'warning' : testResult.success ? 'success' : 'error'}
                     borderRadius="lg"
                     variant="subtle"
                   >
                     <AlertIcon />
                     <Box>
-                      <Text fontSize="sm">{testResult.message}</Text>
+                      <Text fontSize="sm">
+                        {isTestStale
+                          ? 'The connection settings changed since the last test. Test it again before saving.'
+                          : testResult.message}
+                      </Text>
                     </Box>
                   </Alert>
                 </motion.div>
@@ -458,18 +513,25 @@ export default function S3ConnectionDialog() {
           <Button variant="ghost" onClick={closeDialog} borderRadius="lg">
             Cancel
           </Button>
-          <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            <Button
-              colorScheme="orange"
-              onClick={handleSubmit}
-              isLoading={isLoading}
-              borderRadius="lg"
-              px={6}
-              leftIcon={<FiHardDrive />}
-            >
-              {isEditMode ? 'Save Changes' : 'Add Connection'}
-            </Button>
-          </motion.div>
+          <Tooltip
+            label={isTested ? '' : 'Test the connection first: only a connection that works can be saved'}
+            isDisabled={isTested}
+            hasArrow
+          >
+            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+              <Button
+                colorScheme="orange"
+                onClick={handleSubmit}
+                isLoading={isLoading}
+                isDisabled={!isTested}
+                borderRadius="lg"
+                px={6}
+                leftIcon={<FiHardDrive />}
+              >
+                {isEditMode ? 'Save Changes' : 'Add Connection'}
+              </Button>
+            </motion.div>
+          </Tooltip>
         </ModalFooter>
       </ModalContent>
     </Modal>

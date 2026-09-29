@@ -112,6 +112,45 @@ def _clean_contact_email(value):
     return email
 
 
+# The settings that decide whether a connection can reach its bucket.
+_CONNECTIVITY_FIELDS = (
+    "endpoint",
+    "bucket",
+    "access_key",
+    "secret_key",
+    "region",
+    "use_ssl",
+    "path_style",
+)
+
+
+def _unreachable_response(conn: S3Connection) -> Response | None:
+    """A 400 if `conn`'s settings can't reach its bucket; None if they can.
+
+    A connection is only saved once it works: one that can't connect would
+    just fail later, in every listing, upload and preview that uses it.
+    """
+    try:
+        client = S3Client(
+            endpoint=conn.endpoint,
+            bucket=conn.bucket,
+            access_key=conn.access_key,
+            secret_key=conn.secret_key,
+            region=conn.region,
+            use_ssl=conn.use_ssl,
+            path_style=conn.path_style,
+        )
+        success, message = client.test_connection()
+    except Exception as e:  # e.g. an endpoint that isn't a valid URL
+        success, message = False, str(e)
+    if success:
+        return None
+    return Response(
+        {"error": f"Couldn't connect to the bucket: {message}"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 class S3ConnectionListView(APIView):
     """List and create S3 connections.
 
@@ -152,7 +191,7 @@ class S3ConnectionListView(APIView):
                 {"error": "Contact email is not a valid email address"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        conn = S3Connection.objects.create(
+        conn = S3Connection(
             owner=request.user,
             name=data.get("name", ""),
             endpoint=data.get("endpoint", ""),
@@ -164,6 +203,10 @@ class S3ConnectionListView(APIView):
             path_style=data.get("pathStyle", True),
             contact_email=contact_email,
         )
+        unreachable = _unreachable_response(conn)
+        if unreachable:
+            return unreachable
+        conn.save()
 
         return Response(
             {
@@ -261,6 +304,7 @@ class S3ConnectionDetailView(APIView):
             )
 
         data = request.data
+        saved = {field: getattr(conn, field) for field in _CONNECTIVITY_FIELDS}
         conn.name = data.get("name", conn.name)
         conn.endpoint = data.get("endpoint", conn.endpoint)
         if data.get("bucket", "").strip():
@@ -284,6 +328,11 @@ class S3ConnectionDetailView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             conn.contact_email = contact_email
+        # Renaming, or a new contact email, needs no re-test.
+        if any(getattr(conn, field) != value for field, value in saved.items()):
+            unreachable = _unreachable_response(conn)
+            if unreachable:
+                return unreachable
         conn.save()
 
         # Clear cached client
