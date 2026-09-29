@@ -152,6 +152,7 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
         </Box>
         {/* Action Icons */}
         <HStack spacing={1}>
+          <JobsIndicator />
           <Tooltip label="Map Explorer" placement="bottom">
             <IconButton
               aria-label="Map Explorer"
