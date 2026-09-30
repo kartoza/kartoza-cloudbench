@@ -37,6 +37,15 @@ class SignedSSOTokenAuthentication(BaseAuthentication):
     DRF falls through to the next authenticator instead of hard-failing.
     """
 
+    def authenticate_header(self, _request):
+        """The scheme a refused request is told to log in with.
+
+        The same `Token` header TokenAuthentication reads. As the first
+        authenticator, this is what DRF asks: without it, an anonymous
+        request gets 403 instead of 401 with `WWW-Authenticate: Token`.
+        """
+        return "Token"
+
     def authenticate(self, request):
         """Return (user, None) for a valid token, else None."""
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")

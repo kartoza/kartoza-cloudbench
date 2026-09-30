@@ -23,6 +23,7 @@ import {
   SliderFilledTrack,
   SliderThumb,
   SliderMark,
+  useToast,
 } from '@chakra-ui/react'
 import { FiInfo, FiRefreshCw, FiX, FiMap, FiBox, FiDownload, FiTriangle, FiTable } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
@@ -93,6 +94,7 @@ export default function S3LayerPreview({
 
   // Extract filename from object key
   const fileName = objectKey.split('/').pop() || objectKey
+  const toast = useToast()
 
   // Fetch preview metadata
   useEffect(() => {
@@ -999,9 +1001,26 @@ export default function S3LayerPreview({
       })
   }
 
-  const handleDownload = () => {
-    if (metadata?.proxyUrl) {
-      window.open(metadata.proxyUrl, '_blank')
+  // A presigned link, not the API's proxy URL: a download (a new tab or a
+  // link click) doesn't carry the app's login token, which the API requires.
+  const handleDownload = async () => {
+    try {
+      const { url } = await api.getS3PresignedURL(connectionId, objectKey)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.target = '_blank'
+      link.rel = 'noopener'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (err) {
+      toast({
+        title: 'Download failed',
+        description: (err as Error).message,
+        status: 'error',
+        duration: 5000,
+      })
     }
   }
 
