@@ -161,8 +161,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        # TODO: Change to IsAuthenticated once all endpoints are migrated
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_PAGINATION_CLASS": None,
     "EXCEPTION_HANDLER": "apps.core.exceptions.custom_exception_handler",
