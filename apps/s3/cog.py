@@ -15,7 +15,7 @@ from .models import CngLiteJob
 
 KIND = "cog"
 ENDPOINT = "api/v1/cog"
-CONTENT_TYPE = "image/tiff"
+CONTENT_TYPE = portolan.COG_MEDIA_TYPE
 
 # TIFF byte-order markers: "II*\x00" (little-endian) / "MM\x00*" (big-endian).
 TIFF_MAGIC = (b"II*\x00", b"MM\x00*")

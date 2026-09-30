@@ -44,6 +44,7 @@ _FORBIDDEN_LICENSES = {"proprietary"}
 UNSPECIFIED_LICENSE_FILE = "LICENSE.md"
 
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
+COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 THUMBNAIL_MEDIA_TYPE = "image/png"
 GEOPACKAGE_MEDIA_TYPE = "application/geopackage+sqlite3"
@@ -53,7 +54,7 @@ _THUMBNAIL_SUFFIX = "_thumbnail.png"
 
 _MEDIA_TYPES = {
     "pmtiles": PMTILES_MEDIA_TYPE,
-    "cog": "image/tiff; application=geotiff; profile=cloud-optimized",
+    "cog": COG_MEDIA_TYPE,
 }
 
 
@@ -111,6 +112,18 @@ def _asset_href(filename: str) -> str:
 def _asset_media_type(asset: dict, kind: str) -> str:
     """An asset's own media type (e.g. GeoParquet), else its layer kind's default."""
     return asset.get("media_type") or _MEDIA_TYPES[kind]
+
+
+def wgs84_bbox(bbox) -> list[float] | None:
+    """A bbox clamped to WGS84's range, as Portolan requires of every bbox.
+
+    A raster's extent is its pixels' outer edges, so a global grid
+    reaches just past the poles and the antimeridian (e.g. -180.125).
+    """
+    if not bbox or len(bbox) != 4:
+        return None
+    west, south, east, north = (float(v) for v in bbox)
+    return [max(west, -180.0), max(south, -90.0), min(east, 180.0), min(north, 90.0)]
 
 
 def sanitize_layer_id(name: str) -> str:
@@ -296,7 +309,7 @@ def build_collection_json(
     `host` provider (see host_provider), alongside the uploader as
     `producer`. `license_url` is where an "other" license's terms live
     (see license_link)."""
-    bbox = list(bbox) if bbox else [-180.0, -90.0, 180.0, 90.0]
+    bbox = wgs84_bbox(bbox) or [-180.0, -90.0, 180.0, 90.0]
     # The renderable one drives the style/pmtiles link — "visual" if there
     # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
     visual = next((a for a in data_assets if a["role"] == "visual"), data_assets[0])
@@ -369,7 +382,11 @@ def build_collection_json(
     collection: dict[str, Any] = {
         "type": "Collection",
         "stac_version": "1.1.0",
-        "stac_extensions": [PORTOLAN_SCHEMA, WEB_MAP_LINKS_SCHEMA],
+        # Web Map Links only when there's a link it covers (a raster has none).
+        "stac_extensions": [
+            PORTOLAN_SCHEMA,
+            *([WEB_MAP_LINKS_SCHEMA] if kind == "pmtiles" else []),
+        ],
         "id": collection_id or layer_id,
         "title": title,
         "description": description,
@@ -905,7 +922,7 @@ def finalize_layer(
     info = info or {}
     license_id = normalize_license(license_id)
     license_url = license_url if license_id == "other" else ""
-    bbox = info.get("bbox")
+    bbox = wgs84_bbox(info.get("bbox"))
     layer_names = info.get("layers") or [layer_id]
     visual = next((a for a in data_assets if a["role"] == "visual"), data_assets[0])
     # "folder/sub/folder" -> "../../catalog.json": one "../" per path segment
