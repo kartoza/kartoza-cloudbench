@@ -81,6 +81,11 @@ urlpatterns = [
         views.S3UploadView.as_view(),
         name="s3-upload",
     ),
+    path(
+        "s3/mosaic/<str:conn_id>",
+        views.S3MosaicUploadView.as_view(),
+        name="s3-mosaic-upload",
+    ),
     # Presigned URLs
     re_path(
         r"^s3/presigned/(?P<conn_id>[^/]+)/(?P<key>.+)$",
