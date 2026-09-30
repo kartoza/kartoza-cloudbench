@@ -48,6 +48,11 @@ urlpatterns = [
         views.S3ProxyView.as_view(),
         name="s3-proxy",
     ),
+    path(
+        "s3/attributes/<str:conn_id>",
+        views.S3AttributesView.as_view(),
+        name="s3-attributes",
+    ),
     re_path(
         r"^s3/geojson/(?P<conn_id>[^/]+)/(?P<key>.+)$",
         views.S3GeoJSONView.as_view(),

@@ -41,6 +41,7 @@ import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { ConversionJob } from '../../types'
 import { layerConversionStatuses } from '../../utils/conversionJobs'
+import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
 // Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync. ("proprietary"
@@ -189,6 +190,18 @@ export default function S3UploadDialog() {
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
+  // Loose shapefile components: checked before uploading, as the server
+  // would only check them once every byte had arrived.
+  // Only for a shapefile being converted, or several of its parts: one
+  // .dbf (or .shp) uploaded as it is, unconverted, is just a file.
+  const convertingNow = convertToCloudNative && !!targetFormat
+  const shapefileCheck =
+    selectedFile &&
+    SHAPEFILE_PART.test(selectedFile.name) &&
+    (companionFiles.length > 0 || (/\.shp$/i.test(selectedFile.name) && convertingNow))
+      ? checkShapefileParts([selectedFile, ...companionFiles], convertingNow)
+      : null
+  const shapefileBlocked = !!shapefileCheck?.problems.length
   const isTiff = !!selectedFile && TIFF_PATTERN.test(selectedFile.name)
   // Several GeoTIFFs at once: published together as one mosaic.
   const mosaicFiles =
@@ -291,12 +304,24 @@ export default function S3UploadDialog() {
     }
   }, [selectedFile, showPMTiles, showCOG])
 
-  const handleFileSelect = useCallback((files: File[]) => {
+  const handleFileSelect = useCallback((picked: File[]) => {
     if (isUploading || isConverting) return
+    // More parts of the shapefile already selected (e.g. its forgotten
+    // .prj) join the selection rather than replace it.
+    const stemOf = (name: string) => name.replace(/\.[^.]+$/, '').toLowerCase()
+    const current = selectedFile ? [selectedFile, ...companionFiles] : []
+    const addsParts =
+      current.length > 0 &&
+      SHAPEFILE_PART.test(current[0].name) &&
+      picked.every((f) => SHAPEFILE_PART.test(f.name) && stemOf(f.name) === stemOf(current[0].name))
+    const files = addsParts
+      ? [...current.filter((f) => !picked.some((p) => p.name === f.name)), ...picked]
+      : picked
     const file = files.find((component) => /\.shp$/i.test(component.name)) || files[0]
     if (!file) return
     const allTiffs = files.length > 1 && files.every((component) => TIFF_PATTERN.test(component.name))
-    if (files.length > 1 && !/\.shp$/i.test(file.name) && !allTiffs) {
+    const allShapefileParts = files.every((component) => SHAPEFILE_PART.test(component.name))
+    if (files.length > 1 && !/\.shp$/i.test(file.name) && !allTiffs && !allShapefileParts) {
       toast({
         title: 'Select one file, the components of one shapefile, or several GeoTIFFs to combine into a mosaic',
         status: 'warning',
@@ -318,7 +343,7 @@ export default function S3UploadDialog() {
     setSelectedLayerNames(new Set())
     setCustomKey(folderPrefix + file.name)
     setMosaicName(allTiffs ? defaultMosaicName(files) : '')
-  }, [isUploading, isConverting, toast, folderPrefix, gpkgJobId])
+  }, [isUploading, isConverting, toast, folderPrefix, gpkgJobId, selectedFile, companionFiles])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -346,6 +371,15 @@ export default function S3UploadDialog() {
       return
     }
     setPendingReplace(null)
+    if (shapefileCheck?.problems.length) {
+      toast({
+        title: 'This shapefile is incomplete',
+        description: shapefileCheck.problems.join(' '),
+        status: 'warning',
+        duration: 6000,
+      })
+      return
+    }
 
     // A conversion publishes into a layer folder (or, for a GeoPackage, a
     // layer-group folder) named after the file: ask before replacing one
@@ -718,7 +752,37 @@ export default function S3UploadDialog() {
                       </VStack>
                     )}
                   </Box>
-                  {isShapefile && (
+                  {shapefileCheck ? (
+                    <Box mt={2} fontSize="xs">
+                      <HStack spacing={3} wrap="wrap">
+                        {['.shp', '.shx', '.dbf', '.prj'].map((part) => {
+                          const present = !shapefileCheck.missing.includes(part) &&
+                            [selectedFile, ...companionFiles].some((f) => f?.name.toLowerCase().endsWith(part))
+                          const needed = shapefileCheck.missing.includes(part)
+                          return (
+                            <HStack key={part} spacing={1}>
+                              <Icon
+                                as={present ? FiCheckCircle : needed ? FiAlertCircle : FiCircle}
+                                color={present ? 'green.500' : needed ? 'red.500' : 'gray.400'}
+                              />
+                              <Text color={needed ? 'red.600' : 'gray.600'}>{part}</Text>
+                            </HStack>
+                          )
+                        })}
+                      </HStack>
+                      {shapefileCheck.problems.map((problem) => (
+                        <Text key={problem} color="red.600" mt={1}>{problem}</Text>
+                      ))}
+                      {shapefileCheck.warnings.map((warning) => (
+                        <Text key={warning} color="orange.600" mt={1}>{warning}</Text>
+                      ))}
+                      <Text color="gray.500" mt={1}>
+                        {shapefileBlocked
+                          ? 'Pick the missing parts to add them to this selection.'
+                          : 'Cloudbench will ZIP them automatically.'}
+                      </Text>
+                    </Box>
+                  ) : isShapefile && (
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Select .shp, .shx and .dbf together (plus .prj if available).
                       Cloudbench will ZIP them automatically.
@@ -1221,6 +1285,7 @@ export default function S3UploadDialog() {
                 loadingText={isConverting ? 'Converting...' : isInspecting ? 'Reading GeoPackage...' : 'Uploading...'}
                 isDisabled={
                   !selectedFile ||
+                  shapefileBlocked ||
                   (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
                 }
                 borderRadius="lg"
