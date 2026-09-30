@@ -570,6 +570,9 @@ class S3PreviewView(APIView):
             if geoparquet:
                 result["bounds"], result["crs"] = _geoparquet_extent(geoparquet["geo"])
                 result["featureCount"] = geoparquet["rowCount"]
+            if preview_type == "parquet":
+                # A page of rows at a time: the table view never needs the whole file.
+                result["attributesUrl"] = f"/api/s3/attributes/{conn_id}?key={quote(key)}"
             return Response(result)
         except ValueError as e:
             return Response(
@@ -620,6 +623,75 @@ class S3ProxyView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+def _geo_columns(geo: dict) -> list[str]:
+    """A GeoParquet's geometry columns and their bbox covering columns."""
+    columns = geo.get("columns") or {}
+    names = list(columns)
+    for column in columns.values():
+        for paths in (column.get("covering") or {}).values():
+            for path in paths.values():
+                if isinstance(path, list) and path and path[0] not in names:
+                    names.append(path[0])
+    return names
+
+
+class S3AttributesView(APIView):
+    """One page of a Parquet/GeoParquet file's attributes, for the table view.
+
+    GET ?key=&limit=&offset= -> {fields, rows, total, limit, offset,
+    hasMore}. Read with DuckDB, which fetches only the row groups the page
+    needs - unlike loading the file in the browser, which a GeoParquet of
+    millions of features doesn't survive. Geometry columns are left out.
+    """
+
+    MAX_LIMIT = 500
+
+    def get(self, request, conn_id):
+        key = request.query_params.get("key", "")
+        if not key.lower().endswith((".parquet", ".geoparquet")):
+            return Response(
+                {"error": "Only Parquet files have a table view."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            limit = max(1, min(int(request.query_params.get("limit", 50)), self.MAX_LIMIT))
+            offset = max(0, int(request.query_params.get("offset", 0)))
+        except ValueError:
+            return Response(
+                {"error": "limit and offset must be numbers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            client = get_s3_client(conn_id, request.user)
+            s3_path = f"s3://{client.bucket}/{key}"
+            engine = get_duckdb_engine()
+            geoparquet = engine.get_geoparquet_info(s3_path, conn_id, request.user)
+            if geoparquet:
+                total = geoparquet["rowCount"]
+                exclude = _geo_columns(geoparquet["geo"])
+            else:
+                total = engine.execute_query(
+                    f"SELECT num_rows FROM parquet_file_metadata('{s3_path}')",
+                    conn_id,
+                    user=request.user,
+                )["rows"][0]["num_rows"]
+                exclude = []
+            page = engine.query_parquet_page(s3_path, conn_id, request.user, limit, offset, exclude)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(
+            {
+                **page,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "hasMore": offset + len(page["rows"]) < (total or 0),
+            }
+        )
 
 
 class S3GeoJSONView(APIView):

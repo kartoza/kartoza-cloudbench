@@ -180,6 +180,27 @@ def source_object_key(target_key, job_id, filename):
     return f"{sources_directory_key(target_key, job_id)}/{filename}"
 
 
+# How long to wait for one conversion: CLOUDNATIVEGIS_CONVERSION_TIMEOUT,
+# plus this much per GB uploaded, up to a cap - a big shapefile genuinely
+# takes longer to tile than a small one.
+CONVERSION_TIMEOUT_PER_GB = 10 * 60
+MAX_CONVERSION_TIMEOUT = 6 * 60 * 60
+
+# What each kind of result file is, for progress messages.
+_FILE_KINDS = {".pmtiles": "PMTiles", ".parquet": "GeoParquet", ".tif": "COG", ".png": "thumbnail"}
+
+
+def conversion_timeout(input_size):
+    """Seconds to wait for a conversion of `input_size` bytes, scaled to it."""
+    base = settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
+    scaled = base + round(CONVERSION_TIMEOUT_PER_GB * input_size / 1024**3)
+    return max(base, min(scaled, MAX_CONVERSION_TIMEOUT))
+
+
+def _file_kind(name):
+    return _FILE_KINDS.get(PurePosixPath(name).suffix.lower(), "file")
+
+
 def update_job(job_id, **values):
     CngLiteJob.objects.filter(pk=job_id).update(updated_at=timezone.now(), **values)
 
@@ -332,8 +353,11 @@ def run_conversion(
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     try:
         job = CngLiteJob.objects.get(pk=job_id)
-        deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
-        update_job(job.id, status="running", progress=10, message="Submitting to CloudNativeGIS")
+        timeout = conversion_timeout(job.input_size)
+        deadline = time.monotonic() + timeout
+        update_job(
+            job.id, status="running", progress=10, message="Sending the file to CloudNativeGIS"
+        )
         # CngLiteJob.owner_id holds the owner's username.
         owner = get_user_model().objects.get(username=job.owner_id)
         s3_client = get_s3_client(job.connection_id, owner)
@@ -348,18 +372,28 @@ def run_conversion(
                 client,
                 s3_client,
                 job.source_key,
-                settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT,
+                timeout,
                 endpoint,
                 extra_payload,
             )
-            update_job(job.id, progress=20, message="Waiting for CloudNativeGIS conversion")
+            # CloudNativeGIS's own progress (e.g. "Generating vector tiles
+            # (PMTiles): 45% · GeoParquet ready") is relayed from here, as
+            # 20-80%; CloudBench's steps after it take the rest.
+            update_job(job.id, progress=20, message="Waiting for CloudNativeGIS to start")
             results, layer_errors = wait_for_results(client, job.id, cng_job_id, deadline)
 
-            update_job(job.id, progress=70, message="Downloading converted file(s)")
             local_paths = {}
             file_info = {}
             total_size = 0
             for index, item in enumerate(results):
+                update_job(
+                    job.id,
+                    progress=80 + round(5 * index / len(results)),
+                    message=(
+                        f"Downloading the converted files ({index + 1} of {len(results)}): "
+                        f"{_file_kind(item['name'])}"
+                    ),
+                )
                 local_path = directory / f"result-{index}"
                 size, checksum = download_result(
                     client, item["result_url"], local_path, validate_result, invalid_result_message
@@ -368,10 +402,12 @@ def run_conversion(
                 local_paths[item["name"]] = local_path
                 file_info[item["name"]] = {"size": size, "checksum": checksum}
 
-            update_job(job.id, progress=85, message="Publishing to catalog")
             if job.replace_existing:
+                update_job(job.id, progress=86, message="Removing the layer being replaced")
                 _clear_for_replace(job, s3_client)
             layers = group_results(job, results)
+            uploads = sum(len(layer["assets"]) for layer in layers)
+            uploaded = 0
             base_prefix = str(PurePosixPath(job.output_key).parent)
             base_prefix = "" if base_prefix in ("", ".") else base_prefix
             catalog_folder = catalog_title = ""
@@ -396,6 +432,15 @@ def run_conversion(
                 info = None
                 table_info = None
                 for asset in layer["assets"]:
+                    update_job(
+                        job.id,
+                        progress=88 + round(9 * uploaded / max(uploads, 1)),
+                        message=(
+                            f"Uploading to the bucket ({uploaded + 1} of {uploads}): "
+                            f"{asset['filename']}"
+                        ),
+                    )
+                    uploaded += 1
                     local_path = local_paths[asset["item"]["name"]]
                     dest_key = f"{folder}/{asset['filename']}"
                     media_type = asset.get("media_type", output_content_type)
@@ -423,6 +468,11 @@ def run_conversion(
                     elif media_type != portolan.THUMBNAIL_MEDIA_TYPE and info is None:
                         info = asset["item"].get("info")
 
+                update_job(
+                    job.id,
+                    progress=97,
+                    message=f"Writing the catalog entry: {layer['title']}",
+                )
                 portolan.finalize_layer(
                     s3_client,
                     folder=folder,
