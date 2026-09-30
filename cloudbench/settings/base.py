@@ -213,6 +213,16 @@ CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_IN
 # left blank, no Authorization header is sent (matches a lite instance that
 # hasn't set LITE_API_TOKEN either).
 CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
+# A TIFF mosaic up to this total upload size (default 10 GB) gets one merged
+# EPSG:3857 COG as its web rendering, built by CloudNativeGIS; a larger one
+# renders from each tile's own EPSG:3857 COG instead (see apps.s3.mosaic).
+MOSAIC_MERGE_MAX_BYTES = int(os.environ.get("MOSAIC_MERGE_MAX_BYTES", str(10 * 1024**3)))
+# How long CloudBench waits for a mosaic's CloudNativeGIS job - and so how
+# long its presigned URLs last: CLOUDNATIVEGIS_CONVERSION_TIMEOUT plus this
+# many seconds per GB uploaded (default 5 minutes), at most
+# MOSAIC_MAX_TIMEOUT seconds (default 6 hours).
+MOSAIC_TIMEOUT_PER_GB = int(os.environ.get("MOSAIC_TIMEOUT_PER_GB", "300"))
+MOSAIC_MAX_TIMEOUT = int(os.environ.get("MOSAIC_MAX_TIMEOUT", str(6 * 3600)))
 
 CLOUDBENCH_CONFIG_DIR = os.environ.get(
     "CLOUDBENCH_CONFIG_DIR",

@@ -43,6 +43,7 @@ from .cog import (
 from .duckdb import get_duckdb_engine
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
 from .models import CngLiteJob, S3Connection
+from .mosaic import start_mosaic
 from .pmtiles import (
     cancel_geopackage_inspection,
     inspect_geopackage,
@@ -1105,6 +1106,49 @@ class S3UploadView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class S3MosaicUploadView(APIView):
+    """Upload several GeoTIFFs to publish as one mosaic (see apps.s3.mosaic).
+
+    multipart/form-data with `files` (two or more .tif/.tiff), `name` (the
+    mosaic's; defaults to the first file's), `prefix` (the folder to
+    publish under), `license`/`licenseUrl` and `replace`, as for uploads.
+    """
+
+    def post(self, request, conn_id):
+        files = request.FILES.getlist("files")
+        license_id, license_url = _requested_license(request.data)
+        if license_url is None:
+            return Response(
+                {"error": "License URL must be a valid http(s) URL"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            job = start_mosaic(
+                files,
+                request.data.get("name", ""),
+                request.data.get("prefix", ""),
+                conn_id,
+                request.user,
+                license_id,
+                license_url,
+                replace=_wants_replace(request.data),
+            )
+        except TargetExists as exc:
+            return _target_exists_response(exc)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "success": True,
+                "message": f"{len(files)} GeoTIFFs accepted for conversion into one mosaic",
+                "key": job.output_key,
+                "size": job.input_size,
+                "conversionJobId": str(job.id),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class S3GeoPackageInspectView(APIView):

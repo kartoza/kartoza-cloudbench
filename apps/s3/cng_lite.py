@@ -227,17 +227,13 @@ def submit_job(client, s3_client, source_key, expiration, endpoint, extra_payloa
     return submission["job_id"]
 
 
-def wait_for_results(client, job_id, cng_job_id, deadline):
-    """Poll cng-lite until the conversion finishes, returning a tuple of
-    (results, errors). `results` is [{'name', 'result_url'}, ...] — one
-    entry per output file (a GeoPackage conversion produces one per vector
-    layer or raster table; anything else produces exactly one). `errors`
-    lists any layers/tables cng-lite skipped rather than failing the job.
+def wait_for_job(client, job_id, cng_job_id, deadline):
+    """Poll cng-lite until its job finishes, returning the finished job's body.
 
-    Relays cng-lite's live per-layer/per-raster progress (e.g. "Converting
-    layer 2/5: dashboard", 40% through) into the job's own message/progress
-    as it goes, so the frontend's existing display shows real movement
-    across a multi-layer GeoPackage instead of sitting at one fixed value.
+    Relays cng-lite's live progress (e.g. "Converting layer 2/5: dashboard",
+    40% through) into the job's own message/progress as it goes, so the
+    frontend shows real movement across a multi-layer GeoPackage (or a
+    mosaic's tiles) instead of sitting at one fixed value.
     """
     while time.monotonic() < deadline:
         body = client.get(f"api/v1/jobs/{cng_job_id}").json()
@@ -246,10 +242,7 @@ def wait_for_results(client, job_id, cng_job_id, deadline):
                 f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
             )
         if body.get("status") == "done":
-            results = body.get("results")
-            if not results:
-                raise ValueError("CloudNativeGIS returned no result files.")
-            return results, body.get("errors") or []
+            return body
         detail = body.get("detail")
         if detail:
             fraction = body.get("detailProgress")
@@ -259,6 +252,21 @@ def wait_for_results(client, job_id, cng_job_id, deadline):
             update_job(job_id, **values)
         time.sleep(min(settings.CLOUDNATIVEGIS_POLL_INTERVAL, max(0, deadline - time.monotonic())))
     raise TimeoutError("Timed out waiting for CloudNativeGIS to produce the converted file(s).")
+
+
+def wait_for_results(client, job_id, cng_job_id, deadline):
+    """Wait for the conversion, returning (results, errors).
+
+    `results` is [{'name', 'result_url'}, ...] — one entry per output file
+    (a GeoPackage conversion produces one per vector layer or raster table;
+    anything else produces exactly one). `errors` lists any layers/tables
+    cng-lite skipped rather than failing the job.
+    """
+    body = wait_for_job(client, job_id, cng_job_id, deadline)
+    results = body.get("results")
+    if not results:
+        raise ValueError("CloudNativeGIS returned no result files.")
+    return results, body.get("errors") or []
 
 
 def download_result(client, result_path, destination, validate_result, invalid_result_message):

@@ -35,7 +35,7 @@ import {
   Spinner,
   Center,
 } from '@chakra-ui/react'
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle } from 'react-icons/fi'
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle, FiLayers } from 'react-icons/fi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
@@ -72,6 +72,24 @@ interface GpkgItem {
 }
 
 // Helper to detect recommended conversion
+const TIFF_PATTERN = /\.(tif|tiff)$/i
+
+// A mosaic's default name: what its tiles' names have in common
+// ("dem_n01.tif", "dem_n02.tif" -> "dem"), else the first tile's.
+export function defaultMosaicName(files: File[]): string {
+  const stems = files.map((file) => file.name.replace(TIFF_PATTERN, ''))
+  let common = stems[0] ?? ''
+  for (const stem of stems.slice(1)) {
+    while (!stem.startsWith(common)) common = common.slice(0, -1)
+  }
+  // Drop digits the tile numbers only share in part ("dem_0" from "dem_01",
+  // "dem_02"), but not whole numbers in the name ("Ortho 2024 - 1").
+  const numberContinues = stems.every((stem) => /\d/.test(stem.charAt(common.length)))
+  if (numberContinues) common = common.replace(/\d+$/, '')
+  common = common.replace(/[\s_.-]+$/, '')
+  return common || `${stems[0] ?? 'tiles'} mosaic`
+}
+
 function detectRecommendedConversion(filename: string): string | null {
   const ext = filename.split('.').pop()?.toLowerCase() || ''
   // Raster formats -> COG
@@ -112,6 +130,7 @@ export default function S3UploadDialog() {
   const [recommendedFormat, setRecommendedFormat] = useState<string | null>(null)
   const [license, setLicense] = useState(LICENSE_CHOICES[0].id)
   const [licenseUrl, setLicenseUrl] = useState('')
+  const [mosaicName, setMosaicName] = useState('')
   // Only an "other" license needs a link to its terms.
   const requestedLicenseUrl = license === 'other' ? licenseUrl.trim() || undefined : undefined
 
@@ -170,7 +189,13 @@ export default function S3UploadDialog() {
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
-  const isTiff = !!selectedFile && /\.(tif|tiff)$/i.test(selectedFile.name)
+  const isTiff = !!selectedFile && TIFF_PATTERN.test(selectedFile.name)
+  // Several GeoTIFFs at once: published together as one mosaic.
+  const mosaicFiles =
+    selectedFile && isTiff && companionFiles.length > 0 && companionFiles.every((file) => TIFF_PATTERN.test(file.name))
+      ? [selectedFile, ...companionFiles]
+      : null
+  const isMosaic = !!mosaicFiles
   // A GeoPackage can hold vector layers (-> PMTiles) or raster tiles (-> COG);
   // CloudNativeGIS Lite figures out which, so offer both.
   const isGpkgFile = !!selectedFile && /\.gpkg$/i.test(selectedFile.name)
@@ -214,6 +239,7 @@ export default function S3UploadDialog() {
     setRecommendedFormat(null)
     setLicense(LICENSE_CHOICES[0].id)
     setLicenseUrl('')
+    setMosaicName('')
     setIsInspecting(false)
     setGpkgJobId(null)
     setConversionJobIds([])
@@ -269,8 +295,12 @@ export default function S3UploadDialog() {
     if (isUploading || isConverting) return
     const file = files.find((component) => /\.shp$/i.test(component.name)) || files[0]
     if (!file) return
-    if (files.length > 1 && !/\.shp$/i.test(file.name)) {
-      toast({ title: 'Select one file, or the components of one shapefile', status: 'warning' })
+    const allTiffs = files.length > 1 && files.every((component) => TIFF_PATTERN.test(component.name))
+    if (files.length > 1 && !/\.shp$/i.test(file.name) && !allTiffs) {
+      toast({
+        title: 'Select one file, the components of one shapefile, or several GeoTIFFs to combine into a mosaic',
+        status: 'warning',
+      })
       return
     }
     // Swapping files while a GeoPackage is pending layer selection would
@@ -287,6 +317,7 @@ export default function S3UploadDialog() {
     setGpkgRasterTables(null)
     setSelectedLayerNames(new Set())
     setCustomKey(folderPrefix + file.name)
+    setMosaicName(allTiffs ? defaultMosaicName(files) : '')
   }, [isUploading, isConverting, toast, folderPrefix, gpkgJobId])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -319,9 +350,26 @@ export default function S3UploadDialog() {
     // A conversion publishes into a layer folder (or, for a GeoPackage, a
     // layer-group folder) named after the file: ask before replacing one
     // that already exists, rather than sending the file to have it refused.
-    if (!replace && convertToCloudNative && cngLiteConnected) {
+    if (isMosaic && !cngLiteConnected) {
+      toast({
+        title: 'CloudNativeGIS is not available',
+        description: 'Combining GeoTIFFs into a mosaic needs the CloudNativeGIS conversion service.',
+        status: 'error',
+        duration: 5000,
+      })
+      return
+    }
+    if (isMosaic && !mosaicName.trim()) {
+      toast({ title: 'Name the mosaic', status: 'warning', duration: 3000 })
+      return
+    }
+
+    if (!replace && (isMosaic || convertToCloudNative) && cngLiteConnected) {
       try {
-        const target = await api.checkPortolanTarget(connectionId, selectedFile.name, customKey || undefined)
+        // A mosaic publishes into a folder named after it, as a file does after itself.
+        const target = isMosaic
+          ? await api.checkPortolanTarget(connectionId, `${mosaicName.trim()}.tif`, `${folderPrefix}${mosaicName.trim()}.tif`)
+          : await api.checkPortolanTarget(connectionId, selectedFile.name, customKey || undefined)
         if (target.exists) {
           setPendingReplace(target)
           return
@@ -383,22 +431,33 @@ export default function S3UploadDialog() {
     setConversionJobId(null)
 
     try {
-      const result = await api.uploadToS3(
-        connectionId,
-        selectedFile,
-        customKey || undefined,
-        convertToCloudNative && !!targetFormat,
-        convertToCloudNative ? targetFormat || undefined : undefined,
-        (progress) => setUploadProgress(progress),
-        // A converted GeoPackage always gets its own folder (a Portolan
-        // sub-catalog of its layers, see apps.s3.cng_lite.run_conversion).
-        undefined,
-        undefined,
-        companionFiles,
-        license,
-        requestedLicenseUrl,
-        replace
-      )
+      const result = mosaicFiles
+        ? await api.uploadMosaic(
+            connectionId,
+            mosaicFiles,
+            mosaicName.trim(),
+            folderPrefix.replace(/\/+$/, ''),
+            (progress) => setUploadProgress(progress),
+            license,
+            requestedLicenseUrl,
+            replace
+          )
+        : await api.uploadToS3(
+            connectionId,
+            selectedFile,
+            customKey || undefined,
+            convertToCloudNative && !!targetFormat,
+            convertToCloudNative ? targetFormat || undefined : undefined,
+            (progress) => setUploadProgress(progress),
+            // A converted GeoPackage always gets its own folder (a Portolan
+            // sub-catalog of its layers, see apps.s3.cng_lite.run_conversion).
+            undefined,
+            undefined,
+            companionFiles,
+            license,
+            requestedLicenseUrl,
+            replace
+          )
 
       setUploadResult({
         success: result.success,
@@ -615,7 +674,21 @@ export default function S3UploadDialog() {
                     alignItems="center"
                     justifyContent="center"
                   >
-                    {selectedFile ? (
+                    {mosaicFiles ? (
+                      <VStack spacing={2}>
+                        <Icon as={FiLayers} boxSize={10} color="orange.500" />
+                        <Text fontWeight="500" color="gray.700" fontSize="md">
+                          {mosaicFiles.length} GeoTIFFs
+                        </Text>
+                        <Text fontSize="sm" color="gray.500">
+                          {formatFileSize(mosaicFiles.reduce((total, file) => total + file.size, 0))}
+                        </Text>
+                        <Text fontSize="xs" color="gray.600" noOfLines={3}>
+                          {mosaicFiles.map((file) => file.name).join(', ')}
+                        </Text>
+                        <Badge colorScheme="orange" fontSize="xs">→ ONE MOSAIC</Badge>
+                      </VStack>
+                    ) : selectedFile ? (
                       <VStack spacing={2}>
                         <Icon as={FiFile} boxSize={10} color="orange.500" />
                         <Text fontWeight="500" color="gray.700" fontSize="md" noOfLines={1}>{selectedFile.name}</Text>
@@ -640,7 +713,7 @@ export default function S3UploadDialog() {
                           Drop file or click to browse
                         </Text>
                         <Text fontSize="sm" color="gray.500">
-                          GeoTIFF, Shapefile, LAS, GeoPackage...
+                          GeoTIFF, Shapefile, LAS, GeoPackage... or several GeoTIFFs for one mosaic
                         </Text>
                       </VStack>
                     )}
@@ -653,7 +726,25 @@ export default function S3UploadDialog() {
                   )}
                 </FormControl>
 
-                {/* Object Key (path) */}
+                {isMosaic ? (
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Mosaic name</FormLabel>
+                    <Input
+                      value={mosaicName}
+                      isDisabled={isUploading || isConverting}
+                      onChange={(e) => setMosaicName(e.target.value)}
+                      placeholder="Elevation 2024"
+                      size="sm"
+                      borderRadius="lg"
+                    />
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      The tiles are published together as one raster collection
+                      {folderPrefix ? ` in ${folderPrefix}` : ''}: every tile, a VRT of them all,
+                      and a merged web map. They must share one CRS, bands, data type and nodata.
+                    </Text>
+                  </FormControl>
+                ) : (
+                /* Object Key (path) */
                 <FormControl>
                   <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Object Key (optional)</FormLabel>
                   <Input
@@ -670,6 +761,7 @@ export default function S3UploadDialog() {
                       : 'Leave empty to use original filename'}
                   </Text>
                 </FormControl>
+                )}
 
                 {/* License (recorded in the generated Portolan catalog entry) */}
                 <FormControl>

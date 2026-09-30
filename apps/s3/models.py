@@ -51,6 +51,7 @@ class S3Connection(models.Model):
 CONVERSION_FORMATS = {
     "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
     "cog": {"sourceFormat": "tiff", "targetFormat": "cog"},
+    "mosaic": {"sourceFormat": "tiff", "targetFormat": "mosaic"},
 }
 
 

@@ -361,6 +361,7 @@ class S3Client:
         key: str,
         expiration: int = 3600,
         method: str = "get_object",
+        content_type: str | None = None,
     ) -> str:
         """Generate a presigned URL.
 
@@ -368,17 +369,18 @@ class S3Client:
             key: Object key
             expiration: URL expiration in seconds
             method: S3 method (get_object, put_object)
+            content_type: For put_object: the only Content-Type the upload
+                may carry (it's signed; S3 refuses any other)
 
         Returns:
             Presigned URL
         """
+        params = {"Bucket": self.bucket, "Key": key}
+        if content_type:
+            params["ContentType"] = content_type
         return cast(
             str,
-            self.client.generate_presigned_url(
-                method,
-                Params={"Bucket": self.bucket, "Key": key},
-                ExpiresIn=expiration,
-            ),
+            self.client.generate_presigned_url(method, Params=params, ExpiresIn=expiration),
         )
 
     def copy_object(self, source_key: str, dest_key: str) -> dict[str, Any]:
