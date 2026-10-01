@@ -365,6 +365,8 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
 
     conversion_job.refresh_from_db()
     assert not (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(conversion_job.id)).exists()
+    # Kept whatever the outcome: every case got as far as submitting to cng.
+    assert conversion_job.cng_job_id == "cng-job-1"
     if outcome == "success":
         assert conversion_job.status == "completed"
         assert conversion_job.progress == 100

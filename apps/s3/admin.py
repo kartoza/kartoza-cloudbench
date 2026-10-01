@@ -71,7 +71,16 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "output_key",
         "input_size",
         "output_size",
+        "cloudnativegis_url",
+        "masked_cloudnativegis_api_token",
+        "cng_job_id",
         "created_at",
         "updated_at",
         "completed_at",
     ]
+    # Encrypted at rest like S3Connection's keys - never shown in plaintext.
+    exclude = ["cloudnativegis_api_token"]
+
+    @admin.display(description="CloudNativeGIS API token")
+    def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
+        return _mask(obj.cloudnativegis_api_token)

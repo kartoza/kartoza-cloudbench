@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw } from 'react-icons/fi'
 import * as api from '../api'
 import type { ConversionJob } from '../types'
-import { isActiveJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
+import { isActiveJob, isActiveStatus, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
 
 // The header's list of conversions: they run on the server, so progress can
 // be followed from anywhere - after the upload dialog that started one is
@@ -108,7 +108,7 @@ export default function JobsIndicator() {
     if (previous) {
       for (const job of jobs) {
         const before = previous.get(job.id)
-        if (!before || !['pending', 'running'].includes(before) || isActiveJob(job)) continue
+        if (!before || !isActiveStatus(before) || isActiveJob(job)) continue
         const finished = job.status === 'completed'
         toast({
           title: `${job.sourcePath}: ${finished ? 'conversion finished' : 'conversion failed'}`,

@@ -55,6 +55,29 @@ CONVERSION_FORMATS = {
 }
 
 
+class CngLiteJobStatus(models.TextChoices):
+    # Not started yet: just created (thread about to start), a GeoPackage
+    # waiting for its layers to be picked (`layers` null), or a GeoPackage's
+    # raster job waiting for its vector job (see geopackage_convert).
+    PENDING = "pending", "Pending"
+    # Getting the CloudNativeGIS service the job will run on - its
+    # cloudnativegis_url/cloudnativegis_api_token (CLOUDNATIVEGIS_ON_DEMAND).
+    PROVISIONING = "provisioning", "Provisioning"
+    # Submitted to / being converted by CloudNativeGIS, or being published.
+    RUNNING = "running", "Running"
+    # Published; a non-empty `error` lists layers CloudNativeGIS skipped.
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
+# Not finished yet: listed as in progress, and checked for having stalled.
+ACTIVE_CNG_LITE_JOB_STATUSES = (
+    CngLiteJobStatus.PENDING,
+    CngLiteJobStatus.PROVISIONING,
+    CngLiteJobStatus.RUNNING,
+)
+
+
 class CngLiteJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     kind = models.CharField(max_length=20, default="pmtiles")
@@ -83,13 +106,19 @@ class CngLiteJob(models.Model):
     # gets its own instead of the fixed CLOUDNATIVEGIS_URL/API_TOKEN.
     cloudnativegis_url = models.URLField(max_length=2000, blank=True, default="")
     cloudnativegis_api_token = EncryptedCharField(blank=True, default="")
+    # The job's id on the CloudNativeGIS side, set once it has been submitted
+    # there (see apps.s3.cng_lite.run_conversion) - what its status is polled
+    # and its results downloaded by.
+    cng_job_id = models.CharField(max_length=64, blank=True, default="")
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,
     # rather than a single object key — see apps.s3.cng_lite.run_conversion.
     output_keys = models.JSONField(null=True, blank=True)
     output_size = models.BigIntegerField(default=0)
-    status = models.CharField(max_length=20, default="pending")
+    status = models.CharField(
+        max_length=20, choices=CngLiteJobStatus.choices, default=CngLiteJobStatus.PENDING
+    )
     progress = models.PositiveSmallIntegerField(default=0)
     message = models.TextField(default="Waiting to upload to CloudNativeGIS")
     error = models.TextField(blank=True)

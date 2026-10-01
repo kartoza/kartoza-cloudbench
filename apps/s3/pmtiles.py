@@ -22,7 +22,7 @@ from .cng_lite import (
     run_conversion as run_cng_lite_conversion,
 )
 from .geopackage import is_geopackage, prepare_geopackage
-from .models import CngLiteJob
+from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "pmtiles"
 ENDPOINT = "api/v1/pmtiles"
@@ -317,7 +317,7 @@ def start_geopackage_conversion(job_id, user, layers):
     if not layers:
         raise ValueError("Select at least one layer.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind=KIND, status="pending"
+        pk=job_id, owner_id=user.username, kind=KIND, status=CngLiteJobStatus.PENDING
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
@@ -337,7 +337,11 @@ def cancel_geopackage_inspection(job_id, user):
     # its background thread gets a chance to move status off "pending" —
     # check it too so a confirmed job can't be cancelled out from under it.
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind=KIND, status="pending", layers__isnull=True
+        pk=job_id,
+        owner_id=user.username,
+        kind=KIND,
+        status=CngLiteJobStatus.PENDING,
+        layers__isnull=True,
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")

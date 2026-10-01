@@ -579,7 +579,13 @@ export interface S3Object {
 export type CloudNativeFormat = 'cog' | 'copc' | 'geoparquet' | 'parquet' | 'unknown'
 
 // Conversion job status
-export type ConversionJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type ConversionJobStatus =
+  | 'pending'
+  | 'provisioning'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
 
 // Conversion job
 export interface ConversionJob {

@@ -13,7 +13,7 @@ import threading
 
 from . import cog, pmtiles
 from .cng_lite import job_directory
-from .models import CngLiteJob
+from .models import CngLiteJob, CngLiteJobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,11 @@ def start_geopackage_conversion(job_id, user, layers=None, tables=None):
         return [cog.start_geopackage_conversion(job_id, user, tables)]
 
     vector = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind=pmtiles.KIND, status="pending", layers__isnull=True
+        pk=job_id,
+        owner_id=user.username,
+        kind=pmtiles.KIND,
+        status=CngLiteJobStatus.PENDING,
+        layers__isnull=True,
     ).first()
     if not vector:
         raise ValueError("Job not found, or conversion was already started.")

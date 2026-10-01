@@ -11,7 +11,7 @@ from .client import get_s3_client
 from .cng_lite import check_target, job_directory, source_object_key
 from .cng_lite import run_conversion as run_cng_lite_conversion
 from .geopackage import is_geopackage, prepare_geopackage
-from .models import CngLiteJob
+from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "cog"
 ENDPOINT = "api/v1/cog"
@@ -178,7 +178,11 @@ def start_geopackage_conversion(job_id, user, tables):
     if not tables:
         raise ValueError("Select at least one raster table.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind="pmtiles", status="pending", layers__isnull=True
+        pk=job_id,
+        owner_id=user.username,
+        kind="pmtiles",
+        status=CngLiteJobStatus.PENDING,
+        layers__isnull=True,
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")

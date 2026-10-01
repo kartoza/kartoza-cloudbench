@@ -23,7 +23,7 @@ from django.utils import timezone
 from . import portolan
 from .client import get_s3_client
 from .geopackage import is_geopackage
-from .models import CngLiteJob, S3Connection
+from .models import ACTIVE_CNG_LITE_JOB_STATUSES, CngLiteJob, CngLiteJobStatus, S3Connection
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +188,10 @@ def expire_stalled_job(job):
     cutoff = timezone.now() - timedelta(seconds=settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT + 120)
     expired = CngLiteJob.objects.filter(
         pk=job.pk,
-        status__in=["pending", "running"],
+        status__in=ACTIVE_CNG_LITE_JOB_STATUSES,
         updated_at__lt=cutoff,
     ).update(
-        status="failed",
+        status=CngLiteJobStatus.FAILED,
         error="Conversion was interrupted or stopped responding. Please retry the upload.",
         message="CloudNativeGIS conversion interrupted",
         completed_at=timezone.now(),
@@ -325,7 +325,12 @@ def run_conversion(
     try:
         job = CngLiteJob.objects.get(pk=job_id)
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
-        update_job(job.id, status="running", progress=10, message="Submitting to CloudNativeGIS")
+        update_job(
+            job.id,
+            status=CngLiteJobStatus.RUNNING,
+            progress=10,
+            message="Submitting to CloudNativeGIS",
+        )
         # CngLiteJob.owner_id holds the owner's username.
         owner = get_user_model().objects.get(username=job.owner_id)
         s3_client = get_s3_client(job.connection_id, owner)
@@ -344,7 +349,12 @@ def run_conversion(
                 endpoint,
                 extra_payload,
             )
-            update_job(job.id, progress=20, message="Waiting for CloudNativeGIS conversion")
+            update_job(
+                job.id,
+                cng_job_id=cng_job_id,
+                progress=20,
+                message="Waiting for CloudNativeGIS conversion",
+            )
             results, layer_errors = wait_for_results(client, job.id, cng_job_id, deadline)
 
             update_job(job.id, progress=70, message="Downloading converted file(s)")
@@ -450,7 +460,7 @@ def run_conversion(
 
         update_job(
             job.id,
-            status="completed",
+            status=CngLiteJobStatus.COMPLETED,
             progress=100,
             output_size=total_size,
             output_keys=output_keys,
@@ -467,7 +477,7 @@ def run_conversion(
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
         update_job(
             job_id,
-            status="failed",
+            status=CngLiteJobStatus.FAILED,
             message="CloudNativeGIS conversion failed",
             error=error,
             completed_at=timezone.now(),
