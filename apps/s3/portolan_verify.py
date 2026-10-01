@@ -4,7 +4,8 @@ Also records checksums for a layer published before they existed
 (record_checksums), from its files as they are in the bucket now.
 
 A layer's collection.json records file:checksum/file:size for each data
-file when it's published (see apps.s3.cng_lite.download_result). If a file
+file when it's published (from the SHA-256 CloudNativeGIS reports for what it
+uploaded, checked in the bucket - see apps.s3.direct_upload). If a file
 is later overwritten or deleted directly in the bucket, the record goes
 stale — which Portolan counts as a conformance failure. This re-reads each
 file from S3 and compares, for the portolan_verify command and the S3

@@ -32,8 +32,9 @@ const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'provisioning',
   'pushing',
   'polling',
-  'downloading',
+  'verifying',
   'publishing',
+  'downloading',
   'running',
 ]
 

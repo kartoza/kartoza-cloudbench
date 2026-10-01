@@ -1,20 +1,20 @@
 """Several GeoTIFFs published as one mosaic: a collection with a STAC item per tile."""
 
-import io
 import json
 from datetime import datetime
 from functools import partial
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import quote
 
 import httpx
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3 import mosaic, portolan, portolan_mosaic
+from apps.s3 import direct_upload, mosaic, portolan, portolan_mosaic
 from apps.s3.cng_lite import TargetExists, job_directory
 from apps.s3.models import CngLiteJob, S3Connection
+from tests.unit.fake_s3 import FakeS3
 
 WGS84 = 'GEOGCRS["WGS 84",ID["EPSG",4326]]'
 UTM = 'PROJCRS["WGS 84 / UTM zone 35S",ID["EPSG",32735]]'
@@ -188,67 +188,6 @@ def test_mosaic_endpoint(staging, owner, connection):
 # -- Converting (in CloudNativeGIS) and publishing ------------------------------
 
 
-class FakeS3:
-    """An in-memory bucket: just what the mosaic pipeline and catalog use."""
-
-    bucket = "bucket"
-    bucket_url = "http://minio:9000/bucket"
-
-    def __init__(self):
-        self.objects: dict[str, bytes] = {}
-        self.content_types: dict[str, str] = {}
-        self.client = Mock()
-        self.client.upload_fileobj.side_effect = self._upload
-        self.client.delete_objects.side_effect = self._delete_objects
-        self.client.get_object.side_effect = self._get_range
-        self.expirations: list[int] = []
-
-    def _upload(self, source, bucket, key, ExtraArgs=None):
-        self.objects[key] = source.read()
-        self.content_types[key] = (ExtraArgs or {}).get("ContentType")
-
-    def _delete_objects(self, Bucket, Delete):
-        for entry in Delete["Objects"]:
-            self.objects.pop(entry["Key"], None)
-
-    def put_object(self, key, body, content_type=None):
-        self.objects[key] = body if isinstance(body, bytes) else body.encode()
-        self.content_types[key] = content_type
-
-    def get_object(self, key):
-        return self.objects[key]
-
-    def list_objects(self, prefix="", delimiter="/", max_keys=1000, continuation_token=None):
-        keys = [key for key in self.objects if key.startswith(prefix)][:max_keys]
-        return {"objects": [{"key": key} for key in keys], "isTruncated": False}
-
-    def _get_range(self, Bucket, Key, Range):
-        start, end = (int(n) for n in Range.removeprefix("bytes=").split("-"))
-        return {"Body": io.BytesIO(self.objects[Key][start : end + 1])}
-
-    def get_object_info(self, key):
-        return {"contentLength": len(self.objects[key]), "contentType": self.content_types[key]}
-
-    def generate_presigned_url(self, key, expiration=3600, method="get_object", content_type=None):
-        self.expirations.append(expiration)
-        url = f"http://minio:9000/bucket/{key}?method={method}"
-        return f"{url}&type={quote(content_type)}" if content_type else url
-
-    def presigned_put(self, url, body):
-        """What S3 does with a PUT to one of this bucket's presigned URLs."""
-        parsed = urlparse(url)
-        key = unquote(parsed.path.removeprefix("/bucket/"))
-        self.objects[key] = body
-        self.content_types[key] = parse_qs(parsed.query)["type"][0]
-
-    def delete_prefix(self, prefix):
-        for key in [k for k in self.objects if k.startswith(prefix)]:
-            del self.objects[key]
-
-    def json(self, key):
-        return json.loads(self.objects[key])
-
-
 def _output(size):
     return {"size": size, "sha256": f"{size:064x}"}
 
@@ -280,7 +219,12 @@ def _cng(outputs_for, s3, tamper=None):
         if request.url.path == "/api/v1/jobs/cng-1":
             outputs = outputs_for(submitted[0])
             for url, output in _uploads(submitted[0], outputs):
-                body = (b"II*\x00" if ".tif?" in url else b"x").ljust(output["size"], b"\0")
+                start = (
+                    b"II*\x00"
+                    if ".tif?" in url
+                    else b"\x89PNG\r\n\x1a\n" if ".png?" in url else b"<VRTDataset>"
+                )
+                body = start.ljust(output["size"], b"\0")
                 body = tamper(url, body) if tamper else body
                 if body is not None:
                     s3.presigned_put(url, body)
@@ -305,8 +249,8 @@ def _outputs(payload):
             }
             for i, tile in enumerate(payload["tiles"])
         ],
-        "vrt": _output(7),
-        "thumbnail": _output(9),
+        "vrt": _output(70),
+        "thumbnail": _output(90),
     }
     if payload["merged"]:
         outputs["merged"] = _output(300)
@@ -618,4 +562,4 @@ def test_a_big_mosaics_urls_last_as_long_as_its_job(owner, settings, tmp_path):
 
     assert job.status == "completed", job.error
     timeout.assert_called_once_with(job.input_size)
-    assert set(s3.expirations) == {9000 + mosaic.URL_MARGIN}
+    assert set(s3.expirations) == {9000 + direct_upload.URL_MARGIN}
