@@ -5,10 +5,13 @@ import json
 from unittest.mock import Mock, patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework.test import APIClient
 
 from apps.s3 import portolan
 from apps.s3.cng_lite import host_contact_email
 from apps.s3.models import S3Connection
+from tests.unit.fake_s3 import FakeS3
 
 TABLE_INFO = {
     "columns": [{"name": "name", "type": "string"}, {"name": "geometry", "type": "binary"}],
@@ -109,12 +112,18 @@ def test_host_provider_takes_configured_name_and_contact_email():
     }
 
 
-def test_collection_lists_producer_and_exactly_one_host():
-    host = portolan.host_provider("https://minio.example.org/data")
+def test_collection_is_produced_and_hosted_by_one_organisation():
+    host = portolan.host_provider("https://minio.example.org/data", name="Kartoza")
     collection = collection_for(VECTOR_ASSETS, host=host)
 
-    assert collection["providers"] == [{"name": "admin", "roles": ["producer"]}, host]
-    assert [p for p in collection["providers"] if "host" in p["roles"]] == [host]
+    # The host is the producer too - so Portolan reads the data as official,
+    # not a mirror needing a link to its source - and the uploader processed
+    # it. The host comes last, as Portolan requires.
+    assert collection["providers"] == [
+        {"name": "admin", "roles": ["processor"]},
+        {**host, "roles": ["producer", "host"]},
+    ]
+    assert [p["name"] for p in collection["providers"] if "host" in p["roles"]] == ["Kartoza"]
 
 
 def test_agents_md_points_queries_at_geoparquet():
@@ -579,3 +588,68 @@ def test_new_raster_layers_are_published_conformant():
     )
     assert portolan.WEB_MAP_LINKS_SCHEMA not in collection["stac_extensions"]
     assert collection["extent"]["spatial"]["bbox"] == [[-180.0, -90.0, 180.0, 90.0]]
+
+
+def published_layer(s3):
+    """A layer as finalize_layer leaves it in `s3`, at "maps/roads"."""
+    portolan.finalize_layer(
+        s3,
+        folder="maps/roads",
+        layer_id="roads",
+        title="Roads",
+        kind="pmtiles",
+        data_assets=VECTOR_ASSETS,
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="roads.zip",
+        info={"bbox": [1, 2, 3, 4], "layers": ["roads"]},
+    )
+
+
+def style_checksum(s3, folder="maps/roads"):
+    return s3.json(f"{folder}/collection.json")["assets"]["style-default"]["file:checksum"]
+
+
+def test_published_style_is_checksummed():
+    s3 = FakeS3()
+    published_layer(s3)
+
+    style = s3.objects["maps/roads/styles/default.json"]
+    assert style_checksum(s3) == portolan.file_of(style)["checksum"]
+    assert s3.content_types["maps/roads/styles/default.json"] == portolan.STYLE_MEDIA_TYPE
+
+
+@pytest.mark.django_db
+def test_saving_a_style_records_its_new_checksum(django_user_model):
+    owner = django_user_model.objects.create(username="7")
+    connection = S3Connection.objects.create(owner=owner, name="MinIO", endpoint="minio:9000")
+    s3 = FakeS3()
+    published_layer(s3)
+    edited = json.dumps({"version": 8, "layers": [{"id": "edited"}]}).encode()
+    api = APIClient()
+    api.force_authenticate(user=owner)
+    with patch("apps.s3.views.get_s3_client", return_value=s3):
+        # As the style editor saves it: a plain upload, as application/json.
+        response = api.post(
+            f"/api/s3/upload/{connection.id}",
+            {
+                "file": SimpleUploadedFile("default.json", edited, "application/json"),
+                "key": "maps/roads/styles/default.json",
+            },
+            format="multipart",
+        )
+
+    assert response.status_code == 201
+    assert s3.objects["maps/roads/styles/default.json"] == edited
+    assert style_checksum(s3) == portolan.file_of(edited)["checksum"]
+    assert s3.content_types["maps/roads/styles/default.json"] == portolan.STYLE_MEDIA_TYPE
+
+
+def test_only_a_layers_own_style_counts():
+    s3 = FakeS3()
+    published_layer(s3)
+
+    assert portolan.layer_style(s3, "maps/roads/styles/default.json")
+    assert portolan.layer_style(s3, "maps/roads/styles/other.json") is None
+    assert portolan.layer_style(s3, "maps/rivers/styles/default.json") is None  # no layer
+    assert portolan.layer_style(s3, "styles/default.json") is None

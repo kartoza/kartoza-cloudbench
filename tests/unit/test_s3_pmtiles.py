@@ -374,16 +374,19 @@ def test_portolan_metadata_records_what_cloudnativegis_uploaded(conversion_job):
     assert data_file == file_fields(PARQUET)
     [pmtiles_link] = [link for link in collection["links"] if link["rel"] == "pmtiles"]
     assert pmtiles_link["file:checksum"] == file_fields(PMTILES)["file:checksum"]
-    # The style editor rewrites the style in place, so it never gets a checksum.
-    assert not any(k.startswith("file:") for k in collection["assets"]["style-default"])
+    # The style is checksummed as written (saving an edit records it again).
+    style = {
+        k: v for k, v in collection["assets"]["style-default"].items() if k.startswith("file:")
+    }
+    assert style == file_fields(s3.objects["folder/roads/styles/default.json"])
     assert portolan.FILE_SCHEMA in collection["stac_extensions"]
     assert b"![Roads](./thumbnail.png)" in s3.objects["folder/roads/README.md"]
     assert collection["table:columns"] == COLUMNS
     # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
     assert collection["extent"]["spatial"]["bbox"] == [[1, 2, 3, 4]]
     assert collection["providers"] == [
-        {"name": "7", "roles": ["producer"]},
-        {"name": "minio", "roles": ["host"], "url": "http://minio:9000/bucket"},
+        {"name": "7", "roles": ["processor"]},
+        {"name": "Kartoza", "roles": ["producer", "host"], "url": "http://minio:9000/bucket"},
     ]
     root = s3.json("catalog.json")
     assert any(link["href"] == "./folder/roads/collection.json" for link in root["links"])

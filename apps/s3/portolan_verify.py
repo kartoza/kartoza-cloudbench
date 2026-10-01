@@ -1,7 +1,9 @@
 """Checks a published layer's files against their recorded checksums.
 
 Also records checksums for a layer published before they existed
-(record_checksums), from its files as they are in the bucket now.
+(record_checksums), from its files as they are in the bucket now, and
+brings an older layer's metadata up to what publishing writes now
+(repair_metadata).
 
 A layer's collection.json records file:checksum/file:size for each data
 file when it's published (from the SHA-256 CloudNativeGIS reports for what it
@@ -16,6 +18,8 @@ import hashlib
 import json
 import posixpath
 from typing import Any
+
+from django.conf import settings
 
 from . import portolan
 
@@ -117,15 +121,6 @@ def verify_layer(client, folder: str, title: str = "") -> dict[str, Any]:
     return {**result, "status": status, "files": files}
 
 
-def _recordable(asset: dict[str, Any]) -> bool:
-    """Files that get a checksum: everything but the style.
-
-    The style editor rewrites styles/default.json in place, so its checksum
-    would go stale on the first edit (see portolan._file_fields).
-    """
-    return "style" not in asset.get("roles", [])
-
-
 def record_checksums(client, folder: str) -> dict[str, Any]:
     """Record file:checksum/file:size for a layer that has none yet.
 
@@ -143,11 +138,9 @@ def record_checksums(client, folder: str) -> dict[str, Any]:
     if _checksummed_files(collection):
         raise AlreadyRecorded(folder)
 
-    targets = [
-        record
-        for record in collection.get("assets", {}).values()
-        if record.get("href") and _recordable(record)
-    ] + [link for link in collection.get("links", []) if link.get("rel") == "pmtiles"]
+    targets = [record for record in collection.get("assets", {}).values() if record.get("href")] + [
+        link for link in collection.get("links", []) if link.get("rel") == "pmtiles"
+    ]
     missing = []
     for record in targets:
         file_key = posixpath.normpath(posixpath.join(folder, record["href"]))
@@ -172,3 +165,61 @@ def record_checksums(client, folder: str) -> dict[str, Any]:
     )
     portolan.touch_root_catalog(client)
     return verify_layer(client, folder)
+
+
+def _current_providers(providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`providers` as publishing writes them now (see portolan.providers).
+
+    The hosting organisation (settings.PORTOLAN_HOST_NAME) is the producer
+    too, and whoever else was listed - the uploader - its processor.
+    """
+    host = next((p for p in providers if "host" in p.get("roles", [])), None)
+    if host is None:
+        return providers
+    host = {**host, "name": settings.PORTOLAN_HOST_NAME}
+    uploader = next((p.get("name") for p in providers if p is not host and p.get("name")), None)
+    if uploader is None or uploader == host["name"]:
+        return [{**host, "roles": ["producer", "host"]}]
+    return portolan.providers(host, uploader)
+
+
+def repair_metadata(client, folder: str, dry_run: bool = False) -> list[str] | None:
+    """Bring a published layer's collection.json up to what publishing writes now."""
+    key = f"{folder}/collection.json"
+    try:
+        collection = json.loads(client.get_object(key))
+    except Exception:
+        return None
+    changes = []
+
+    providers = collection.get("providers") or []
+    current = _current_providers(providers)
+    if current != providers:
+        collection["providers"] = current
+        changes.append("providers")
+
+    style = collection.get("assets", {}).get("style-default")
+    if style and style.get("href"):
+        recorded: tuple[int, str] | None
+        try:
+            recorded = _hash_object(
+                client, posixpath.normpath(posixpath.join(folder, style["href"]))
+            )
+        except Exception:
+            recorded = None  # no style file: nothing to record
+        if recorded and (style.get("file:size"), style.get("file:checksum")) != recorded:
+            size, checksum = recorded
+            style["file:checksum"] = checksum
+            style["file:size"] = size
+            extensions = collection.setdefault("stac_extensions", [])
+            if portolan.FILE_SCHEMA not in extensions:
+                extensions.append(portolan.FILE_SCHEMA)
+            changes.append("style checksum")
+
+    if changes and not dry_run:
+        client.put_object(
+            key=key,
+            body=json.dumps(collection, indent=2).encode("utf-8"),
+            content_type="application/json",
+        )
+    return changes

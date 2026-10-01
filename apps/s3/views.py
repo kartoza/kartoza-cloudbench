@@ -1150,11 +1150,17 @@ class S3UploadView(APIView):
                         key=key, body=archive, content_type="application/zip"
                     )
             else:
+                body = uploaded_file.read()
+                # A layer's style, saved by the style editor: its checksum in
+                # the layer's collection.json has to follow it.
+                style_of = portolan.layer_style(client, key)
                 result = client.put_object(
                     key=key,
-                    body=uploaded_file.read(),
-                    content_type=content_type,
+                    body=body,
+                    content_type=portolan.STYLE_MEDIA_TYPE if style_of else content_type,
                 )
+                if style_of:
+                    portolan.record_style(client, key, style_of, body)
             return Response(
                 {
                     "key": key,

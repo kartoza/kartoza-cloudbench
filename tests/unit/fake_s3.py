@@ -40,6 +40,7 @@ class FakeS3:
     def put_object(self, key, body, content_type=None):
         self.objects[key] = body if isinstance(body, bytes) else body.encode()
         self.content_types[key] = content_type
+        return {"etag": hashlib.md5(self.objects[key]).hexdigest()}
 
     def get_object(self, key):
         return self.objects[key]

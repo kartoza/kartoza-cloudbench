@@ -216,8 +216,9 @@ def test_record_checksums_for_a_layer_published_before_them():
     assert collection["assets"]["visual"]["file:size"] == len(b"PMTiles")
     [pmtiles_link] = [link for link in collection["links"] if link["rel"] == "pmtiles"]
     assert pmtiles_link["file:checksum"] == checksum(b"PMTiles")
-    # The style editor rewrites the style in place: never checksummed.
-    assert "file:checksum" not in collection["assets"]["style-default"]
+    # The style too: saving an edit records its checksum again.
+    style = bucket.objects["old/styles/default.json"]
+    assert collection["assets"]["style-default"]["file:checksum"] == checksum(style)
     assert portolan.FILE_SCHEMA in collection["stac_extensions"]
     # catalog.json is rewritten, so anything keyed on its ETag (STAC cache) notices.
     assert bucket.objects["catalog.json"] != catalog_before
@@ -295,3 +296,75 @@ def test_catalog_layers_include_geopackage_sub_catalog_layers():
         "catalog": "gpkg",
         "catalog_title": "gpkg",  # the sub-catalog has no title of its own here
     }
+
+
+def with_old_providers(bucket, folder="roads"):
+    """Give `folder` the providers layers were published with before."""
+    key = f"{folder}/collection.json"
+    collection = json.loads(bucket.objects[key])
+    collection["providers"] = [
+        {"name": "admin", "roles": ["producer"]},
+        {"name": "minio.example.org", "roles": ["host"], "url": "https://minio.example.org/b"},
+    ]
+    bucket.objects[key] = json.dumps(collection).encode()
+    return bucket
+
+
+def test_repair_brings_an_older_layer_up_to_date(settings):
+    settings.PORTOLAN_HOST_NAME = "Kartoza"
+    bucket = with_old_providers(published_bucket())
+
+    assert portolan_verify.repair_metadata(bucket, "roads") == ["providers", "style checksum"]
+
+    collection = json.loads(bucket.objects["roads/collection.json"])
+    assert collection["providers"] == [
+        {"name": "admin", "roles": ["processor"]},
+        {"name": "Kartoza", "roles": ["producer", "host"], "url": "https://minio.example.org/b"},
+    ]
+    style = collection["assets"]["style-default"]
+    assert (style["file:checksum"], style["file:size"]) == (checksum(b"{}"), 2)
+    assert portolan.FILE_SCHEMA in collection["stac_extensions"]
+    # The data's records are left as they were, and still verify.
+    assert portolan_verify.verify_layer(bucket, "roads")["status"] == "ok"
+    # Up to date now: nothing more to change.
+    assert portolan_verify.repair_metadata(bucket, "roads") == []
+
+
+def test_repair_dry_run_writes_nothing(settings):
+    settings.PORTOLAN_HOST_NAME = "Kartoza"
+    bucket = with_old_providers(published_bucket())
+    before = bucket.objects["roads/collection.json"]
+
+    assert portolan_verify.repair_metadata(bucket, "roads", dry_run=True) == [
+        "providers",
+        "style checksum",
+    ]
+    assert bucket.objects["roads/collection.json"] == before
+
+
+def test_repair_follows_an_edited_style():
+    bucket = published_bucket()
+    portolan_verify.repair_metadata(bucket, "roads")
+    bucket.objects["roads/styles/default.json"] = b'{"version": 8}'
+
+    assert portolan_verify.repair_metadata(bucket, "roads") == ["style checksum"]
+    style = json.loads(bucket.objects["roads/collection.json"])["assets"]["style-default"]
+    assert style["file:checksum"] == checksum(b'{"version": 8}')
+
+
+def test_repair_command(connection, settings, capsys):
+    settings.PORTOLAN_HOST_NAME = "Kartoza"
+    bucket = with_old_providers(published_bucket())
+    catalog_before = bucket.objects["catalog.json"]
+    with patch("apps.s3.management.commands.portolan_repair.get_s3_client", return_value=bucket):
+        call_command("portolan_repair", "--connection", "MinIO", "--dry-run")
+        assert bucket.objects["catalog.json"] == catalog_before
+        call_command("portolan_repair", "--connection", "MinIO")
+        call_command("portolan_repair", "--connection", "MinIO")
+
+    out = capsys.readouterr().out
+    assert "WOULD FIX  MinIO/roads: providers, style checksum" in out
+    assert "FIXED      MinIO/roads: providers, style checksum" in out
+    assert "OK         MinIO/roads" in out
+    # The root catalog is rewritten, so the STAC API's cache notices.
+    assert bucket.objects["catalog.json"] != catalog_before
