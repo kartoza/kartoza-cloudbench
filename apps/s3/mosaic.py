@@ -497,6 +497,8 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
     title = portolan.prettify(job.source_name)
     license_id = portolan.normalize_license(job.license)
     license_url = job.license_url if license_id == "other" else ""
+    style_target = visual["filename"] if visual else f"{tiles[0]['id']}/{tiles[0]['id']}.tif"
+    style = portolan_mosaic.dumps(portolan.default_style_for_cog(style_target))
     collection = portolan_mosaic.build_collection_json(
         folder=folder,
         title=title,
@@ -513,6 +515,7 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
         visual=visual,
         thumbnail=thumbnail,
         mirror=mirror,
+        style_file=portolan.file_of(style),
     )
     readme = portolan_mosaic.build_readme(
         title=title,
@@ -532,16 +535,11 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
         tile_count=len(tiles),
         mirror_filename=mirror["filename"] if mirror else None,
     )
-    style_target = visual["filename"] if visual else f"{tiles[0]['id']}/{tiles[0]['id']}.tif"
     files = [
         ("collection.json", portolan_mosaic.dumps(collection), "application/json"),
         ("README.md", readme.encode("utf-8"), "text/markdown"),
         ("AGENTS.md", agents.encode("utf-8"), "text/markdown"),
-        (
-            "styles/default.json",
-            portolan_mosaic.dumps(portolan.default_style_for_cog(style_target)),
-            "application/vnd.mapbox.style+json",
-        ),
+        (portolan.STYLE_KEY, style, portolan.STYLE_MEDIA_TYPE),
     ]
     if license_id == "other" and not license_url:
         files.append(

@@ -8,6 +8,7 @@ full spec — no checksums, thumbnails, or multi-language support yet.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import posixpath
@@ -22,6 +23,8 @@ PORTOLAN_SCHEMA = "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json"
 WEB_MAP_LINKS_SCHEMA = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
 TABLE_SCHEMA = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 FILE_SCHEMA = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
+STYLE_KEY = "styles/default.json"
 # Multihash prefix for SHA-256: function code 0x12, digest length 0x20 (32 bytes).
 _SHA256_MULTIHASH_PREFIX = "1220"
 CATALOG_KEY = "catalog.json"
@@ -63,13 +66,18 @@ def sha256_multihash(digest: bytes) -> str:
     return _SHA256_MULTIHASH_PREFIX + digest.hex()
 
 
+def file_of(body: bytes) -> dict:
+    """{'size', 'checksum'} of a file CloudBench writes itself (see _file_fields)."""
+    return {"size": len(body), "checksum": sha256_multihash(hashlib.sha256(body).digest())}
+
+
 def _file_fields(asset: dict) -> dict:
     """An asset's file:checksum/file:size (File extension), if it has them.
 
-    Only data files written once per publish carry them (see
-    run_conversion); the style — which the style editor rewrites in place —
-    and regenerated docs never do, since Portolan counts a stale checksum
-    as a conformance failure.
+    The data files and the style carry them. The style editor rewrites the
+    style in place, so saving it records them again (see record_style):
+    Portolan counts a stale checksum as a conformance failure. Regenerated
+    docs are links rather than assets, and carry none.
     """
     file = asset.get("file") or {}
     fields = {}
@@ -213,6 +221,21 @@ def host_provider(bucket_url: str, name: str = "", email: str = "") -> dict:
     return provider
 
 
+def providers(host: dict | None, uploader: str) -> list[dict]:
+    """A collection's providers: who produced its data, who hosts it.
+
+    The organisation hosting the data (`host`, see host_provider) is its
+    producer too: Portolan derives provenance from the two names, and a
+    producer that isn't the host makes the collection a mirror, which must
+    link to its upstream source (PTL-PRO-001). The uploader, who ran the
+    conversion, is listed as its processor. The host comes last, as
+    Portolan requires (PTL-PRV-002).
+    """
+    if not host:
+        return [{"name": uploader, "roles": ["producer"]}]
+    return [{"name": uploader, "roles": ["processor"]}, {**host, "roles": ["producer", "host"]}]
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -295,6 +318,7 @@ def build_collection_json(
     host: dict | None = None,
     license_url: str = "",
     style_filename: str = "default.json",
+    style_file: dict | None = None,
     pmtiles_layers: list | None = None,
     table_info: dict | None = None,
 ) -> dict:
@@ -306,9 +330,10 @@ def build_collection_json(
 
     `table_info` ({'columns', 'rowCount'}) describes the GeoParquet file's
     schema, as the STAC table extension's `table:columns`. `host` is the
-    `host` provider (see host_provider), alongside the uploader as
-    `producer`. `license_url` is where an "other" license's terms live
-    (see license_link)."""
+    `host` provider (see host_provider), the producer too, with the
+    uploader as processor (see providers). `license_url` is where an "other" license's terms live
+    (see license_link). `style_file` is the style's {'size', 'checksum'}
+    (see file_of)."""
     bbox = wgs84_bbox(bbox) or [-180.0, -90.0, 180.0, 90.0]
     # The renderable one drives the style/pmtiles link — "visual" if there
     # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
@@ -339,9 +364,10 @@ def build_collection_json(
         }
     assets["style-default"] = {
         "href": f"./styles/{style_filename}",
-        "type": "application/vnd.mapbox.style+json",
+        "type": STYLE_MEDIA_TYPE,
         "title": f"{title} default style",
         "roles": ["style", "default"],
+        **_file_fields({"file": style_file}),
     }
 
     links: list[dict[str, Any]] = [
@@ -391,10 +417,7 @@ def build_collection_json(
         "title": title,
         "description": description,
         "license": license_id,
-        "providers": [
-            {"name": provider_name, "roles": ["producer"]},
-            *([host] if host else []),
-        ],
+        "providers": providers(host, provider_name),
         "extent": {
             "spatial": {"bbox": [bbox]},
             "temporal": {"interval": [[_now_iso(), None]]},
@@ -503,6 +526,43 @@ def _load_json(s3_client, key: str) -> dict | None:
         return cast(dict, json.loads(s3_client.get_object(key)))
     except Exception:
         return None
+
+
+def layer_style(s3_client, key: str) -> dict | None:
+    """The collection.json of the layer whose default style `key` is, if it is one.
+
+    The style editor saves a layer's style through a plain upload, to
+    "<layer folder>/styles/default.json" (see record_style).
+    """
+    if not key.endswith(f"/{STYLE_KEY}"):
+        return None
+    folder = key.removesuffix(f"/{STYLE_KEY}")
+    collection = _load_json(s3_client, f"{folder}/collection.json")
+    asset = (collection or {}).get("assets", {}).get("style-default") or {}
+    href = str(asset.get("href", ""))
+    if posixpath.normpath(posixpath.join(folder, href)) != key:
+        return None
+    return collection
+
+
+def record_style(s3_client, key: str, collection: dict, body: bytes) -> None:
+    """Record a rewritten style's file:size/file:checksum in its collection.json.
+
+    `collection` is the layer's (see layer_style); `body` the style as just
+    saved to `key`. Without this the checksum recorded when the layer was
+    published would go stale on the first edit, which Portolan counts as a
+    conformance failure.
+    """
+    folder = key.removesuffix(f"/{STYLE_KEY}")
+    collection["assets"]["style-default"].update(_file_fields({"file": file_of(body)}))
+    extensions = collection.setdefault("stac_extensions", [])
+    if FILE_SCHEMA not in extensions:
+        extensions.append(FILE_SCHEMA)
+    s3_client.put_object(
+        key=f"{folder}/collection.json",
+        body=json.dumps(collection, indent=2).encode("utf-8"),
+        content_type="application/json",
+    )
 
 
 ROOT_README_KEY = "README.md"
@@ -936,6 +996,7 @@ def finalize_layer(
             if kind == "pmtiles"
             else default_style_for_cog(visual["filename"])
         )
+        style_body = json.dumps(style, indent=2).encode("utf-8")
         collection = build_collection_json(
             layer_id=layer_id,
             title=title,
@@ -952,6 +1013,7 @@ def finalize_layer(
             pmtiles_layers=layer_names if kind == "pmtiles" else None,
             table_info=table_info,
             license_url=license_url,
+            style_file=file_of(style_body),
         )
         readme = build_readme(
             title=title,
@@ -973,11 +1035,8 @@ def finalize_layer(
             ("collection.json", json.dumps(collection, indent=2), "application/json"),
             ("README.md", readme, "text/markdown"),
             ("AGENTS.md", agents, "text/markdown"),
-            (
-                "styles/default.json",
-                json.dumps(style, indent=2),
-                "application/vnd.mapbox.style+json",
-            ),
+            # The very bytes its file:checksum was taken of.
+            (STYLE_KEY, style_body.decode("utf-8"), STYLE_MEDIA_TYPE),
         ]
         needs_license_file = license_id == "other" and not license_url
         if needs_license_file:
