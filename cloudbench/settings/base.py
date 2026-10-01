@@ -213,6 +213,14 @@ CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_IN
 # left blank, no Authorization header is sent (matches a lite instance that
 # hasn't set LITE_API_TOKEN either).
 CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
+# Run CloudNativeGIS on demand per conversion job (its URL/token kept on the
+# CngLiteJob) instead of the fixed CLOUDNATIVEGIS_URL. Not supported yet:
+# with it on, conversions are unavailable (see CngLiteJob.is_valid/health).
+CLOUDNATIVEGIS_ON_DEMAND = os.environ.get("CLOUDNATIVEGIS_ON_DEMAND", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 CLOUDBENCH_CONFIG_DIR = os.environ.get(
     "CLOUDBENCH_CONFIG_DIR",

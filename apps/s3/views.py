@@ -21,7 +21,6 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 import httpx
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
 from django.db.models import Q
@@ -844,18 +843,15 @@ class S3ConversionToolsView(APIView):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             tools["tippecanoe"] = {"available": False}
 
-        tools["cloudnativegis"] = {"available": False, "tool": "CloudNativeGIS"}
-        cloudnativegis_url = getattr(settings, "CLOUDNATIVEGIS_URL", "").rstrip("/")
-        if cloudnativegis_url:
-            try:
-                response = httpx.get(
-                    f"{cloudnativegis_url}/health",
-                    timeout=2.0,
-                    follow_redirects=False,
-                )
-                tools["cloudnativegis"]["available"] = response.status_code == 200
-            except (httpx.HTTPError, httpx.InvalidURL):
-                pass
+        try:
+            cloudnativegis_available = CngLiteJob.health()
+        except NotImplementedError:
+            # CLOUDNATIVEGIS_ON_DEMAND isn't supported yet: no conversions.
+            cloudnativegis_available = False
+        tools["cloudnativegis"] = {
+            "available": cloudnativegis_available,
+            "tool": "CloudNativeGIS",
+        }
 
         # COG conversion runs inside the CloudNativeGIS Lite container, not locally.
         tools["gdal"] = {

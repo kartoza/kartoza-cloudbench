@@ -108,8 +108,8 @@ def start_conversion(
     replace=False,
 ):
     """Start converting an upload; raises TargetExists unless `replace` (see check_target)."""
-    if not settings.CLOUDNATIVEGIS_URL:
-        raise ValueError("CloudNativeGIS URL is not configured.")
+    if not CngLiteJob.is_valid():
+        raise ValueError("CloudNativeGIS is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     geopackage = is_geopackage(uploaded_file.name)

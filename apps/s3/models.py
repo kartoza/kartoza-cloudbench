@@ -2,6 +2,7 @@
 
 import uuid
 
+import httpx
 from django.conf import settings
 from django.db import models
 
@@ -77,6 +78,11 @@ class CngLiteJob(models.Model):
     # The upload was confirmed to replace an existing layer (or GeoPackage
     # layer group) folder: it's cleared before the new files are published.
     replace_existing = models.BooleanField(default=False)
+    # The CloudNativeGIS service this job's conversion runs on, and its bearer
+    # token (encrypted at rest) - for CLOUDNATIVEGIS_ON_DEMAND, where each job
+    # gets its own instead of the fixed CLOUDNATIVEGIS_URL/API_TOKEN.
+    cloudnativegis_url = models.URLField(max_length=2000, blank=True, default="")
+    cloudnativegis_api_token = EncryptedCharField(blank=True, default="")
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,
@@ -90,6 +96,38 @@ class CngLiteJob(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+
+    @staticmethod
+    def is_valid():
+        """Whether CloudNativeGIS is configured, so conversions can be started.
+
+        Without CLOUDNATIVEGIS_ON_DEMAND that's just CLOUDNATIVEGIS_URL being
+        set; on-demand isn't supported yet, so it's never valid.
+        """
+        if settings.CLOUDNATIVEGIS_ON_DEMAND:
+            return False
+        return bool(settings.CLOUDNATIVEGIS_URL)
+
+    @staticmethod
+    def health():
+        """Whether the CloudNativeGIS service answers its /health check.
+
+        Without CLOUDNATIVEGIS_ON_DEMAND that's the service at
+        CLOUDNATIVEGIS_URL. Raises NotImplementedError with it on, which
+        isn't supported yet.
+        """
+        if settings.CLOUDNATIVEGIS_ON_DEMAND:
+            raise NotImplementedError(
+                "CloudNativeGIS health check is not supported with CLOUDNATIVEGIS_ON_DEMAND."
+            )
+        url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
+        if not url:
+            return False
+        try:
+            response = httpx.get(f"{url}/health", timeout=2.0, follow_redirects=False)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            return False
+        return response.status_code == 200
 
     def to_dict(self):
         formats = CONVERSION_FORMATS[self.kind]
