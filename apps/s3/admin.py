@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import CngLiteJob, S3Connection
+from .models import CngLiteJob, CngLiteJobLog, S3Connection
 
 
 def _mask(value: str) -> str:
@@ -45,9 +45,33 @@ class S3ConnectionAdmin(admin.ModelAdmin):
         return _mask(obj.secret_key)
 
 
+class CngLiteJobLogInline(admin.TabularInline):
+    """The job's requests to GeoHosting / CloudNativeGIS (read-only)."""
+
+    model = CngLiteJobLog
+    extra = 0
+    can_delete = False
+    fields = readonly_fields = (
+        "created_at",
+        "step",
+        "target",
+        "method",
+        "url",
+        "status_code",
+        "duration_ms",
+        "error",
+        "request_payload",
+        "response_payload",
+    )
+
+    def has_add_permission(self, _request, _obj=None):
+        return False
+
+
 @admin.register(CngLiteJob)
 class CngLiteJobAdmin(admin.ModelAdmin):
     verbose_name = "CloudNativeGIS Lite Job"
+    inlines = [CngLiteJobLogInline]
     list_display = [
         "id",
         "kind",

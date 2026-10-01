@@ -30,6 +30,7 @@ from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
     CngLiteJob,
+    CngLiteJobLog,
     CngLiteJobStatus,
     S3Connection,
 )
@@ -234,6 +235,11 @@ def expire_stalled_job(job):
 def request_json(client, method, path, **kwargs):
     response = client.request(method, path, **kwargs)
     response.raise_for_status()
+    return parse_json(response, method, path)
+
+
+def parse_json(response, method, path):
+    """A CloudNativeGIS response's JSON body; ValueError if it isn't JSON."""
     try:
         return response.json()
     except ValueError as exc:
@@ -242,6 +248,17 @@ def request_json(client, method, path, **kwargs):
             f"(HTTP {response.status_code}): {response.text[:200]!r}. "
             "Check that CLOUDNATIVEGIS_URL points at CloudNativeGIS Lite."
         ) from exc
+
+
+def _response_body(response):
+    """What to log of a response's body: its JSON, else (some of) its text."""
+    try:
+        return response.json()
+    except Exception:  # noqa: BLE001 - not JSON, or a stream never read
+        try:
+            return {"text": response.text[:2000]}
+        except Exception:  # noqa: BLE001
+            return None
 
 
 def wait_for_job(client, job_id, cng_job_id, deadline):
@@ -441,7 +458,16 @@ class CNGProcessingClient:
             self.job.source_key, expiration=conversion_timeout(self.job.input_size)
         )
         payload = {"source": source_url, **self.converter.payload(self.job)}
-        submission = request_json(self.http, "POST", self.converter.endpoint, json=payload)
+        endpoint = self.converter.endpoint
+        started = time.monotonic()
+        try:
+            response = self.http.request("POST", endpoint, json=payload)
+        except httpx.HTTPError as exc:
+            self._log("POST", endpoint, started, request_payload=payload, error=exc)
+            raise
+        self._log("POST", endpoint, started, request_payload=payload, response=response)
+        response.raise_for_status()
+        submission = parse_json(response, "POST", endpoint)
         self._downloaded = False
         self.update(
             status=CngLiteJobStatus.POLLING,
@@ -479,10 +505,25 @@ class CNGProcessingClient:
         (e.g. "Converting layer 2/5: dashboard", 40% through) into the job's
         message/progress, so a multi-layer GeoPackage shows real movement.
         """
-        response = self.http.get(f"api/v1/jobs/{self.job.cng_job_id}")
+        path = f"api/v1/jobs/{self.job.cng_job_id}"
+        started = time.monotonic()
+        try:
+            response = self.http.get(path)
+        except httpx.HTTPError as exc:
+            self._log("GET", path, started, error=exc)
+            raise
         if response.status_code == 404:
-            raise CngJobNotFound(f"CloudNativeGIS has no job {self.job.cng_job_id}.")
-        body = response.json()
+            error = f"CloudNativeGIS has no job {self.job.cng_job_id}."
+            self._log("GET", path, started, response=response, error=error)
+            raise CngJobNotFound(error)
+        try:
+            body = parse_json(response, "GET", path)
+        except ValueError as exc:
+            self._log("GET", path, started, response=response, error=exc)
+            raise
+        # Only what changes something is logged - not every "still at it".
+        if body.get("status") in ("done", "failed"):
+            self._log("GET", path, started, response=response)
         if body.get("status") == "failed":
             raise ValueError(
                 f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
@@ -539,6 +580,7 @@ class CNGProcessingClient:
                 ),
             )
             filename = f"result-{index}"
+            started = time.monotonic()
             try:
                 size, checksum = download_result(
                     self.http,
@@ -548,8 +590,13 @@ class CNGProcessingClient:
                     self.converter.invalid_message,
                 )
             except httpx.HTTPStatusError as exc:
+                # A failed download is logged; a successful one shows in cng_results.
+                self._log("GET", item["result_url"], started, response=exc.response, error=exc)
                 if exc.response.status_code == 404:
                     raise CngJobNotFound(f"CloudNativeGIS no longer has {item['name']}.") from exc
+                raise
+            except Exception as exc:
+                self._log("GET", item["result_url"], started, error=exc)
                 raise
             item.update(file=filename, size=size, checksum=checksum)
             self.update(cng_results=results)
@@ -727,6 +774,20 @@ class CNGProcessingClient:
     @property
     def directory(self):
         return job_directory(self.job.kind, self.job.id)
+
+    def _log(self, method, path, started, *, request_payload=None, response=None, error=None):
+        """Log a request to the job's CloudNativeGIS (see CngLiteJobLog)."""
+        CngLiteJobLog.record(
+            self.job,
+            target=CngLiteJobLog.Target.CLOUDNATIVEGIS,
+            method=method,
+            url=f"{self.job.cloudnativegis_url}/{path.lstrip('/')}",
+            request_payload=request_payload,
+            status_code=response.status_code if response is not None else None,
+            response_payload=_response_body(response) if response is not None else None,
+            error=str(error) if error else "",
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
 
     def update(self, **values):
         """Save `values` on the job, in the database and on self.job."""

@@ -7,6 +7,7 @@ from .cng_lite_job import (
     CngLiteJob,
     CngLiteJobStatus,
 )
+from .cng_lite_job_log import CngLiteJobLog
 from .s3_connection import S3Connection
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "AWAITING_LAYER_SELECTION",
     "CONVERSION_FORMATS",
     "CngLiteJob",
+    "CngLiteJobLog",
     "CngLiteJobStatus",
     "S3Connection",
 ]

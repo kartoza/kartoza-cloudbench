@@ -41,7 +41,7 @@ def job(settings, tmp_path, django_user_model):
     return make
 
 
-def run(job, respond):
+def run(job, respond, presigned="http://minio:9000/bucket/source.zip"):
     """Run `job` against a cng-lite answering with `respond`; returns its requests."""
     requests = []
 
@@ -52,7 +52,7 @@ def run(job, respond):
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(record))
     s3_client = Mock(bucket_url="http://minio:9000/bucket")
     # What a (re)submission hands cng-lite to read the source from.
-    s3_client.generate_presigned_url.return_value = "http://minio:9000/bucket/source.zip"
+    s3_client.generate_presigned_url.return_value = presigned
     with (
         # A resumed job first waits for its CloudNativeGIS to be healthy.
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
@@ -274,3 +274,117 @@ def test_resumes_interrupted_jobs_oldest_first(job):
         # After the vector job, from where it moved the source to.
         (raster.id, "folder/both/source/both.gpkg"),
     ]
+
+
+# -- CngLiteJobLog: the job's requests to its CloudNativeGIS -------------------
+
+
+def logged(job):
+    return [
+        (log.step, log.method, log.url, log.status_code, bool(log.error)) for log in job.logs.all()
+    ]
+
+
+@pytest.mark.django_db
+def test_the_submission_and_its_outcome_are_logged(job):
+    pushing = job(status=CngLiteJobStatus.PUSHING)
+    presigned = (
+        "https://minio:9000/bucket/folder/sources/job/roads.zip"
+        "?X-Amz-Credential=key&X-Amz-Signature=abc"
+    )
+
+    def respond(request):
+        if request.method == "POST" and request.url.path == "/api/v1/pmtiles":
+            return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
+        return cng_lite(request)
+
+    run(pushing, respond, presigned=presigned)
+
+    assert pushing.status == CngLiteJobStatus.COMPLETED
+    assert logged(pushing) == [
+        ("pushing", "POST", "http://cloudnativegis/api/v1/pmtiles", 202, False),
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-job-1", 200, False),
+    ]
+    push, poll = pushing.logs.all()
+    # The presigned URL's credentials never reach the log.
+    assert push.request_payload["source"] == (
+        "https://minio:9000/bucket/folder/sources/job/roads.zip?***"
+    )
+    assert push.request_payload["thumbnail"] is True
+    assert push.response_payload == {"job_id": "cng-job-1", "status": "processing"}
+    assert poll.response_payload["status"] == "done"
+
+
+@pytest.mark.django_db
+def test_still_converting_polls_are_not_logged(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+    polls = []
+
+    def respond(request):
+        if request.url.path == "/api/v1/jobs/cng-job-1" and len(polls) < 3:
+            polls.append(1)
+            return httpx.Response(200, json={"status": "processing", "detail": "Tiling"})
+        return cng_lite(request)
+
+    run(polling, respond)
+
+    assert [log.method for log in polling.logs.all()] == ["GET"]  # just the "done"
+    assert polling.logs.get().response_payload["status"] == "done"
+
+
+@pytest.mark.django_db
+def test_a_lost_job_and_its_resubmission_are_logged(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+
+    run(polling, cng_lite_that_lost({"/api/v1/jobs/cng-job-1"}))
+
+    assert logged(polling) == [
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-job-1", 404, True),
+        ("pushing", "POST", "http://cloudnativegis/api/v1/pmtiles", 202, False),
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-job-2", 200, False),
+    ]
+
+
+@pytest.mark.django_db
+def test_a_failed_conversion_is_logged(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+
+    def respond(request):
+        return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
+
+    run(polling, respond)
+
+    [log] = polling.logs.all()
+    assert (log.step, log.status_code) == ("polling", 200)
+    assert log.response_payload["detail"] == "tippecanoe failed"
+
+
+@pytest.mark.django_db
+def test_a_failed_download_is_logged(job):
+    downloading = job(status=CngLiteJobStatus.DOWNLOADING)
+    downloading.cng_results = [{"name": "output.pmtiles", "result_url": RESULT_URL}]
+    downloading.save(update_fields=["cng_results"])
+
+    run(downloading, lambda _request: httpx.Response(500, text="disk full"))
+
+    [log] = downloading.logs.all()
+    assert log.step == "downloading"
+    assert log.url == f"http://cloudnativegis{RESULT_URL}"
+    assert log.status_code == 500
+    assert log.error
+    assert downloading.status == CngLiteJobStatus.FAILED
+
+
+@pytest.mark.django_db
+def test_an_unreachable_cloudnativegis_is_logged(job):
+    pushing = job(status=CngLiteJobStatus.PUSHING)
+
+    def unreachable(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    run(pushing, unreachable)
+
+    [log] = pushing.logs.all()
+    assert (log.step, log.method, log.status_code) == ("pushing", "POST", None)
+    assert "refused" in log.error
+    assert pushing.status == CngLiteJobStatus.FAILED
