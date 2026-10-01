@@ -1,16 +1,22 @@
 """CNGProcessingClient picking a conversion up from whichever step its status says."""
 
+import hashlib
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
 
+from apps.s3 import portolan
 from apps.s3.cng_lite import CNGProcessingClient, job_directory, resume_interrupted_conversions
 from apps.s3.models import CngLiteJob, CngLiteJobStatus, S3Connection
+from apps.s3.pmtiles import CONTENT_TYPE, PARQUET_CONTENT_TYPE
+from tests.unit.fake_s3 import FakeS3, converting_cng
 
-RESULT_URL = "/api/v1/jobs/cng-job-1/result/output.pmtiles"
 PMTILES = b"PMTiles\x03fixture"
+PARQUET = b"PAR1fixture"
+# What a vector conversion makes, by role: (bytes, info).
+RESULTS = {None: {"data": (PARQUET, {}), "visual": (PMTILES, {"bbox": [1, 2, 3, 4]})}}
 
 
 @pytest.fixture
@@ -41,141 +47,121 @@ def job(settings, tmp_path, django_user_model):
     return make
 
 
-def run(job, respond):
-    """Run `job` against a cng-lite answering with `respond`; returns its requests."""
+def already_uploaded(s3, folder="folder/roads", layer_id="roads"):
+    """Put a conversion's results in `s3`, as CloudNativeGIS uploads them.
+
+    Returns what CloudNativeGIS reports for them (CngLiteJob.cng_results).
+    """
+    files = {}
+    for role, filename, body, content_type in [
+        ("data", f"{layer_id}.parquet", PARQUET, PARQUET_CONTENT_TYPE),
+        ("visual", f"{layer_id}.pmtiles", PMTILES, CONTENT_TYPE),
+    ]:
+        s3.put_object(f"{folder}/{filename}", body, content_type)
+        files[role] = {"size": len(body), "sha256": hashlib.sha256(body).hexdigest(), "info": {}}
+    return [{"files": files}]
+
+
+def done(outputs):
+    """A cng-lite whose job cng-job-1 is done, having uploaded `outputs`."""
+
+    def respond(request):
+        if request.url.path == "/api/v1/jobs/cng-job-1":
+            return httpx.Response(
+                200, json={"status": "done", "results": [], "outputs": {"layers": outputs}}
+            )
+        return httpx.Response(404)
+
+    return httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+
+
+def run(job, client, s3=None):
+    """Run `job` against the cng-lite `client`; returns its requests and the bucket."""
+    s3 = s3 or FakeS3()
     requests = []
-
-    def record(request):
-        requests.append((request.method, request.url.path))
-        return respond(request)
-
-    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(record))
-    s3_client = Mock(bucket_url="http://minio:9000/bucket")
-    # What a (re)submission hands cng-lite to read the source from.
-    s3_client.generate_presigned_url.return_value = "http://minio:9000/bucket/source.zip"
+    client.event_hooks["request"].append(
+        lambda request: requests.append((request.method, request.url.path))
+    )
     with (
         # A resumed job first waits for its CloudNativeGIS to be healthy.
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
-        patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
         patch("apps.s3.cng_lite.portolan.finalize_layer") as finalize_layer,
         patch("apps.s3.cng_lite.time.sleep"),
         patch("apps.s3.cng_lite.close_old_connections"),
     ):
         CNGProcessingClient(job).run()
     job.refresh_from_db()
-    return requests, s3_client, finalize_layer
-
-
-def cng_lite_that_lost(lost_paths):
-    """A cng-lite that 404s `lost_paths` (e.g. after restarting), and takes resubmissions."""
-
-    def respond(request):
-        path = request.url.path
-        if path in lost_paths:
-            return httpx.Response(404, json={"detail": "Job not found"})
-        if request.method == "POST" and path == "/api/v1/pmtiles":
-            return httpx.Response(202, json={"job_id": "cng-job-2", "status": "processing"})
-        if path in ("/api/v1/jobs/cng-job-1", "/api/v1/jobs/cng-job-2"):
-            job_id = path.rsplit("/", 1)[1]
-            return httpx.Response(
-                200,
-                json={
-                    "status": "done",
-                    "results": [
-                        {
-                            "name": "output.pmtiles",
-                            "result_url": f"/api/v1/jobs/{job_id}/result/output.pmtiles",
-                        }
-                    ],
-                },
-            )
-        if path.endswith("/result/output.pmtiles"):
-            return httpx.Response(200, content=PMTILES)
-        return httpx.Response(404)
-
-    return respond
-
-
-def cng_lite(request):
-    if request.url.path == "/api/v1/jobs/cng-job-1":
-        return httpx.Response(
-            200,
-            json={
-                "status": "done",
-                "results": [{"name": "output.pmtiles", "result_url": RESULT_URL}],
-            },
-        )
-    if request.url.path == RESULT_URL:
-        return httpx.Response(200, content=PMTILES)
-    return httpx.Response(404)
-
-
-def downloaded_result(job, content=PMTILES):
-    """A cng_results entry for a result already downloaded to `job`'s directory."""
-    directory = job_directory(job.kind, job.id)
-    directory.mkdir(parents=True)
-    (directory / "result-0").write_bytes(content)
-    return {
-        "name": "output.pmtiles",
-        "result_url": RESULT_URL,
-        "file": "result-0",
-        "size": len(content),
-        "checksum": "1220checksum",
-    }
+    return requests, s3, finalize_layer
 
 
 @pytest.mark.django_db
 def test_resumes_polling_without_resubmitting(job):
     polling = job(status=CngLiteJobStatus.POLLING)
+    s3 = FakeS3()
+    outputs = already_uploaded(s3)
 
-    requests, s3_client, _ = run(polling, cng_lite)
+    requests, _, finalize_layer = run(polling, done(outputs), s3)
 
-    assert requests == [("GET", "/api/v1/jobs/cng-job-1"), ("GET", RESULT_URL)]
-    assert polling.status == CngLiteJobStatus.COMPLETED
-    assert polling.cng_results[0]["file"] == "result-0"
-    assert polling.cng_results[0]["size"] == len(PMTILES)
-    s3_client.client.upload_fileobj.assert_called_once()
+    assert requests == [("GET", "/api/v1/jobs/cng-job-1")]
+    assert polling.status == CngLiteJobStatus.COMPLETED, polling.error
+    assert polling.cng_results == outputs
+    finalize_layer.assert_called_once()
     assert not job_directory(polling.kind, polling.id).exists()
 
 
 @pytest.mark.django_db
-def test_resumed_publish_reuses_already_downloaded_files(job):
-    publishing = job(status=CngLiteJobStatus.PUBLISHING)
-    publishing.cng_results = [downloaded_result(publishing)]
-    publishing.save(update_fields=["cng_results"])
+def test_resumed_publish_checks_the_uploads_again(job):
+    s3 = FakeS3()
+    publishing = job(status=CngLiteJobStatus.PUBLISHING, cng_results=already_uploaded(s3))
 
-    requests, s3_client, finalize_layer = run(publishing, cng_lite)
+    requests, _, finalize_layer = run(publishing, done([]), s3)
 
     assert requests == []
-    assert publishing.status == CngLiteJobStatus.COMPLETED
-    assert publishing.output_size == len(PMTILES)
-    [data_asset] = finalize_layer.call_args.kwargs["data_assets"]
-    assert data_asset["file"] == {"size": len(PMTILES), "checksum": "1220checksum"}
-    uploaded = s3_client.client.upload_fileobj.call_args.args
-    assert uploaded[1:] == ("bucket", "folder/roads/roads.pmtiles")
+    assert publishing.status == CngLiteJobStatus.COMPLETED, publishing.error
+    assert publishing.output_size == len(PARQUET) + len(PMTILES)
+    data_assets = finalize_layer.call_args.kwargs["data_assets"]
+    assert data_assets[0]["file"] == {
+        "size": len(PARQUET),
+        "checksum": portolan.sha256_multihash(hashlib.sha256(PARQUET).digest()),
+    }
 
 
 @pytest.mark.django_db
-def test_resumed_publish_downloads_files_that_are_gone_or_incomplete(job):
-    publishing = job(status=CngLiteJobStatus.PUBLISHING)
-    result = downloaded_result(publishing, content=b"PMTiles\x03trunc")
-    result["size"] += 10  # the file on disk is shorter than what was recorded
-    publishing.cng_results = [result]
-    publishing.save(update_fields=["cng_results"])
+def test_resumed_publish_fails_when_an_upload_is_gone(job):
+    s3 = FakeS3()
+    publishing = job(status=CngLiteJobStatus.PUBLISHING, cng_results=already_uploaded(s3))
+    s3.delete_object("folder/roads/roads.pmtiles")
 
-    requests, _, _ = run(publishing, cng_lite)
+    _, _, finalize_layer = run(publishing, done([]), s3)
 
-    assert requests == [("GET", RESULT_URL)]
-    assert publishing.status == CngLiteJobStatus.COMPLETED
-    assert publishing.cng_results[0]["size"] == len(PMTILES)
+    assert publishing.status == CngLiteJobStatus.FAILED
+    assert "roads.pmtiles uploaded, but it isn't there" in publishing.error
+    finalize_layer.assert_not_called()
+    # A new layer's half-written folder doesn't stay behind.
+    assert not any(key.startswith("folder/roads/") for key in s3.objects)
+
+
+@pytest.mark.django_db
+def test_legacy_downloading_job_converts_again(job):
+    # Saved mid-download by a CloudBench from before direct uploads.
+    downloading = job(status=CngLiteJobStatus.DOWNLOADING)
+    s3 = FakeS3()
+    client, submitted = converting_cng(s3, "pmtiles", RESULTS)
+
+    requests, _, _ = run(downloading, client, s3)
+
+    assert requests == [("POST", "/api/v1/pmtiles"), ("GET", "/api/v1/jobs/cng-1")]
+    assert downloading.status == CngLiteJobStatus.COMPLETED, downloading.error
+    assert s3.objects["folder/roads/roads.pmtiles"] == PMTILES
 
 
 @pytest.mark.django_db
 def test_legacy_running_job_cannot_be_resumed(job):
     legacy = job(status=CngLiteJobStatus.RUNNING)
 
-    requests, _, _ = run(legacy, cng_lite)
+    requests, _, _ = run(legacy, done([]))
 
     assert requests == []
     assert legacy.status == CngLiteJobStatus.FAILED
@@ -192,7 +178,10 @@ def test_failure_keeps_nothing_on_disk(job):
     def broken(request):
         return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
 
-    run(polling, broken)
+    run(
+        polling,
+        httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(broken)),
+    )
 
     assert polling.status == CngLiteJobStatus.FAILED
     assert "tippecanoe failed" in polling.error
@@ -200,44 +189,51 @@ def test_failure_keeps_nothing_on_disk(job):
 
 
 @pytest.mark.django_db
-def test_resubmits_when_cloudnativegis_lost_the_job(job):
+def test_cloudnativegis_that_doesnt_upload_fails_the_job(job):
     polling = job(status=CngLiteJobStatus.POLLING)
 
-    requests, _, _ = run(polling, cng_lite_that_lost({"/api/v1/jobs/cng-job-1"}))
+    def old(request):
+        return httpx.Response(200, json={"status": "done", "results": [{"name": "out.pmtiles"}]})
+
+    run(
+        polling, httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(old))
+    )
+
+    assert polling.status == CngLiteJobStatus.FAILED
+    assert "needs updating" in polling.error
+
+
+@pytest.mark.django_db
+def test_resubmits_when_cloudnativegis_lost_the_job(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+    s3 = FakeS3()
+    client, submitted = converting_cng(s3, "pmtiles", RESULTS, lost={"/api/v1/jobs/cng-job-1"})
+
+    requests, _, _ = run(polling, client, s3)
 
     assert requests == [
         ("GET", "/api/v1/jobs/cng-job-1"),
         ("POST", "/api/v1/pmtiles"),
-        ("GET", "/api/v1/jobs/cng-job-2"),
-        ("GET", "/api/v1/jobs/cng-job-2/result/output.pmtiles"),
+        ("GET", "/api/v1/jobs/cng-1"),
     ]
-    assert polling.status == CngLiteJobStatus.COMPLETED
-    assert polling.cng_job_id == "cng-job-2"
-
-
-@pytest.mark.django_db
-def test_resubmits_when_cloudnativegis_dropped_the_results(job):
-    downloading = job(status=CngLiteJobStatus.DOWNLOADING)
-    downloading.cng_results = [{"name": "output.pmtiles", "result_url": RESULT_URL}]
-    downloading.save(update_fields=["cng_results"])
-
-    requests, _, _ = run(downloading, cng_lite_that_lost({RESULT_URL}))
-
-    assert requests[:2] == [("GET", RESULT_URL), ("POST", "/api/v1/pmtiles")]
-    assert downloading.status == CngLiteJobStatus.COMPLETED
+    assert polling.status == CngLiteJobStatus.COMPLETED, polling.error
+    assert polling.cng_job_id == "cng-1"
+    # The resubmission is handed fresh upload URLs.
+    assert submitted[0]["uploads"][0]["files"]["visual"]["url"]
 
 
 @pytest.mark.django_db
 def test_resubmits_only_once(job):
     polling = job(status=CngLiteJobStatus.POLLING)
-
-    requests, _, _ = run(
-        polling, cng_lite_that_lost({"/api/v1/jobs/cng-job-1", "/api/v1/jobs/cng-job-2"})
+    client, _ = converting_cng(
+        FakeS3(), "pmtiles", RESULTS, lost={"/api/v1/jobs/cng-job-1", "/api/v1/jobs/cng-1"}
     )
+
+    requests, _, _ = run(polling, client)
 
     assert [method for method, _ in requests].count("POST") == 1
     assert polling.status == CngLiteJobStatus.FAILED
-    assert "no job cng-job-2" in polling.error
+    assert "no job cng-1" in polling.error
 
 
 @pytest.mark.django_db

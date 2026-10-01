@@ -584,9 +584,10 @@ export type ConversionJobStatus =
   | 'provisioning'
   | 'pushing'
   | 'polling'
-  | 'downloading'
+  | 'verifying'
   | 'publishing'
-  // No longer sent for new jobs; older ones may still have it.
+  // No longer sent for new jobs; older ones may still have them.
+  | 'downloading'
   | 'running'
   | 'completed'
   | 'failed'

@@ -2,9 +2,10 @@
 
 Format-specific modules (`pmtiles.py`, `cog.py`) validate/prepare their own
 source file, then a CngLiteJob runs through CNGProcessingClient. What differs
-per kind - which cng-lite endpoint to submit to, how to sanity-check the
-downloaded result, what content type to store it with in S3 - is each
-module's Converter (see converter_for).
+per kind - which cng-lite endpoint to submit to, what files each layer gets,
+which of a GeoPackage's contents it converts - is each module's Converter
+(see converter_for). CloudNativeGIS uploads every result straight to the
+bucket (see apps.s3.direct_upload); CloudBench writes the Portolan metadata.
 """
 
 import hashlib
@@ -23,7 +24,7 @@ from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.utils import timezone
 
-from . import portolan
+from . import direct_upload, portolan
 from .client import get_s3_client
 from .geopackage import is_geopackage
 from .models import (
@@ -59,7 +60,7 @@ def target_folder(key, source_name):
 
     A shapefile/TIFF becomes one layer folder, a GeoPackage one sub-catalog
     folder of layers - either way named after the uploaded file, beside the
-    upload key (see run_conversion / group_results).
+    upload key (see CNGProcessingClient.layers / plan_layers).
     """
     parent = str(PurePosixPath(key).parent)
     parent = "" if parent in ("", ".") else parent
@@ -84,17 +85,6 @@ def check_target(s3_client, key, source_name, replace):
     if not replace and folder_exists(s3_client, folder):
         raise TargetExists(folder, is_group=is_geopackage(source_name))
     return folder
-
-
-def _clear_for_replace(job, s3_client):
-    """Clear the folder a confirmed-replace upload publishes into.
-
-    Removes everything there, so no stale files - e.g. GeoPackage layers not
-    re-selected - outlive the replacement (Map Explorer's layer groups are
-    read from the catalog, so they follow; see layer_groups).
-    """
-    folder = target_folder(job.output_key, job.source_name)
-    s3_client.delete_prefix(f"{folder}/")
 
 
 def _staged_geopackage(job):
@@ -195,19 +185,12 @@ def source_object_key(target_key, job_id, filename):
 CONVERSION_TIMEOUT_PER_GB = 10 * 60
 MAX_CONVERSION_TIMEOUT = 6 * 60 * 60
 
-# What each kind of result file is, for progress messages.
-_FILE_KINDS = {".pmtiles": "PMTiles", ".parquet": "GeoParquet", ".tif": "COG", ".png": "thumbnail"}
-
 
 def conversion_timeout(input_size):
     """Seconds to wait for a conversion of `input_size` bytes, scaled to it."""
     base = settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
     scaled = base + round(CONVERSION_TIMEOUT_PER_GB * input_size / 1024**3)
     return max(base, min(scaled, MAX_CONVERSION_TIMEOUT))
-
-
-def _file_kind(name):
-    return _FILE_KINDS.get(PurePosixPath(name).suffix.lower(), "file")
 
 
 def update_job(job_id, **values):
@@ -274,30 +257,6 @@ def wait_for_job(client, job_id, cng_job_id, deadline):
     raise TimeoutError("Timed out waiting for CloudNativeGIS to produce the converted file(s).")
 
 
-def download_result(client, result_path, destination, validate_result, invalid_result_message):
-    """Stream one cng-lite result file to `destination`.
-
-    Returns (size, checksum): the byte count and the SHA-256 multihash of
-    exactly the bytes that get uploaded to S3 — hashed as they stream in,
-    for the Portolan collection's file:size/file:checksum.
-    """
-    size = 0
-    digest = hashlib.sha256()
-    with client.stream("GET", result_path.lstrip("/")) as response:
-        response.raise_for_status()
-        with destination.open("wb") as output:
-            for chunk in response.iter_bytes(1024 * 1024):
-                size += len(chunk)
-                if size > settings.UPLOAD_MAX_FILE_SIZE:
-                    raise ValueError("The generated file exceeds the upload size limit.")
-                digest.update(chunk)
-                output.write(chunk)
-    with destination.open("rb") as output:
-        if not validate_result(output, PurePosixPath(result_path).name):
-            raise ValueError(invalid_result_message)
-    return size, portolan.sha256_multihash(digest.digest())
-
-
 class CngJobNotFound(Exception):
     """CloudNativeGIS no longer has the job (or its results).
 
@@ -312,17 +271,38 @@ class Converter:
 
     # cng-lite endpoint the job is submitted to.
     endpoint: str
-    # Content type a result file is stored with in S3, unless its layer
-    # grouping gives it another (e.g. a GeoParquet or thumbnail asset).
-    content_type: str
-    # validate(file, name) -> bool: sanity-checks a downloaded result file.
-    validate: Callable
-    invalid_message: str
-    # group_results(job, results) -> layers: groups cng-lite's result files
-    # into logical layers, each with its assets.
-    group_results: Callable
+    # assets_for(layer_id) -> [{role, filename, media_type}]: a layer's files.
+    assets_for: Callable
+    # pick_layers(inspection) -> [name]: which of a GeoPackage's contents
+    # (CloudNativeGIS's /gpkg/layers report) this kind converts.
+    pick_layers: Callable
     # payload(job) -> dict: extra fields for the submission, beyond `source`.
     payload: Callable
+
+
+def plan_layers(job, names, assets_for):
+    """Decide each layer's folder name and file names before converting anything.
+
+    `names` are the layers to convert as CloudNativeGIS knows them - a
+    GeoPackage's layers or raster tables - or [None] for a single-layer
+    source, titled after the uploaded file. Returns [{'name', 'layer_id',
+    'title', 'assets'}], so each file's final key is known up front, to hand
+    CloudNativeGIS an upload URL for it. The same job always plans the same.
+    """
+    taken = set()
+    layers = []
+    for name in names:
+        title_stem = name if name is not None else PurePosixPath(job.source_name).stem
+        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
+        layers.append(
+            {
+                "name": name,
+                "layer_id": layer_id,
+                "title": portolan.prettify(title_stem),
+                "assets": assets_for(layer_id),
+            }
+        )
+    return layers
 
 
 def converter_for(kind):
@@ -337,8 +317,8 @@ class CNGProcessingClient:
 
         provision  pending/provisioning -> pushing
         push       pushing              -> polling (cng_job_id)
-        poll       polling              -> downloading (cng_results/cng_errors)
-        download   downloading          -> publishing (cng_results' files)
+        poll       polling              -> verifying (cng_results/cng_errors)
+        verify     verifying            -> publishing
         publish    publishing           -> completed
         fail       any                  -> failed
 
@@ -347,39 +327,42 @@ class CNGProcessingClient:
     - e.g. a job left "polling" resumes polling its cng_job_id. Each step also
     keeps the job's progress/message current for the frontend.
 
-    `group_results` (from the job kind's Converter) groups cng-lite's raw
-    output files into logical layers — one PMTiles file is one layer; a COG's
-    original-CRS file and its "_3857" companion (see tiff_to_cog.py) are the
-    same layer's two assets. Each logical layer gets its own folder under
-    wherever `job.output_key` pointed ("{parent}/{layer_id}/"), holding its
-    data file(s) plus a generated collection.json/README.md/AGENTS.md/default
-    style (see apps.s3.portolan) instead of landing as a bare object. A
-    GeoPackage's layers need no grouping step: its sub-catalog is its layer
-    group (see apps.s3.layer_groups).
+    CloudNativeGIS uploads every result straight to the bucket, through a
+    presigned URL per file (see apps.s3.direct_upload): push plans each
+    layer's folder and files up front (plan_layers, the job kind's Converter
+    naming them), verify checks what arrived, and publish writes each
+    layer's Portolan entry - collection.json/README.md/AGENTS.md/default
+    style (see apps.s3.portolan) - in its own folder under wherever
+    `job.output_key` pointed ("{parent}/{layer_id}/"). A GeoPackage's layers
+    sit in its sub-catalog, its layer group (see apps.s3.layer_groups).
     """
 
     def __init__(self, job):
         self.job = job
         self.converter = converter_for(job.kind)
         self._http = None
-        # Whether this run has checked/downloaded the result files yet: a job
-        # resumed at "publishing" needs them back on disk first.
-        self._downloaded = False
+        # Whether this run has checked the uploaded results yet: a job
+        # resumed at "publishing" checks them again first.
+        self._verified = False
 
     # -- Entry point ---------------------------------------------------------
 
     def run(self):
         """Run the job's remaining steps, ending it completed or failed."""
         close_old_connections()
-        steps = [self.provision, self.push, self.poll_until_done, self.download, self.publish]
+        steps = [self.provision, self.push, self.poll_until_done, self.verify, self.publish]
         start = {
             CngLiteJobStatus.PENDING: 0,
             CngLiteJobStatus.PROVISIONING: 0,
             CngLiteJobStatus.PUSHING: 1,
             CngLiteJobStatus.POLLING: 2,
-            CngLiteJobStatus.DOWNLOADING: 3,
-            # Re-checks the downloaded files (downloading any that are gone).
+            CngLiteJobStatus.VERIFYING: 3,
+            # Re-checks the uploaded files.
             CngLiteJobStatus.PUBLISHING: 3,
+            # Saved mid-download before results were uploaded straight to the
+            # bucket: there's nothing to check, so convert it again (its
+            # source is still in S3).
+            CngLiteJobStatus.DOWNLOADING: 1,
         }
         try:
             if self.job.status not in start:
@@ -426,31 +409,52 @@ class CNGProcessingClient:
         self.job.provision()
 
     def push(self):
-        """Submit the job, handing cng-lite a presigned URL to the source already in S3.
+        """Submit the job, with a presigned URL to read its source and one per result.
 
-        A presigned URL lets cng-lite fetch the file with a plain HTTPS GET,
-        using the credentials of whichever S3 connection the user picked,
-        without cng-lite ever needing S3 credentials of its own.
+        Presigned URLs let cng-lite fetch the source and upload each result
+        straight to its final key with plain HTTPS, using the credentials of
+        whichever S3 connection the user picked, without cng-lite ever
+        holding S3 credentials of its own. Each upload URL accepts only its
+        file's content type, and lasts only as long as the job is waited for.
         """
         self.update(
             status=CngLiteJobStatus.PUSHING,
             progress=10,
             message="Sending the file to CloudNativeGIS",
         )
-        source_url = self.s3_client.generate_presigned_url(
-            self.job.source_key, expiration=conversion_timeout(self.job.input_size)
-        )
-        payload = {"source": source_url, **self.converter.payload(self.job)}
+        timeout = conversion_timeout(self.job.input_size)
+        source_url = self.s3_client.generate_presigned_url(self.job.source_key, expiration=timeout)
+        expiry = timeout + direct_upload.URL_MARGIN
+        uploads = [
+            {
+                **({"layer": layer["name"]} if layer["name"] is not None else {}),
+                "files": {
+                    asset["role"]: {
+                        "url": direct_upload.presign_put(
+                            self.s3_client,
+                            f"{layer['folder']}/{asset['filename']}",
+                            expiry,
+                            asset["media_type"],
+                        ),
+                        "content_type": asset["media_type"],
+                    }
+                    for asset in layer["assets"]
+                },
+            }
+            for layer in self.layers(names=self._layer_names())
+        ]
+        payload = {"source": source_url, **self.converter.payload(self.job), "uploads": uploads}
         submission = request_json(self.http, "POST", self.converter.endpoint, json=payload)
-        self._downloaded = False
+        self._verified = False
         self.update(
             status=CngLiteJobStatus.POLLING,
             cng_job_id=submission["job_id"],
             cng_results=None,
             cng_errors=None,
             # CloudNativeGIS's own progress (e.g. "Generating vector tiles
-            # (PMTiles): 45% · GeoParquet ready") is relayed from here, as
-            # 20-80%; CloudBench's steps after it take the rest.
+            # (PMTiles): 45% · GeoParquet ready", then "Uploading the
+            # results (2 of 3)") is relayed from here, as 20-80%;
+            # CloudBench's steps after it take the rest.
             progress=20,
             message="Waiting for CloudNativeGIS to start",
         )
@@ -472,11 +476,12 @@ class CNGProcessingClient:
     def poll(self):
         """Check on the conversion once; True once done (and its results saved).
 
-        The results are one entry per output file (a GeoPackage conversion
-        produces one per vector layer or raster table; anything else produces
-        exactly one), plus any layers/tables cng-lite skipped rather than
-        failing the job. Until done, relays cng-lite's live per-layer progress
-        (e.g. "Converting layer 2/5: dashboard", 40% through) into the job's
+        The results are what CloudNativeGIS uploaded, per layer - [{layer,
+        files: {role: {size, sha256, info}}}] (a GeoPackage conversion has a
+        layer per vector layer or raster table; anything else exactly one) -
+        plus any layers/tables cng-lite skipped rather than failing the job.
+        Until done, relays cng-lite's live per-layer progress (e.g.
+        "Converting layer 2/5: dashboard", 40% through) into the job's
         message/progress, so a multi-layer GeoPackage shows real movement.
         """
         response = self.http.get(f"api/v1/jobs/{self.job.cng_job_id}")
@@ -488,15 +493,20 @@ class CNGProcessingClient:
                 f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
             )
         if body.get("status") == "done":
-            results = body.get("results")
-            if not results:
-                raise ValueError("CloudNativeGIS returned no result files.")
+            if "outputs" not in body:
+                raise ValueError(
+                    "CloudNativeGIS didn't upload the results itself: it needs updating "
+                    "to a version that does."
+                )
+            uploaded = body["outputs"].get("layers") or []
+            if not uploaded:
+                raise ValueError("CloudNativeGIS uploaded no results.")
             self.update(
-                status=CngLiteJobStatus.DOWNLOADING,
-                cng_results=results,
+                status=CngLiteJobStatus.VERIFYING,
+                cng_results=uploaded,
                 cng_errors=body.get("errors") or [],
-                progress=80,
-                message="Downloading the converted files",
+                progress=82,
+                message="Checking the uploaded files",
             )
             return True
         detail = body.get("detail")
@@ -508,133 +518,103 @@ class CNGProcessingClient:
             self.update(**values)
         return False
 
-    def download(self):
-        """Download each result file not already in the job's directory.
+    def verify(self):
+        """Check what CloudNativeGIS uploaded is in the bucket as it reported.
 
-        Records each one's file name, size and checksum on its cng_results
-        entry as soon as it's down, so a resumed job skips it.
+        Its word isn't taken for it (see direct_upload.verify_uploads): a
+        mismatch fails the job, and a new layer's half-written folder is
+        removed. A replaced one's is left as it is, to look into.
         """
-        if self.job.status != CngLiteJobStatus.DOWNLOADING:
+        if self.job.status != CngLiteJobStatus.VERIFYING:
             self.update(
-                status=CngLiteJobStatus.DOWNLOADING,
-                progress=80,
-                message="Downloading the converted files",
+                status=CngLiteJobStatus.VERIFYING,
+                progress=82,
+                message="Checking the uploaded files",
             )
-        # Usually already created by the staging step (start_conversion/
-        # inspect_geopackage) under this same `kind`. A GeoPackage that turns
-        # out to hold only raster tables gets reassigned from pmtiles to cog
-        # after inspection (see cog.start_geopackage_conversion) — staged
-        # under "pmtiles", converted under "cog" — so this can't assume it
-        # exists yet.
-        self.directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-        results = self.job.cng_results
-        for index, item in enumerate(results):
-            if self._is_downloaded(item):
-                continue
-            self.update(
-                progress=80 + round(5 * index / len(results)),
-                message=(
-                    f"Downloading the converted files ({index + 1} of {len(results)}): "
-                    f"{_file_kind(item['name'])}"
-                ),
-            )
-            filename = f"result-{index}"
-            try:
-                size, checksum = download_result(
-                    self.http,
-                    item["result_url"],
-                    self.directory / filename,
-                    self.converter.validate,
-                    self.converter.invalid_message,
-                )
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    raise CngJobNotFound(f"CloudNativeGIS no longer has {item['name']}.") from exc
-                raise
-            item.update(file=filename, size=size, checksum=checksum)
-            self.update(cng_results=results)
-        self._downloaded = True
+        layers = self.uploaded_layers()
+        expected = [
+            (f"{layer['folder']}/{asset['filename']}", asset["output"]["size"], asset["media_type"])
+            for layer in layers
+            for asset in layer["assets"]
+        ]
+        try:
+            direct_upload.verify_uploads(self.s3_client, expected)
+        except ValueError:
+            if not self.job.replace_existing:
+                for layer in layers:
+                    self.s3_client.delete_prefix(f"{layer['folder']}/")
+            raise
+        self._verified = True
 
     def publish(self):
-        """Publish each result as its own Portolan layer, then complete the job."""
-        if not self._downloaded:
-            self.download()
+        """Publish each uploaded layer as its own Portolan layer, then complete the job."""
+        if not self._verified:
+            self.verify()
         job = self.job
         self.update(
             status=CngLiteJobStatus.PUBLISHING,
             progress=86,
             message="Publishing to the catalog",
         )
-        if job.replace_existing:
-            self.update(message="Removing the layer being replaced")
-            _clear_for_replace(job, self.s3_client)
-        files = {item["name"]: item for item in job.cng_results}
-        layers = self.converter.group_results(job, job.cng_results)
-        uploads = sum(len(layer["assets"]) for layer in layers)
-        uploaded = 0
-        base_prefix = str(PurePosixPath(job.output_key).parent)
-        base_prefix = "" if base_prefix in ("", ".") else base_prefix
-        catalog_folder = catalog_title = ""
-        if is_geopackage(job.source_name):
-            source_stem = PurePosixPath(job.source_name).stem
-            catalog_title = portolan.prettify(source_stem)
-            gpkg_id = portolan.sanitize_layer_id(source_stem)
-            catalog_folder = f"{base_prefix}/{gpkg_id}" if base_prefix else gpkg_id
-            base_prefix = catalog_folder
+        layers = self.uploaded_layers()
+        catalog_folder, catalog_title = self.catalog()
         # A GeoPackage's original is kept once in its group folder and
         # listed as each of its layers' `source` asset.
-        source_asset = (
-            _publish_source(job, self.s3_client, catalog_folder) if catalog_folder else None
-        )
+        source_asset = None
+        if catalog_folder:
+            self.update(message="Keeping the original GeoPackage")
+            source_asset = _publish_source(job, self.s3_client, catalog_folder)
+        written = {
+            f"{layer['folder']}/{asset['filename']}"
+            for layer in layers
+            for asset in layer["assets"]
+        }
+        if job.replace_existing:
+            # The new files are already on their final keys: once they're
+            # up, whatever else the replaced layer (or group) had goes.
+            self.update(progress=88, message="Removing the replaced layer's old files")
+            keep = written | ({job.source_key} if source_asset else set())
+            direct_upload.delete_leftovers(
+                self.s3_client, target_folder(job.output_key, job.source_name), keep
+            )
         provider_name = _provider_name(self.owner)
         host_email = host_contact_email(job.connection_id)
 
         output_keys = []
-        for layer in layers:
-            folder = f"{base_prefix}/{layer['layer_id']}" if base_prefix else layer["layer_id"]
+        output_size = 0
+        for index, layer in enumerate(layers):
             data_assets = []
             info = None
             table_info = None
             for asset in layer["assets"]:
-                self.update(
-                    progress=88 + round(9 * uploaded / max(uploads, 1)),
-                    message=(
-                        f"Uploading to the bucket ({uploaded + 1} of {uploads}): "
-                        f"{asset['filename']}"
-                    ),
+                output = asset["output"]
+                output_size += output["size"]
+                output_keys.append(
+                    {"name": asset["filename"], "key": f"{layer['folder']}/{asset['filename']}"}
                 )
-                uploaded += 1
-                downloaded = files[asset["item"]["name"]]
-                dest_key = f"{folder}/{asset['filename']}"
-                media_type = asset.get("media_type", self.converter.content_type)
-                with (self.directory / downloaded["file"]).open("rb") as source:
-                    self.s3_client.client.upload_fileobj(
-                        source,
-                        job.bucket,
-                        dest_key,
-                        ExtraArgs={"ContentType": media_type},
-                    )
-                output_keys.append({"name": asset["filename"], "key": dest_key})
                 data_assets.append(
                     {
                         "filename": asset["filename"],
                         "role": asset["role"],
-                        "media_type": media_type,
-                        "file": {"size": downloaded["size"], "checksum": downloaded["checksum"]},
+                        "media_type": asset["media_type"],
+                        "file": direct_upload.file_fields(output),
                     }
                 )
-                # A GeoParquet asset's info is its schema (and a bbox in
-                # its own CRS); the WGS84 bbox/zoom/layer names always
-                # come from the PMTiles or COG.
-                if media_type == portolan.PARQUET_MEDIA_TYPE:
-                    table_info = asset["item"].get("info")
-                elif media_type != portolan.THUMBNAIL_MEDIA_TYPE and info is None:
-                    info = asset["item"].get("info")
+                # A GeoParquet's info is its schema (and a bbox in its own
+                # CRS); the WGS84 bbox/zoom/layer names always come from the
+                # PMTiles or COG.
+                if asset["media_type"] == portolan.PARQUET_MEDIA_TYPE:
+                    table_info = output.get("info")
+                elif asset["role"] != "thumbnail" and info is None:
+                    info = output.get("info")
 
-            self.update(progress=97, message=f"Writing the catalog entry: {layer['title']}")
+            self.update(
+                progress=90 + round(7 * index / len(layers)),
+                message=f"Writing the catalog entry: {layer['title']}",
+            )
             portolan.finalize_layer(
                 self.s3_client,
-                folder=folder,
+                folder=layer["folder"],
                 layer_id=layer["layer_id"],
                 title=layer["title"],
                 kind=job.kind,
@@ -655,9 +635,9 @@ class CNGProcessingClient:
                     else ""
                 ),
             )
-        self.complete(layers, output_keys)
+        self.complete(layers, output_keys, output_size)
 
-    def complete(self, layers, output_keys):
+    def complete(self, layers, output_keys, output_size):
         """Mark the job completed, recording any layers/tables cng-lite skipped.
 
         Those are recorded on `job.error`, even though the job itself
@@ -677,7 +657,7 @@ class CNGProcessingClient:
         self.update(
             status=CngLiteJobStatus.COMPLETED,
             progress=100,
-            output_size=sum(item["size"] for item in self.job.cng_results),
+            output_size=output_size,
             output_keys=output_keys,
             error="; ".join(f"{e['name']}: {e['error']}" for e in layer_errors),
             message=message,
@@ -734,11 +714,70 @@ class CNGProcessingClient:
         for field, value in values.items():
             setattr(self.job, field, value)
 
-    def _is_downloaded(self, item):
-        if not item.get("file"):
-            return False
-        path = self.directory / item["file"]
-        return path.is_file() and path.stat().st_size == item["size"]
+    def catalog(self):
+        """(folder, title) of a GeoPackage's sub-catalog; ("", "") otherwise."""
+        if not is_geopackage(self.job.source_name):
+            return "", ""
+        parent = str(PurePosixPath(self.job.output_key).parent)
+        parent = "" if parent in ("", ".") else parent
+        stem = PurePosixPath(self.job.source_name).stem
+        gpkg_id = portolan.sanitize_layer_id(stem)
+        return (f"{parent}/{gpkg_id}" if parent else gpkg_id), portolan.prettify(stem)
+
+    def layers(self, names=None):
+        """The job's planned layers (see plan_layers), each with its `folder`.
+
+        `names` defaults to the ones it was submitted with: [None] for a
+        single-layer source, else the GeoPackage's chosen `layers`.
+        """
+        if names is None:
+            names = list(self.job.layers) if is_geopackage(self.job.source_name) else [None]
+        catalog_folder, _title = self.catalog()
+        base = catalog_folder or str(PurePosixPath(self.job.output_key).parent)
+        base = "" if base in ("", ".") else base
+        layers = plan_layers(self.job, names, self.converter.assets_for)
+        for layer in layers:
+            layer["folder"] = f"{base}/{layer['layer_id']}" if base else layer["layer_id"]
+        return layers
+
+    def uploaded_layers(self):
+        """The planned layers CloudNativeGIS uploaded, each asset with its `output`.
+
+        A layer it skipped has no outputs and is left out; so is a file it
+        didn't make (e.g. a thumbnail that didn't render).
+        """
+        uploaded = {entry.get("layer"): entry["files"] for entry in self.job.cng_results or []}
+        layers = []
+        for layer in self.layers():
+            files = uploaded.get(layer["name"])
+            if files is None:
+                continue
+            layer["assets"] = [
+                {**asset, "output": files[asset["role"]]}
+                for asset in layer["assets"]
+                if asset["role"] in files
+            ]
+            layers.append(layer)
+        if not layers:
+            raise ValueError("CloudNativeGIS uploaded no results.")
+        return layers
+
+    def _layer_names(self):
+        """The layers to convert: [None] for one-layer sources, else the GeoPackage's.
+
+        A GeoPackage whose layers weren't picked (uploaded straight to convert)
+        is asked what it holds - and what of it this kind converts - so every
+        layer's files can be planned.
+        """
+        if not is_geopackage(self.job.source_name):
+            return [None]
+        if self.job.layers is None:
+            url = self.s3_client.generate_presigned_url(self.job.source_key, expiration=300)
+            inspection = request_json(self.http, "POST", "api/v1/gpkg/layers", json={"source": url})
+            self.update(layers=self.converter.pick_layers(inspection))
+        if not self.job.layers:
+            raise ValueError("The GeoPackage has nothing of this kind to convert.")
+        return list(self.job.layers)
 
     def _clean_up(self):
         # Only once the job's finished: until then a resumed job still needs

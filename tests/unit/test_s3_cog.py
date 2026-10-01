@@ -1,6 +1,5 @@
 """CloudNativeGIS Lite COG conversion contract and failure handling."""
 
-import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -9,9 +8,9 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3 import portolan
+from apps.s3 import cng_lite, portolan
 from apps.s3.cog import (
-    group_results,
+    assets_for,
     output_key,
     prepare_tiff,
     run_conversion,
@@ -22,6 +21,7 @@ from apps.s3.cog import (
 )
 from apps.s3.models import CngLiteJob, S3Connection
 from apps.s3.pmtiles import inspect_geopackage
+from tests.unit.fake_s3 import FakeS3, converting_cng, key_of
 
 GPKG_MAGIC = b"SQLite format 3\x00"
 
@@ -60,52 +60,24 @@ def test_output_key(key, expected):
     assert output_key(key) == expected
 
 
-def test_group_results_plain_tiff_uses_source_name_for_title():
+def test_plan_layers_names_a_tiff_after_its_upload():
     job = Mock(source_name="my raster.tif", layers=None)
-    results = [
-        {"name": "output_cog.tif", "info": {}},
-        {"name": "output_cog_3857.tif", "info": {}},
-    ]
-    with patch("apps.s3.cog.is_geopackage", return_value=False):
-        layers = group_results(job, results)
-    assert len(layers) == 1
-    layer = layers[0]
-    assert layer["layer_id"] == "my-raster"
-    assert layer["title"] == "My Raster"
-    assert {a["role"]: a["filename"] for a in layer["assets"]} == {
-        "data": "my-raster.tif",
-        "visual": "my-raster_3857.tif",
-    }
-
-
-def test_group_results_attaches_thumbnail_to_its_raster():
-    job = Mock(source_name="dem.tif", layers=None)
-    results = [
-        {"name": "output_cog.tif", "info": {}},
-        {"name": "output_cog_3857.tif", "info": {}},
-        {"name": "output_cog_thumbnail.png", "info": {}},
-    ]
-    with patch("apps.s3.cog.is_geopackage", return_value=False):
-        [layer] = group_results(job, results)
-    assert [(a["role"], a["filename"]) for a in layer["assets"]] == [
-        ("data", "dem.tif"),
-        ("visual", "dem_3857.tif"),
-        ("thumbnail", "thumbnail.png"),
+    [layer] = cng_lite.plan_layers(job, [None], assets_for)
+    assert (layer["layer_id"], layer["title"]) == ("my-raster", "My Raster")
+    assert [(a["role"], a["filename"], a["media_type"]) for a in layer["assets"]] == [
+        ("data", "my-raster.tif", portolan.COG_MEDIA_TYPE),
+        ("visual", "my-raster_3857.tif", portolan.COG_MEDIA_TYPE),
+        ("thumbnail", "thumbnail.png", "image/png"),
     ]
 
 
-def test_group_results_geopackage_uses_table_names():
+def test_plan_layers_names_a_geopackages_rasters_after_their_tables():
     job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
-    results = [
-        {"name": "roads_cog.tif", "info": {}},
-        {"name": "roads_cog_3857.tif", "info": {}},
-        {"name": "rivers_cog.tif", "info": {}},
-        {"name": "rivers_cog_3857.tif", "info": {}},
+    layers = cng_lite.plan_layers(job, job.layers, assets_for)
+    assert [(layer["name"], layer["layer_id"]) for layer in layers] == [
+        ("roads", "roads"),
+        ("rivers", "rivers"),
     ]
-    with patch("apps.s3.cog.is_geopackage", return_value=True):
-        layers = group_results(job, results)
-    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
-    assert [layer["title"] for layer in layers] == ["Roads", "Rivers"]
 
 
 def test_prepare_tiff_rejects_non_tiff_extension(tmp_path):
@@ -284,54 +256,50 @@ def cog_job(settings, tmp_path, owner, connection):
         return start_conversion(tiff_file(), "folder/raster.tif", str(connection.id), owner)
 
 
+COG = b"II*\x00cog-fixture"
+PNG = b"\x89PNG\r\n\x1a\nfixture"
+
+
+def raster_results(layer=None):
+    return {
+        layer: {
+            "data": (COG, {"bbox": [1, 2, 3, 4]}),
+            "visual": (COG + b"-3857", {"bbox": [1, 2, 3, 4]}),
+            "thumbnail": (PNG, {}),
+        }
+    }
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("outcome", ["success", "failed", "bad-magic"])
+@pytest.mark.parametrize("outcome", ["success", "failed", "not-a-tiff"])
 def test_cog_conversion_pipeline(cog_job, settings, outcome):
-    s3_client = Mock(bucket_url="http://minio:9000/bucket")
-    s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.tif"
-    uploaded = []
-    s3_client.client.upload_fileobj.side_effect = lambda source, bucket, key, **kw: uploaded.append(
-        (source.read(), bucket, key, kw)
-    )
+    s3 = FakeS3()
+    if outcome == "failed":
 
-    def respond(request):
-        if request.url.path == "/api/v1/cog":
-            return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
-        if request.url.path == "/api/v1/jobs/cng-job-1":
-            if outcome == "failed":
-                return httpx.Response(
-                    200, json={"status": "failed", "detail": "gdal_translate failed"}
-                )
-            return httpx.Response(
-                200,
-                json={
-                    "status": "done",
-                    "results": [
-                        {
-                            "name": "output_cog.tif",
-                            "result_url": "/api/v1/jobs/cng-job-1/result/output_cog.tif",
-                        },
-                        {
-                            "name": "output_cog_3857.tif",
-                            "result_url": "/api/v1/jobs/cng-job-1/result/output_cog_3857.tif",
-                        },
-                    ],
-                    "errors": [],
-                },
-            )
-        if request.url.path in (
-            "/api/v1/jobs/cng-job-1/result/output_cog.tif",
-            "/api/v1/jobs/cng-job-1/result/output_cog_3857.tif",
-        ):
-            content = b"not-a-tiff" if outcome == "bad-magic" else b"II*\x00cog-fixture"
-            return httpx.Response(200, content=content)
-        return httpx.Response(404)
+        def respond(request):
+            if request.url.path == "/api/v1/cog":
+                return httpx.Response(202, json={"job_id": "cng-1"})
+            return httpx.Response(200, json={"status": "failed", "detail": "gdal_translate failed"})
 
-    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+        client = httpx.Client(
+            base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond)
+        )
+        submitted = []
+    else:
+        client, submitted = converting_cng(
+            s3,
+            "cog",
+            raster_results(),
+            tamper=(
+                (lambda url, body: b"<html>".ljust(len(body)) if "_3857" in url else body)
+                if outcome == "not-a-tiff"
+                else None
+            ),
+        )
     with (
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
-        patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
         patch("apps.s3.cng_lite.time.sleep"),
         patch("apps.s3.cng_lite.close_old_connections"),
     ):
@@ -339,34 +307,63 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
 
     cog_job.refresh_from_db()
     assert not (Path(settings.UPLOAD_TEMP_DIR) / "cog" / str(cog_job.id)).exists()
-    if outcome == "success":
-        assert cog_job.status == "completed"
-        assert cog_job.progress == 100
-        # Every layer gets its own Portolan folder ("folder/raster/") — the
-        # original-CRS COG and the EPSG:3857 variant land there together.
-        uploaded_keys = {entry[2] for entry in uploaded}
-        assert uploaded_keys == {"folder/raster/raster.tif", "folder/raster/raster_3857.tif"}
-        assert cog_job.output_keys and len(cog_job.output_keys) == 2
-        # Both COGs carry the full COG media type Portolan requires (PTL-AST-006),
-        # in the bucket and in the catalog - not a plain "image/tiff".
-        assert {entry[3]["ExtraArgs"]["ContentType"] for entry in uploaded} == {
-            portolan.COG_MEDIA_TYPE
-        }
-        [collection_put] = [
-            c
-            for c in s3_client.put_object.call_args_list
-            if c.kwargs.get("key") == "folder/raster/collection.json"
-        ]
-        assets = json.loads(collection_put.kwargs["body"])["assets"]
-        assert assets["data"]["type"] == assets["visual"]["type"] == portolan.COG_MEDIA_TYPE
-        assert set(cog_job.to_dict()["outputPaths"]) == {
-            "s3://bucket/folder/raster/raster.tif",
-            "s3://bucket/folder/raster/raster_3857.tif",
-        }
-    else:
+    if outcome != "success":
         assert cog_job.status == "failed"
         assert cog_job.error
-        assert not uploaded
+        assert not [key for key in s3.objects if key.startswith("folder/raster/")]
+        return
+    assert cog_job.status == "completed", cog_job.error
+    assert cog_job.progress == 100
+    [payload] = submitted
+    assert payload["thumbnail"] is True
+    [spec] = payload["uploads"]
+    # Every layer gets its own Portolan folder ("folder/raster/"): the
+    # original-CRS COG and the EPSG:3857 one land there together.
+    assert {role: key_of(t["url"]) for role, t in spec["files"].items()} == {
+        "data": "folder/raster/raster.tif",
+        "visual": "folder/raster/raster_3857.tif",
+        "thumbnail": "folder/raster/thumbnail.png",
+    }
+    # Both COGs are signed for - and so carry - the full COG media type.
+    assert s3.content_types["folder/raster/raster.tif"] == portolan.COG_MEDIA_TYPE
+    assert s3.content_types["folder/raster/raster_3857.tif"] == portolan.COG_MEDIA_TYPE
+    assert set(cog_job.to_dict()["outputPaths"]) == {
+        "s3://bucket/folder/raster/raster.tif",
+        "s3://bucket/folder/raster/raster_3857.tif",
+        "s3://bucket/folder/raster/thumbnail.png",
+    }
+    assets = s3.json("folder/raster/collection.json")["assets"]
+    assert assets["data"]["type"] == assets["visual"]["type"] == portolan.COG_MEDIA_TYPE
+    assert assets["data"]["file:size"] == len(COG)
+
+
+@pytest.mark.django_db
+def test_a_geopackage_uploaded_to_convert_lists_its_raster_tables(cog_job, settings):
+    cog_job.source_name = "rasters.gpkg"
+    cog_job.save(update_fields=["source_name"])
+    s3 = FakeS3()
+    s3.objects[cog_job.source_key] = b"SQLite format 3\x00gpkg"
+    client, submitted = converting_cng(
+        s3,
+        "cog",
+        raster_results("dem"),
+        inspection={"layers": [{"name": "roads"}], "rasterTables": [{"name": "dem"}]},
+    )
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
+        patch("apps.s3.cng_lite.time.sleep"),
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        run_conversion(cog_job.pk)
+
+    cog_job.refresh_from_db()
+    assert cog_job.status == "completed", cog_job.error
+    # Only the raster tables: the vector layer is another job's.
+    assert cog_job.layers == ["dem"]
+    assert submitted[0]["tables"] == ["dem"]
+    assert s3.objects["folder/rasters/dem/dem.tif"] == COG
 
 
 @pytest.mark.django_db

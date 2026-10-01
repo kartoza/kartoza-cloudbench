@@ -2,9 +2,7 @@
 
 import hashlib
 import io
-import json
 import zipfile
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import httpx
@@ -12,12 +10,11 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3 import cng_lite, portolan
-from apps.s3.cng_lite import download_result
+from apps.s3 import cng_lite, direct_upload, portolan
 from apps.s3.models import CngLiteJob, S3Connection
 from apps.s3.pmtiles import (
+    assets_for,
     cancel_geopackage_inspection,
-    group_results,
     inspect_geopackage,
     output_key,
     prepare_shapefile,
@@ -25,6 +22,7 @@ from apps.s3.pmtiles import (
     start_conversion,
     start_geopackage_conversion,
 )
+from tests.unit.fake_s3 import FakeS3, converting_cng, key_of
 
 GPKG_MAGIC = b"SQLite format 3\x00"
 
@@ -68,65 +66,26 @@ def test_output_key(key, expected):
     assert output_key(key) == expected
 
 
-def test_group_results_plain_shapefile_uses_source_name_for_title():
+def test_plan_layers_names_a_shapefile_after_its_upload():
     job = Mock(source_name="roads.zip", layers=None)
-    results = [{"name": "output.pmtiles", "info": {}}]
-    layers = group_results(job, results)
-    assert len(layers) == 1
-    layer = layers[0]
-    assert layer["layer_id"] == "roads"
-    assert layer["title"] == "Roads"
-    assert layer["assets"] == [{"item": results[0], "filename": "roads.pmtiles", "role": "visual"}]
-
-
-def test_group_results_pairs_geoparquet_with_pmtiles():
-    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
-    results = [
-        {"name": "roads.parquet", "info": {}},
-        {"name": "roads.pmtiles", "info": {}},
-        {"name": "rivers.parquet", "info": {}},
-        {"name": "rivers.pmtiles", "info": {}},
-    ]
-    layers = group_results(job, results)
-    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
-    assert layers[0]["assets"] == [
-        {
-            "item": results[0],
-            "filename": "roads.parquet",
-            "role": "data",
-            "media_type": "application/vnd.apache.parquet",
-        },
-        {"item": results[1], "filename": "roads.pmtiles", "role": "visual"},
+    [layer] = cng_lite.plan_layers(job, [None], assets_for)
+    assert (layer["name"], layer["layer_id"], layer["title"]) == (None, "roads", "Roads")
+    # Each file's name - and so its final key - is known before converting.
+    assert [(a["role"], a["filename"], a["media_type"]) for a in layer["assets"]] == [
+        ("data", "roads.parquet", "application/vnd.apache.parquet"),
+        ("visual", "roads.pmtiles", "application/vnd.pmtiles"),
+        ("thumbnail", "thumbnail.png", "image/png"),
     ]
 
 
-def test_group_results_attaches_thumbnails_to_their_layer():
-    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
-    results = [
-        {"name": "roads_thumbnail.png", "info": {}},
-        {"name": "roads.parquet", "info": {}},
-        {"name": "roads.pmtiles", "info": {}},
-        {"name": "rivers.parquet", "info": {}},
-        {"name": "rivers.pmtiles", "info": {}},
+def test_plan_layers_names_a_geopackages_layers_uniquely():
+    job = Mock(source_name="data.gpkg", layers=["Main Roads", "main_roads", "rivers"])
+    layers = cng_lite.plan_layers(job, job.layers, assets_for)
+    assert [(layer["name"], layer["layer_id"], layer["title"]) for layer in layers] == [
+        ("Main Roads", "main-roads", "Main Roads"),
+        ("main_roads", "main-roads-2", "Main Roads"),
+        ("rivers", "rivers", "Rivers"),
     ]
-    layers = group_results(job, results)
-    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
-    # The thumbnail comes last, so the data/visual assets still lead.
-    assert [(a["role"], a["filename"]) for a in layers[0]["assets"]] == [
-        ("data", "roads.parquet"),
-        ("visual", "roads.pmtiles"),
-        ("thumbnail", "thumbnail.png"),
-    ]
-    # A layer whose thumbnail didn't render simply has none.
-    assert [a["role"] for a in layers[1]["assets"]] == ["data", "visual"]
-
-
-def test_group_results_geopackage_uses_layer_names():
-    job = Mock(source_name="data.gpkg", layers=["roads", "rivers"])
-    results = [{"name": "roads.pmtiles", "info": {}}, {"name": "rivers.pmtiles", "info": {}}]
-    layers = group_results(job, results)
-    assert [layer["layer_id"] for layer in layers] == ["roads", "rivers"]
-    assert [layer["title"] for layer in layers] == ["Roads", "Rivers"]
 
 
 def test_flattens_and_uniquely_names_shapefile(tmp_path):
@@ -300,89 +259,24 @@ def conversion_job(settings, tmp_path, owner, connection):
         return start_conversion(shapefile_zip(), "folder/roads.zip", str(connection.id), owner)
 
 
-@pytest.mark.django_db
-@pytest.mark.parametrize(
-    "outcome, source_name",
-    [
-        ("success", "roads.zip"),
-        ("success", "roads.gpkg"),
-        ("failed", "roads.zip"),
-        ("bad-magic", "roads.zip"),
-        ("timeout", "roads.zip"),
-        ("s3-failed", "roads.zip"),
-    ],
-)
-def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
-    conversion_job.source_name = source_name
-    conversion_job.save(update_fields=["source_name"])
-    requests = []
-    polls = 0
-    s3_client = Mock(bucket_url="http://minio:9000/bucket")
-    s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
-    uploaded = []
-    # (step, the job's status, its message) as each step hits cng/S3.
-    stages = []
+PMTILES = b"PMTiles\x03fixture"
+PARQUET = b"PAR1fixture"
+PNG = b"\x89PNG\r\n\x1a\nfixture"
+COLUMNS = [{"name": "name", "type": "string"}, {"name": "geometry", "type": "binary"}]
 
-    def stage(step):
-        job = CngLiteJob.objects.get(pk=conversion_job.pk)
-        stages.append((step, job.status, job.message))
 
-    def upload(source, bucket, key, **kwargs):
-        stage("upload")
-        if outcome == "s3-failed":
-            raise RuntimeError("S3 transfer failed")
-        uploaded.append((source.read(), bucket, key, kwargs))
+def vector_results(layer=None):
+    """What CloudNativeGIS makes of one vector layer: {role: (bytes, info)}."""
+    return {
+        layer: {
+            "data": (PARQUET, {"columns": COLUMNS}),
+            "visual": (PMTILES, {"bbox": [1, 2, 3, 4], "layers": ["default"]}),
+            "thumbnail": (PNG, {}),
+        }
+    }
 
-    s3_client.client.upload_fileobj.side_effect = upload
 
-    def respond(request):
-        nonlocal polls
-        requests.append((request.method, request.url.path))
-        if request.url.path == "/api/v1/pmtiles":
-            stage("push")
-            return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
-        if request.url.path == "/api/v1/jobs/cng-job-1":
-            stage("poll")
-            polls += 1
-            if outcome == "failed":
-                return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
-            if outcome == "timeout":
-                return httpx.Response(200, json={"status": "processing"})
-            if polls == 1:
-                # CloudNativeGIS reporting what it's doing, part way through.
-                return httpx.Response(
-                    200,
-                    json={
-                        "status": "processing",
-                        "detail": "Generating vector tiles (PMTiles): 50% · GeoParquet ready",
-                        "detailProgress": 0.6,
-                    },
-                )
-            return httpx.Response(
-                200,
-                json={
-                    "status": "done",
-                    "results": [
-                        {
-                            "name": "output.pmtiles",
-                            "result_url": "/api/v1/jobs/cng-job-1/result/output.pmtiles",
-                        }
-                    ],
-                    "errors": [],
-                },
-            )
-        if request.url.path == "/api/v1/jobs/cng-job-1/result/output.pmtiles":
-            stage("download")
-            content = b"NOT-PMTILES" if outcome == "bad-magic" else b"PMTiles\x03fixture"
-            return httpx.Response(200, content=content)
-        return httpx.Response(404)
-
-    client = httpx.Client(
-        base_url="http://cloudnativegis/",
-        transport=httpx.MockTransport(respond),
-    )
-    if outcome == "timeout":
-        settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 0
+def run_with(conversion_job, s3, client, settings=None):
     updates = []
     real_update_job = cng_lite.update_job
 
@@ -394,140 +288,76 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.update_job", side_effect=record),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
-        patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
         patch("apps.s3.cng_lite.time.sleep"),
         patch("apps.s3.cng_lite.close_old_connections"),
     ):
         run_conversion(conversion_job.pk)
-
     conversion_job.refresh_from_db()
-    assert not (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(conversion_job.id)).exists()
-    # Kept whatever the outcome: every case got as far as submitting to cng.
-    assert conversion_job.cng_job_id == "cng-job-1"
-    assert conversion_job.cloudnativegis_url == "http://cloudnativegis"
-    push = ("push", "pushing", "Sending the file to CloudNativeGIS")
-    poll = ("poll", "polling", "Waiting for CloudNativeGIS to start")
-    # The first poll found it part way through, relaying CloudNativeGIS's progress.
-    poll_again = ("poll", "polling", "Generating vector tiles (PMTiles): 50% · GeoParquet ready")
-    download = ("download", "downloading", "Downloading the converted files (1 of 1): PMTiles")
-    expected_steps = {
-        "timeout": [push],  # a zero timeout never gets to poll
-        "failed": [push, poll],  # failed on the first poll
-    }.get(outcome, [push, poll, poll_again, download])
-    assert stages[: len(expected_steps)] == expected_steps
-    if outcome == "success":
-        assert conversion_job.status == "completed"
-        assert conversion_job.progress == 100
-        uploads = [stage for stage in stages if stage[0] == "upload"]
-        assert {status for _, status, _ in uploads} == {"publishing"}
-        assert uploads[-1][2] == "Uploading to the bucket (1 of 1): roads.pmtiles"
-        # Every layer gets its own Portolan folder ("folder/roads/"); a
-        # GeoPackage's layers sit inside its sub-catalog ("folder/roads/roads/").
-        layer_key = (
-            "folder/roads/roads/roads.pmtiles"
-            if source_name.endswith(".gpkg")
-            else "folder/roads/roads.pmtiles"
-        )
-        assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", layer_key)
-        assert conversion_job.to_dict()["outputPath"] == f"s3://bucket/{layer_key}"
-        # Progress says what's happening, and never goes back.
-        steps = [(u["progress"], u.get("message")) for u in updates if "progress" in u]
-        progress = [p for p, _message in steps]
-        assert progress == sorted(progress)
-        messages = [m for _p, m in steps]
-        assert "Generating vector tiles (PMTiles): 50% · GeoParquet ready" in messages
-        assert (56, "Generating vector tiles (PMTiles): 50% · GeoParquet ready") in steps
-        assert "Downloading the converted files (1 of 1): PMTiles" in messages
-        assert "Uploading to the bucket (1 of 1): roads.pmtiles" in messages
-        assert "Writing the catalog entry: Roads" in messages
-    else:
-        assert conversion_job.status == "failed"
-        assert conversion_job.error
-        assert not uploaded
+    return updates
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("parquet_content, succeeds", [(b"PAR1fixture", True), (b"junk", False)])
-def test_conversion_publishes_geoparquet_alongside_pmtiles(
-    conversion_job, parquet_content, succeeds
-):
-    s3_client = Mock(bucket_url="http://minio:9000/bucket")
-    s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
-    s3_client.get_object.side_effect = Exception("no catalog.json yet")
-    uploaded = {}
+def test_cloudnativegis_uploads_each_file_to_its_final_key(conversion_job, settings):
+    s3 = FakeS3()
+    client, submitted = converting_cng(
+        s3,
+        "pmtiles",
+        vector_results(),
+        detail={
+            "detail": "Generating vector tiles (PMTiles): 50% · GeoParquet ready",
+            "detailProgress": 0.6,
+        },
+    )
 
-    def upload(_source, _bucket, key, **kwargs):
-        uploaded[key] = kwargs["ExtraArgs"]["ContentType"]
+    updates = run_with(conversion_job, s3, client)
 
-    s3_client.client.upload_fileobj.side_effect = upload
-    columns = [{"name": "name", "type": "string"}, {"name": "geometry", "type": "binary"}]
-    results = {
-        # cng-lite lists the thumbnail first; its empty info mustn't win.
-        "output_thumbnail.png": (b"\x89PNG\r\n\x1a\nfixture", {}),
-        "output.parquet": (parquet_content, {"columns": columns}),
-        "output.pmtiles": (b"PMTiles\x03fixture", {"bbox": [1, 2, 3, 4], "layers": ["default"]}),
+    assert conversion_job.status == "completed", conversion_job.error
+    assert conversion_job.progress == 100
+    [payload] = submitted
+    assert payload["thumbnail"] is True
+    # One URL per file, for its final key, signed for the only type it may carry...
+    [spec] = payload["uploads"]
+    assert "layer" not in spec  # a shapefile has one layer
+    assert {role: key_of(t["url"]) for role, t in spec["files"].items()} == {
+        "data": "folder/roads/roads.parquet",
+        "visual": "folder/roads/roads.pmtiles",
+        "thumbnail": "folder/roads/thumbnail.png",
     }
-    submitted = []
-
-    def respond(request):
-        path = request.url.path
-        if path == "/api/v1/pmtiles":
-            submitted.append(json.loads(request.content))
-            return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
-        if path == "/api/v1/jobs/cng-job-1":
-            return httpx.Response(
-                200,
-                json={
-                    "status": "done",
-                    "results": [
-                        {
-                            "name": name,
-                            "result_url": f"/api/v1/jobs/cng-job-1/result/{name}",
-                            "info": info,
-                        }
-                        for name, (_, info) in results.items()
-                    ],
-                },
-            )
-        name = path.rsplit("/", 1)[-1]
-        if name in results:
-            return httpx.Response(200, content=results[name][0])
-        return httpx.Response(404)
-
-    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
-    with (
-        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
-        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
-        patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
-        patch("apps.s3.cng_lite.close_old_connections"),
-    ):
-        run_conversion(conversion_job.pk)
-
-    conversion_job.refresh_from_db()
-    if not succeeds:
-        assert conversion_job.status == "failed"
-        return
-    assert conversion_job.status == "completed"
-    assert submitted[0]["thumbnail"] is True
-    assert uploaded == {
-        "folder/roads/roads.parquet": "application/vnd.apache.parquet",
-        "folder/roads/roads.pmtiles": "application/vnd.pmtiles",
-        "folder/roads/thumbnail.png": "image/png",
-    }
+    assert spec["files"]["visual"]["content_type"] == "application/vnd.pmtiles"
+    # ...lasting only as long as CloudBench waits for the job.
+    timeout = cng_lite.conversion_timeout(conversion_job.input_size)
+    assert timeout + direct_upload.URL_MARGIN in s3.expirations
+    # Nothing was downloaded through CloudBench: the files are CloudNativeGIS's uploads.
+    assert s3.objects["folder/roads/roads.pmtiles"] == PMTILES
+    s3.client.upload_fileobj.assert_not_called()
     assert conversion_job.to_dict()["outputPaths"] == [
         "s3://bucket/folder/roads/roads.parquet",
         "s3://bucket/folder/roads/roads.pmtiles",
         "s3://bucket/folder/roads/thumbnail.png",
     ]
-    written = {
-        call.kwargs["key"]: call.kwargs["body"] for call in s3_client.put_object.call_args_list
-    }
-    collection = json.loads(written["folder/roads/collection.json"])
+    assert conversion_job.output_size == len(PARQUET) + len(PMTILES) + len(PNG)
+    # Progress says what's happening, and never goes back.
+    steps = [(u["progress"], u.get("message")) for u in updates if "progress" in u]
+    assert [p for p, _m in steps] == sorted(p for p, _m in steps)
+    messages = [m for _p, m in steps]
+    assert (56, "Generating vector tiles (PMTiles): 50% · GeoParquet ready") in steps
+    assert "Checking the uploaded files" in messages
+    assert "Writing the catalog entry: Roads" in messages
+
+
+@pytest.mark.django_db
+def test_portolan_metadata_records_what_cloudnativegis_uploaded(conversion_job):
+    s3 = FakeS3()
+    client, _submitted = converting_cng(s3, "pmtiles", vector_results())
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "completed", conversion_job.error
+    collection = s3.json("folder/roads/collection.json")
     assert collection["assets"]["data"]["href"] == "./roads.parquet"
 
-    def file_fields(name):
-        """file:checksum/file:size of exactly the bytes cng-lite returned."""
-        content = results[name][0]
+    def file_fields(content):
         return {
             "file:checksum": "1220" + hashlib.sha256(content).hexdigest(),
             "file:size": len(content),
@@ -538,26 +368,152 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
         "type": "image/png",
         "title": "Roads thumbnail",
         "roles": ["thumbnail"],
-        **file_fields("output_thumbnail.png"),
+        **file_fields(PNG),
     }
-    assert {k: v for k, v in collection["assets"]["data"].items() if k.startswith("file:")} == (
-        file_fields("output.parquet")
-    )
+    data_file = {k: v for k, v in collection["assets"]["data"].items() if k.startswith("file:")}
+    assert data_file == file_fields(PARQUET)
     [pmtiles_link] = [link for link in collection["links"] if link["rel"] == "pmtiles"]
-    assert pmtiles_link["file:checksum"] == file_fields("output.pmtiles")["file:checksum"]
-    assert pmtiles_link["file:size"] == file_fields("output.pmtiles")["file:size"]
+    assert pmtiles_link["file:checksum"] == file_fields(PMTILES)["file:checksum"]
     # The style editor rewrites the style in place, so it never gets a checksum.
     assert not any(k.startswith("file:") for k in collection["assets"]["style-default"])
     assert portolan.FILE_SCHEMA in collection["stac_extensions"]
-    assert b"![Roads](./thumbnail.png)" in written["folder/roads/README.md"]
-    assert collection["table:columns"] == columns
+    assert b"![Roads](./thumbnail.png)" in s3.objects["folder/roads/README.md"]
+    assert collection["table:columns"] == COLUMNS
     # bbox comes from the PMTiles (WGS84), never the GeoParquet's own CRS.
     assert collection["extent"]["spatial"]["bbox"] == [[1, 2, 3, 4]]
-    # The uploader produced it; the bucket hosts it (Portolan: exactly one host).
     assert collection["providers"] == [
         {"name": "7", "roles": ["producer"]},
         {"name": "minio", "roles": ["host"], "url": "http://minio:9000/bucket"},
     ]
+    root = s3.json("catalog.json")
+    assert any(link["href"] == "./folder/roads/collection.json" for link in root["links"])
+
+
+@pytest.mark.django_db
+def test_a_geopackage_uploaded_to_convert_is_listed_first(conversion_job):
+    conversion_job.source_name = "roads.gpkg"
+    conversion_job.save(update_fields=["source_name"])
+    s3 = FakeS3()
+    s3.objects[conversion_job.source_key] = b"SQLite format 3\x00gpkg"
+    results = {**vector_results("roads"), **vector_results("rivers")}
+    client, submitted = converting_cng(
+        s3,
+        "pmtiles",
+        results,
+        inspection={"layers": [{"name": "roads"}, {"name": "rivers"}], "rasterTables": []},
+    )
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "completed", conversion_job.error
+    assert conversion_job.layers == ["roads", "rivers"]
+    [payload] = submitted
+    assert payload["layers"] == ["roads", "rivers"]
+    assert [spec["layer"] for spec in payload["uploads"]] == ["roads", "rivers"]
+    assert key_of(payload["uploads"][1]["files"]["visual"]["url"]) == (
+        "folder/roads/rivers/rivers.pmtiles"
+    )
+    assert s3.objects["folder/roads/rivers/rivers.pmtiles"] == PMTILES
+    # The original is kept once in the group folder, beside its layers.
+    assert "folder/roads/source/roads.gpkg" in s3.objects
+    assert conversion_job.message == "Published 2 layers to the catalog"
+
+
+@pytest.mark.django_db
+def test_a_skipped_layer_is_reported_not_published(conversion_job):
+    conversion_job.source_name = "roads.gpkg"
+    conversion_job.layers = ["roads", "broken"]
+    conversion_job.save(update_fields=["source_name", "layers"])
+    s3 = FakeS3()
+    s3.objects[conversion_job.source_key] = b"SQLite format 3\x00gpkg"
+    client, _submitted = converting_cng(
+        s3,
+        "pmtiles",
+        vector_results("roads"),
+        errors=[{"name": "broken", "error": "unsupported geometry"}],
+    )
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "completed", conversion_job.error
+    assert conversion_job.message == "Published 1 layer to the catalog (1 skipped)"
+    assert "broken: unsupported geometry" in conversion_job.error
+    assert not any("broken" in key for key in s3.objects)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tamper, error",
+    [
+        # Reported uploaded, but never arrived.
+        (lambda url, body: None if ".pmtiles" in url else body, "isn't there"),
+        # Arrived short.
+        (lambda url, body: body[:4] if ".parquet" in url else body, "is 4 bytes"),
+        # Arrived, but isn't what it should be.
+        (
+            lambda url, body: b"<html>".ljust(len(body)) if ".pmtiles" in url else body,
+            "isn't a PMTiles",
+        ),
+    ],
+)
+def test_uploads_are_checked_in_the_bucket_not_taken_on_trust(conversion_job, tamper, error):
+    s3 = FakeS3()
+    client, _submitted = converting_cng(s3, "pmtiles", vector_results(), tamper=tamper)
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "failed"
+    assert error in conversion_job.error
+    # Nothing published, and the new layer's folder isn't left half-written.
+    assert not [key for key in s3.objects if key.startswith("folder/roads/")]
+    assert "catalog.json" not in s3.objects
+
+
+@pytest.mark.django_db
+def test_a_replace_drops_the_old_layers_leftovers_once_the_new_one_is_up(conversion_job):
+    conversion_job.replace_existing = True
+    conversion_job.save(update_fields=["replace_existing"])
+    s3 = FakeS3()
+    s3.objects["folder/roads/old-style-thing.json"] = b"{}"
+    s3.objects["folder/roads/roads.pmtiles"] = b"PMTiles old"
+    client, _submitted = converting_cng(s3, "pmtiles", vector_results())
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "completed", conversion_job.error
+    assert "folder/roads/old-style-thing.json" not in s3.objects
+    assert s3.objects["folder/roads/roads.pmtiles"] == PMTILES  # the new one
+    assert "folder/roads/collection.json" in s3.objects
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("outcome", ["failed", "timeout", "too-old"])
+def test_conversion_failures(conversion_job, settings, outcome):
+    s3 = FakeS3()
+
+    def respond(request):
+        if request.url.path == "/api/v1/pmtiles":
+            return httpx.Response(202, json={"job_id": "cng-1"})
+        if outcome == "failed":
+            return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
+        if outcome == "timeout":
+            return httpx.Response(200, json={"status": "processing"})
+        # A CloudNativeGIS that predates uploading results: it offers downloads.
+        return httpx.Response(
+            200, json={"status": "done", "results": [{"name": "output.pmtiles"}], "errors": []}
+        )
+
+    if outcome == "timeout":
+        settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 0
+    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+
+    run_with(conversion_job, s3, client)
+
+    assert conversion_job.status == "failed"
+    assert conversion_job.error
+    if outcome == "too-old":
+        assert "needs updating" in conversion_job.error
+    assert not [key for key in s3.objects if key.startswith("folder/roads/")]
 
 
 @pytest.mark.django_db
@@ -629,24 +585,6 @@ def test_cancel_geopackage_inspection_rejects_already_confirmed_job(gpkg_inspect
         start_geopackage_conversion(job.id, owner, [layer["name"] for layer in layers])
     with pytest.raises(ValueError, match="already started"):
         cancel_geopackage_inspection(job.id, owner)
-
-
-@pytest.mark.parametrize("size", [0, 5, 3 * 1024 * 1024 + 7])  # empty, tiny, several chunks
-def test_download_result_hashes_exactly_the_bytes_it_writes(tmp_path, size):
-    content = bytes(i % 251 for i in range(size))
-    client = httpx.Client(
-        base_url="http://cloudnativegis/",
-        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=content)),
-    )
-    destination = tmp_path / "result"
-
-    written, checksum = download_result(
-        client, "/api/v1/jobs/j/result/x.bin", destination, lambda _output, _name: True, "bad"
-    )
-
-    assert written == size
-    assert destination.read_bytes() == content
-    assert checksum == "1220" + hashlib.sha256(content).hexdigest()
 
 
 def test_conversion_timeout_scales_with_the_upload(settings):

@@ -32,42 +32,22 @@ PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def group_results(job, results):
-    """Groups cng-lite's output into one logical layer per vector layer."""
-    is_multi = job.layers is not None
-    groups = {}
-    for item in results:
-        if portolan.is_thumbnail_result(item["name"]):
-            groups.setdefault(portolan.thumbnail_stem(item["name"]), {})["thumbnail"] = item
-            continue
-        path = PurePosixPath(item["name"])
-        role = "data" if path.suffix.lower() == ".parquet" else "visual"
-        groups.setdefault(path.stem, {})[role] = item
+def assets_for(layer_id):
+    """A vector layer's files: its GeoParquet (data), PMTiles (visual), thumbnail."""
+    return [
+        {"role": "data", "filename": f"{layer_id}.parquet", "media_type": PARQUET_CONTENT_TYPE},
+        {"role": "visual", "filename": f"{layer_id}.pmtiles", "media_type": CONTENT_TYPE},
+        {
+            "role": "thumbnail",
+            "filename": portolan.THUMBNAIL_FILENAME,
+            "media_type": portolan.THUMBNAIL_MEDIA_TYPE,
+        },
+    ]
 
-    layers = []
-    taken = set()
-    for stem, items in groups.items():
-        title_stem = stem if is_multi else PurePosixPath(job.source_name).stem
-        title = portolan.prettify(title_stem)
-        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
-        assets = []
-        if "data" in items:
-            assets.append(
-                {
-                    "item": items["data"],
-                    "filename": f"{layer_id}.parquet",
-                    "role": "data",
-                    "media_type": PARQUET_CONTENT_TYPE,
-                }
-            )
-        if "visual" in items:
-            assets.append(
-                {"item": items["visual"], "filename": f"{layer_id}.pmtiles", "role": "visual"}
-            )
-        if "thumbnail" in items:
-            assets.append(portolan.thumbnail_asset(items["thumbnail"]))
-        layers.append({"layer_id": layer_id, "title": title, "assets": assets})
-    return layers
+
+def pick_layers(inspection):
+    """A GeoPackage's vector layers, from CloudNativeGIS's inspection of it."""
+    return [layer["name"] for layer in inspection.get("layers", [])]
 
 
 def output_key(key):
@@ -354,21 +334,10 @@ def cancel_geopackage_inspection(job_id, user):
     job.delete()
 
 
-def validate_pmtiles(output, name=""):
-    """PMTiles output, or the GeoParquet/thumbnail paired with it."""
-    if name.lower().endswith(".parquet"):
-        return output.read(4) == b"PAR1"
-    if portolan.is_thumbnail_result(name):
-        return output.read(8) == PNG_MAGIC
-    return output.read(7) == b"PMTiles"
-
-
 CONVERTER = Converter(
     endpoint=ENDPOINT,
-    content_type=CONTENT_TYPE,
-    validate=validate_pmtiles,
-    invalid_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
-    group_results=group_results,
+    assets_for=assets_for,
+    pick_layers=pick_layers,
     payload=lambda job: {
         "thumbnail": True,
         **({"layers": job.layers} if job.layers else {}),
