@@ -407,11 +407,13 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     assert conversion_job.cloudnativegis_url == "http://cloudnativegis"
     push = ("push", "pushing", "Sending the file to CloudNativeGIS")
     poll = ("poll", "polling", "Waiting for CloudNativeGIS to start")
+    # The first poll found it part way through, relaying CloudNativeGIS's progress.
+    poll_again = ("poll", "polling", "Generating vector tiles (PMTiles): 50% · GeoParquet ready")
     download = ("download", "downloading", "Downloading the converted files (1 of 1): PMTiles")
     expected_steps = {
         "timeout": [push],  # a zero timeout never gets to poll
-        "failed": [push, poll],
-    }.get(outcome, [push, poll, download])
+        "failed": [push, poll],  # failed on the first poll
+    }.get(outcome, [push, poll, poll_again, download])
     assert stages[: len(expected_steps)] == expected_steps
     if outcome == "success":
         assert conversion_job.status == "completed"

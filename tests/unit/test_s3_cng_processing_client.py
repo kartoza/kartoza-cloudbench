@@ -51,6 +51,8 @@ def run(job, respond):
 
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(record))
     s3_client = Mock(bucket_url="http://minio:9000/bucket")
+    # What a (re)submission hands cng-lite to read the source from.
+    s3_client.generate_presigned_url.return_value = "http://minio:9000/bucket/source.zip"
     with (
         # A resumed job first waits for its CloudNativeGIS to be healthy.
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
