@@ -262,12 +262,19 @@ export default function S3UploadDialog() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
+  // The job whose finish was last handled. Resetting the form changes this
+  // effect's dependencies (conversionJobIds becomes a new []), so without it
+  // the same finished job was handled again on every render, forever.
+  const handledJobRef = useRef<string | null>(null)
+
   // When the followed job finishes: move on to the next one if a GeoPackage
   // confirm started several (its raster tables after its vector layers),
   // keeping this one's outcome; once the last one completes, reset the form.
   useEffect(() => {
     if (!conversionJob || !conversionJobId) return
     if (!['completed', 'failed', 'cancelled'].includes(conversionJob.status)) return
+    if (handledJobRef.current === conversionJobId) return
+    handledJobRef.current = conversionJobId
     if (conversionJob.status === 'completed') {
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
     }
