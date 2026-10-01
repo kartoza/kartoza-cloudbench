@@ -117,7 +117,7 @@ def start_conversion(
     check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=user.username,
+        owner=user,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -179,7 +179,7 @@ def start_geopackage_conversion(job_id, user, tables):
         raise ValueError("Select at least one raster table.")
     job = CngLiteJob.objects.filter(
         pk=job_id,
-        owner_id=user.username,
+        owner=user,
         kind="pmtiles",
         status=CngLiteJobStatus.PENDING,
         layers__isnull=True,

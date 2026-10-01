@@ -20,7 +20,7 @@ from apps.s3.cog import (
 from apps.s3.cog import (
     start_geopackage_conversion as start_geopackage_cog_conversion,
 )
-from apps.s3.models import CngLiteJob
+from apps.s3.models import CngLiteJob, S3Connection
 from apps.s3.pmtiles import inspect_geopackage
 
 GPKG_MAGIC = b"SQLite format 3\x00"
@@ -28,8 +28,16 @@ GPKG_MAGIC = b"SQLite format 3\x00"
 
 @pytest.fixture
 def owner(django_user_model):
-    """Job owner; run_conversion looks it up by username (CngLiteJob.owner_id)."""
+    """Job owner (CngLiteJob.owner)."""
     return django_user_model.objects.create(username="7")
+
+
+@pytest.fixture
+def connection(owner):
+    """The S3 connection uploads go to (get_s3_client itself is patched)."""
+    return S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
 
 
 def gpkg_file(name="rasters.gpkg"):
@@ -118,11 +126,11 @@ def test_prepare_tiff_accepts_both_byte_orders(tmp_path, header):
 
 
 @pytest.mark.django_db
-def test_upload_starts_cog_conversion(settings, tmp_path):
+def test_upload_starts_cog_conversion(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with (
         patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -131,7 +139,7 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": tiff_file(),
                 "convert": "true",
@@ -150,11 +158,11 @@ def test_upload_starts_cog_conversion(settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_upload_accepts_chosen_license(settings, tmp_path):
+def test_upload_accepts_chosen_license(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with (
         patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -163,7 +171,7 @@ def test_upload_accepts_chosen_license(settings, tmp_path):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": tiff_file(),
                 "convert": "true",
@@ -189,11 +197,13 @@ def test_upload_accepts_chosen_license(settings, tmp_path):
         ("proprietary", "", ("other", "")),
     ],
 )
-def test_upload_records_license_url(settings, tmp_path, license_id, license_url, expected):
+def test_upload_records_license_url(
+    settings, tmp_path, owner, connection, license_id, license_url, expected
+):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with (
         patch("apps.s3.cog.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -202,7 +212,7 @@ def test_upload_records_license_url(settings, tmp_path, license_id, license_url,
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": tiff_file(),
                 "convert": "true",
@@ -218,14 +228,14 @@ def test_upload_records_license_url(settings, tmp_path, license_id, license_url,
 
 
 @pytest.mark.django_db
-def test_upload_rejects_invalid_license_url(settings, tmp_path):
+def test_upload_rejects_invalid_license_url(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with patch("apps.s3.views.get_s3_client"):
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": tiff_file(),
                 "convert": "true",
@@ -240,14 +250,14 @@ def test_upload_rejects_invalid_license_url(settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
+def test_upload_rejects_companion_files_for_cog(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with patch("apps.s3.views.get_s3_client"):
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": tiff_file(),
                 "companions": [SimpleUploadedFile("raster.tfw", b"world file")],
@@ -262,7 +272,7 @@ def test_upload_rejects_companion_files_for_cog(settings, tmp_path):
 
 
 @pytest.fixture
-def cog_job(settings, tmp_path, owner):
+def cog_job(settings, tmp_path, owner, connection):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     with (
@@ -271,7 +281,7 @@ def cog_job(settings, tmp_path, owner):
     ):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
-        return start_conversion(tiff_file(), "folder/raster.tif", "s3-one", owner)
+        return start_conversion(tiff_file(), "folder/raster.tif", str(connection.id), owner)
 
 
 @pytest.mark.django_db
@@ -360,9 +370,9 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
 
 
 @pytest.mark.django_db
-def test_cog_job_status_reports_formats(cog_job):
+def test_cog_job_status_reports_formats(cog_job, owner):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     response = api.get(f"/api/s3/conversion/jobs/{cog_job.id}")
     assert response.status_code == 200
     body = response.json()
@@ -372,7 +382,7 @@ def test_cog_job_status_reports_formats(cog_job):
 
 
 @pytest.fixture
-def raster_gpkg_inspect_job(settings, tmp_path, owner):
+def raster_gpkg_inspect_job(settings, tmp_path, owner, connection):
     """A GeoPackage inspection that finds only raster tables (no vector layers)."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
@@ -392,7 +402,7 @@ def raster_gpkg_inspect_job(settings, tmp_path, owner):
             "http://cloudnativegis/presigned"
         )
         job, layers, raster_tables = inspect_geopackage(
-            gpkg_file(), "folder/rasters.gpkg", "s3-one", owner
+            gpkg_file(), "folder/rasters.gpkg", str(connection.id), owner
         )
     return job, layers, raster_tables
 
@@ -432,10 +442,10 @@ def test_start_geopackage_cog_conversion_requires_tables(raster_gpkg_inspect_job
 
 
 @pytest.mark.django_db
-def test_geopackage_convert_endpoint_routes_by_format(raster_gpkg_inspect_job, settings):
+def test_geopackage_convert_endpoint_routes_by_format(raster_gpkg_inspect_job, settings, owner):
     job, _, raster_tables = raster_gpkg_inspect_job
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with patch("apps.s3.cog.threading.Thread"):
         response = api.post(
             f"/api/s3/gpkg/convert/{job.id}",

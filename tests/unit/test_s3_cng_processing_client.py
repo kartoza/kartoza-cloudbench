@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from apps.s3.cng_lite import CNGProcessingClient, job_directory, resume_interrupted_conversions
-from apps.s3.models import CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, S3Connection
 
 RESULT_URL = "/api/v1/jobs/cng-job-1/result/output.pmtiles"
 PMTILES = b"PMTiles\x03fixture"
@@ -16,14 +16,17 @@ PMTILES = b"PMTiles\x03fixture"
 @pytest.fixture
 def job(settings, tmp_path, django_user_model):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
-    django_user_model.objects.create_user(username="7")
+    owner = django_user_model.objects.create_user(username="7")
+    connection = S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
 
     def make(**fields):
         return CngLiteJob.objects.create(
             **{
                 "kind": "pmtiles",
-                "owner_id": "7",
-                "connection_id": "conn",
+                "owner": owner,
+                "connection": connection,
                 "bucket": "bucket",
                 "source_name": "roads.zip",
                 "source_key": "folder/sources/job/roads.zip",

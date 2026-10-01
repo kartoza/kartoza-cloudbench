@@ -10,6 +10,8 @@ from django.db.models import Q
 
 from apps.core.fields import EncryptedCharField
 
+from .s3_connection import S3Connection
+
 # Source/target labels per job kind, used only for API responses.
 CONVERSION_FORMATS = {
     "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
@@ -74,8 +76,14 @@ AWAITING_LAYER_SELECTION = Q(
 class CngLiteJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     kind = models.CharField(max_length=20, default="pmtiles")
-    owner_id = models.CharField(max_length=255)
-    connection_id = models.CharField(max_length=255)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cng_lite_jobs"
+    )
+    # The bucket the upload's source and results go to. Null once that
+    # connection is deleted: the job's history stays, but it can't run anymore.
+    connection = models.ForeignKey(
+        S3Connection, null=True, on_delete=models.SET_NULL, related_name="cng_lite_jobs"
+    )
     bucket = models.CharField(max_length=255)
     source_name = models.CharField(max_length=255)
     source_key = models.TextField(blank=True)

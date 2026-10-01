@@ -882,7 +882,7 @@ def _recent_conversion_jobs(user):
     that stopped reporting is marked failed first (see expire_stalled_job).
     """
     jobs = list(
-        CngLiteJob.objects.filter(owner_id=user.username)
+        CngLiteJob.objects.filter(owner=user)
         .filter(
             Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
             | Q(completed_at__gte=timezone.now() - RECENT_JOBS_WINDOW)
@@ -951,9 +951,7 @@ class S3ConversionJobsView(APIView):
             conversion_id = uuid.UUID(job_id)
         except ValueError:
             return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
-        cng_lite_job = CngLiteJob.objects.filter(
-            pk=conversion_id, owner_id=request.user.username
-        ).first()
+        cng_lite_job = CngLiteJob.objects.filter(pk=conversion_id, owner=request.user).first()
         if cng_lite_job:
             expire_stalled_job(cng_lite_job)
             return Response(cng_lite_job.to_dict())

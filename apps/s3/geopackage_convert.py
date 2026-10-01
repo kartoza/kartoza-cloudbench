@@ -38,7 +38,7 @@ def start_geopackage_conversion(job_id, user, layers=None, tables=None):
 
     vector = CngLiteJob.objects.filter(
         pk=job_id,
-        owner_id=user.username,
+        owner=user,
         kind=pmtiles.KIND,
         status=CngLiteJobStatus.PENDING,
         layers__isnull=True,

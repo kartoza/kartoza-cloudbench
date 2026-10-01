@@ -188,7 +188,7 @@ def start_conversion(
     check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=user.username,
+        owner=user,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -264,7 +264,7 @@ def inspect_geopackage(
     check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=user.username,
+        owner=user,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -318,7 +318,7 @@ def start_geopackage_conversion(job_id, user, layers):
     if not layers:
         raise ValueError("Select at least one layer.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind=KIND, status=CngLiteJobStatus.PENDING
+        pk=job_id, owner=user, kind=KIND, status=CngLiteJobStatus.PENDING
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
@@ -339,14 +339,15 @@ def cancel_geopackage_inspection(job_id, user):
     # check it too so a confirmed job can't be cancelled out from under it.
     job = CngLiteJob.objects.filter(
         pk=job_id,
-        owner_id=user.username,
+        owner=user,
         kind=KIND,
         status=CngLiteJobStatus.PENDING,
         layers__isnull=True,
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
-    if job.source_key:
+    # Without its connection (deleted since), the staged upload went with it.
+    if job.source_key and job.connection_id:
         s3_client = get_s3_client(job.connection_id, user)
         s3_client.delete_object(job.source_key)
     shutil.rmtree(job_directory(KIND, job.id), ignore_errors=True)

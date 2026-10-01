@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.s3 import portolan
 from apps.s3.cng_lite import download_result
-from apps.s3.models import CngLiteJob
+from apps.s3.models import CngLiteJob, S3Connection
 from apps.s3.pmtiles import (
     cancel_geopackage_inspection,
     group_results,
@@ -31,8 +31,16 @@ GPKG_MAGIC = b"SQLite format 3\x00"
 
 @pytest.fixture
 def owner(django_user_model):
-    """Job owner; run_conversion looks it up by username (CngLiteJob.owner_id)."""
+    """Job owner (CngLiteJob.owner)."""
     return django_user_model.objects.create(username="7")
+
+
+@pytest.fixture
+def connection(owner):
+    """The S3 connection uploads go to (get_s3_client itself is patched)."""
+    return S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
 
 
 def gpkg_file(name="parcels.gpkg"):
@@ -176,11 +184,11 @@ def test_rejects_mismatched_loose_components(tmp_path):
 
 
 @pytest.mark.django_db
-def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path):
+def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -189,7 +197,7 @@ def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": shapefile_zip(),
                 "convert": "true",
@@ -208,11 +216,11 @@ def test_upload_starts_conversion_without_putting_zip_in_s3(settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_upload_loose_shapefile_components_starts_conversion(settings, tmp_path):
+def test_upload_loose_shapefile_components_starts_conversion(settings, tmp_path, owner, connection):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
         patch("apps.s3.views.get_s3_client", get_client),
@@ -221,7 +229,7 @@ def test_upload_loose_shapefile_components_starts_conversion(settings, tmp_path)
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
         response = api.post(
-            "/api/s3/upload/s3-one",
+            f"/api/s3/upload/{connection.id}",
             {
                 "file": SimpleUploadedFile("roads.shp", b"shape"),
                 "companions": [
@@ -277,7 +285,7 @@ def test_upload_without_convert_zips_loose_components(settings, tmp_path):
 
 
 @pytest.fixture
-def conversion_job(settings, tmp_path, owner):
+def conversion_job(settings, tmp_path, owner, connection):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     with (
@@ -289,7 +297,7 @@ def conversion_job(settings, tmp_path, owner):
         get_client.return_value.generate_presigned_url.return_value = (
             "http://cloudnativegis/presigned"
         )
-        return start_conversion(shapefile_zip(), "folder/roads.zip", "s3-one", owner)
+        return start_conversion(shapefile_zip(), "folder/roads.zip", str(connection.id), owner)
 
 
 @pytest.mark.django_db
@@ -523,20 +531,20 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
 
 
 @pytest.mark.django_db
-def test_job_status_is_scoped_to_owner(conversion_job):
+def test_job_status_is_scoped_to_owner(conversion_job, owner, django_user_model):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=owner)
     response = api.get(f"/api/s3/conversion/jobs/{conversion_job.id}")
     assert response.status_code == 200
     assert response.json()["outputPath"] == "s3://bucket/folder/roads.pmtiles"
     assert response.json()["sourceFormat"] == "shapefile"
     assert response.json()["targetFormat"] == "pmtiles"
-    api.force_authenticate(user=Mock(id=8, username="8", is_authenticated=True))
+    api.force_authenticate(user=django_user_model.objects.create(username="8"))
     assert api.get(f"/api/s3/conversion/jobs/{conversion_job.id}").status_code == 404
 
 
 @pytest.fixture
-def gpkg_inspect_job(settings, tmp_path, owner):
+def gpkg_inspect_job(settings, tmp_path, owner, connection):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
 
@@ -561,7 +569,7 @@ def gpkg_inspect_job(settings, tmp_path, owner):
             "http://cloudnativegis/presigned"
         )
         job, layers, raster_tables = inspect_geopackage(
-            gpkg_file(), "folder/parcels.gpkg", "s3-one", owner
+            gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner
         )
     return job, layers, raster_tables
 
@@ -576,10 +584,11 @@ def test_cancel_geopackage_inspection_deletes_staged_upload(gpkg_inspect_job, ow
 
 
 @pytest.mark.django_db
-def test_cancel_geopackage_inspection_rejects_wrong_owner(gpkg_inspect_job):
+def test_cancel_geopackage_inspection_rejects_wrong_owner(gpkg_inspect_job, django_user_model):
     job, _, _ = gpkg_inspect_job
+    someone_else = django_user_model.objects.create(username="someone-else")
     with pytest.raises(ValueError, match="Job not found"):
-        cancel_geopackage_inspection(job.id, Mock(username="someone-else"))
+        cancel_geopackage_inspection(job.id, someone_else)
     assert CngLiteJob.objects.filter(pk=job.id).exists()
 
 

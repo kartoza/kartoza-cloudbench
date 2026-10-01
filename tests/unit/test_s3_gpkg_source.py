@@ -67,12 +67,11 @@ def test_agents_and_readme_point_at_the_source():
 
 
 @pytest.fixture
-def gpkg_job(settings, tmp_path):
+def gpkg_job(settings, tmp_path, django_user_model):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     return CngLiteJob.objects.create(
         kind="pmtiles",
-        owner_id="7",
-        connection_id="conn",
+        owner=django_user_model.objects.create(username="7"),
         bucket="bucket",
         source_name="CasteloBranco.gpkg",
         source_key="maps/sources/job-1/CasteloBranco.gpkg",

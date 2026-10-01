@@ -51,7 +51,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     list_display = [
         "id",
         "kind",
-        "owner_id",
+        "owner",
         "bucket",
         "status",
         "progress",
@@ -59,12 +59,19 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "completed_at",
     ]
     list_filter = ["kind", "status"]
-    search_fields = ["id", "owner_id", "connection_id", "bucket", "source_name", "output_key"]
+    search_fields = [
+        "id",
+        "owner__username",
+        "connection__name",
+        "bucket",
+        "source_name",
+        "output_key",
+    ]
     readonly_fields = [
         "id",
         "kind",
-        "owner_id",
-        "connection_id",
+        "owner",
+        "connection",
         "bucket",
         "source_name",
         "source_key",

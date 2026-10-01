@@ -107,11 +107,10 @@ def test_conversions_refuse_to_start_when_not_valid(on_demand, start, name):
 
 
 @pytest.fixture
-def job(settings, tmp_path):
+def job(settings, tmp_path, django_user_model):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     return CngLiteJob.objects.create(
-        owner_id="7",
-        connection_id="conn",
+        owner=django_user_model.objects.create(username="7"),
         bucket="bucket",
         source_name="roads.zip",
         source_key="sources/roads.zip",

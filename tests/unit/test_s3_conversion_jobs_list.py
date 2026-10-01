@@ -1,20 +1,23 @@
 """Listing a user's conversion jobs (the header's Jobs panel)."""
 
 from datetime import timedelta
-from unittest.mock import Mock
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.s3.models import CngLiteJob
 
 
+def user(username="7"):
+    return get_user_model().objects.get_or_create(username=username)[0]
+
+
 def job(owner="7", status="running", source_name="roads.zip", **fields):
     return CngLiteJob.objects.create(
         kind=fields.pop("kind", "pmtiles"),
-        owner_id=owner,
-        connection_id="conn",
+        owner=user(owner),
         bucket="bucket",
         source_name=source_name,
         output_key="roads.pmtiles",
@@ -26,7 +29,7 @@ def job(owner="7", status="running", source_name="roads.zip", **fields):
 
 def listed(username="7"):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username=username, is_authenticated=True))
+    api.force_authenticate(user=user(username))
     response = api.get("/api/s3/conversion/jobs")
     assert response.status_code == 200
     return response.json()

@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from apps.s3 import cog, pmtiles, portolan
 from apps.s3.cng_lite import target_folder
-from apps.s3.models import CngLiteJob
+from apps.s3.models import CngLiteJob, S3Connection
 
 GPKG_MAGIC = b"SQLite format 3\x00"
 
@@ -22,9 +22,22 @@ def gpkg_file(name="castelo-branco.gpkg"):
 
 
 @pytest.fixture
-def api():
+def owner(db, django_user_model):
+    return django_user_model.objects.create(username="7")
+
+
+@pytest.fixture
+def connection(owner):
+    """The S3 connection uploads go to (get_s3_client itself is patched)."""
+    return S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
+
+
+@pytest.fixture
+def api(owner):
     client = APIClient()
-    client.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    client.force_authenticate(user=owner)
     return client
 
 
@@ -103,7 +116,7 @@ def test_sources_is_reserved():
 # -- Refusing, then confirming, an overwrite ----------------------------------
 
 
-def upload(api, client, file, replace=False):
+def upload(api, connection, client, file, replace=False):
     with (
         patch("apps.s3.cog.get_s3_client", return_value=client),
         patch("apps.s3.views.get_s3_client", return_value=client),
@@ -112,32 +125,34 @@ def upload(api, client, file, replace=False):
         data = {"file": file, "convert": "true", "targetFormat": "cog", "key": "maps/raster.tif"}
         if replace:
             data["replace"] = "true"
-        return api.post("/api/s3/upload/s3-one", data, format="multipart")
+        return api.post(f"/api/s3/upload/{connection.id}", data, format="multipart")
 
 
 @pytest.mark.django_db
-def test_upload_into_an_existing_layer_is_refused_until_confirmed(api, settings, tmp_path):
+def test_upload_into_an_existing_layer_is_refused_until_confirmed(
+    api, connection, settings, tmp_path
+):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     client = bucket_with("maps/raster/collection.json")
 
-    refused = upload(api, client, tiff_file())
+    refused = upload(api, connection, client, tiff_file())
     assert refused.status_code == 409
     assert refused.json()["conflict"] == {"folder": "maps/raster", "kind": "layer"}
     assert not CngLiteJob.objects.exists()
     client.client.upload_fileobj.assert_not_called()  # the source never reached S3
 
-    confirmed = upload(api, client, tiff_file(), replace=True)
+    confirmed = upload(api, connection, client, tiff_file(), replace=True)
     assert confirmed.status_code == 202
     assert CngLiteJob.objects.get().replace_existing is True
 
 
 @pytest.mark.django_db
-def test_upload_into_a_new_folder_needs_no_confirmation(api, settings, tmp_path):
+def test_upload_into_a_new_folder_needs_no_confirmation(api, connection, settings, tmp_path):
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     # A different layer that merely shares a prefix ("maps/raster-2/") isn't a clash.
-    response = upload(api, bucket_with("maps/raster-2/collection.json"), tiff_file())
+    response = upload(api, connection, bucket_with("maps/raster-2/collection.json"), tiff_file())
     assert response.status_code == 202
     assert CngLiteJob.objects.get().replace_existing is False
 
@@ -181,13 +196,12 @@ def test_target_endpoint_reports_before_uploading(api):
 
 
 @pytest.mark.django_db
-def test_replace_clears_the_folder_before_publishing():
+def test_replace_clears_the_folder_before_publishing(owner):
     from apps.s3.cng_lite import _clear_for_replace
 
     job = CngLiteJob.objects.create(
         kind="pmtiles",
-        owner_id="7",
-        connection_id="conn",
+        owner=owner,
         bucket="bucket",
         source_name="castelo-branco.gpkg",
         output_key="maps/castelo-branco.pmtiles",

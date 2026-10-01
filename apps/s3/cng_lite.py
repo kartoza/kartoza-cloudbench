@@ -19,7 +19,6 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.utils import timezone
@@ -638,11 +637,12 @@ class CNGProcessingClient:
 
     @cached_property
     def owner(self):
-        # CngLiteJob.owner_id holds the owner's username.
-        return get_user_model().objects.get(username=self.job.owner_id)
+        return self.job.owner
 
     @cached_property
     def s3_client(self):
+        if self.job.connection_id is None:
+            raise ValueError("The S3 connection this conversion was uploading to has been deleted.")
         return get_s3_client(self.job.connection_id, self.owner)
 
     @property
