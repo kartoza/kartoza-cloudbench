@@ -68,7 +68,7 @@ def mock_duckdb_engine():
 @pytest.mark.django_db
 class TestS3ConnectionWorkflow:
     """Test S3 connection management workflows against the real,
-    encrypted-at-rest S3Connection model (see apps/s3/models.py) —
+    encrypted-at-rest S3Connection model (see apps/s3/models/s3_connection.py) —
     connections are now stored in the database, not the old plaintext
     JSON config file, so these exercise the real DB round-trip rather
     than a mocked ConfigManager.

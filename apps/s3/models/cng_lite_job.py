@@ -1,4 +1,4 @@
-"""S3 connections and persistent status for CloudNativeGIS-to-S3 conversions."""
+"""Persistent status of CloudNativeGIS-to-S3 conversion jobs."""
 
 import time
 import uuid
@@ -8,46 +8,6 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.fields import EncryptedCharField
-
-
-class S3Connection(models.Model):
-    """A user's saved connection to one S3-compatible bucket.
-
-    A connection is scoped to exactly one bucket — most S3-compatible
-    providers issue credentials scoped to a single bucket, and this
-    avoids needing account-wide permissions just to browse. Add another
-    connection to reach a different bucket.
-
-    access_key/secret_key are encrypted at rest (see apps.core.fields.
-    EncryptedCharField) — this replaces the old plaintext-JSON-file storage
-    that used to live in apps.core.config.ConfigManager.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="s3_connections"
-    )
-    name = models.CharField(max_length=255)
-    endpoint = models.CharField(max_length=500)
-    bucket = models.CharField(max_length=255, blank=True, default="")
-    access_key = EncryptedCharField()
-    secret_key = EncryptedCharField()
-    region = models.CharField(max_length=100, blank=True, default="")
-    use_ssl = models.BooleanField(default=True)
-    path_style = models.BooleanField(default=True)
-    # Contact for this bucket's published data: the `host` provider email in
-    # its Portolan collections. Blank falls back to settings.PORTOLAN_HOST_EMAIL.
-    contact_email = models.EmailField(blank=True, default="")
-    is_active = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
-
 
 # Source/target labels per job kind, used only for API responses.
 CONVERSION_FORMATS = {
@@ -76,7 +36,16 @@ class CngLiteJobStatus(models.TextChoices):
     # Getting the CloudNativeGIS service the job will run on - its
     # cloudnativegis_url/cloudnativegis_api_token (CLOUDNATIVEGIS_ON_DEMAND).
     PROVISIONING = "provisioning", "Provisioning"
-    # Submitted to / being converted by CloudNativeGIS, or being published.
+    # Submitting the job to CloudNativeGIS; `cng_job_id` not known yet.
+    PUSHING = "pushing", "Pushing"
+    # Submitted (`cng_job_id` set): polling CloudNativeGIS until it's converted.
+    POLLING = "polling", "Polling"
+    # Downloading CloudNativeGIS' result files.
+    DOWNLOADING = "downloading", "Downloading"
+    # Uploading the results to S3 and writing their Portolan catalog entries.
+    PUBLISHING = "publishing", "Publishing"
+    # No longer set (split into PUSHING..PUBLISHING); kept for jobs saved
+    # before, which still count as active until they finish or stall.
     RUNNING = "running", "Running"
     # Published; a non-empty `error` lists layers CloudNativeGIS skipped.
     COMPLETED = "completed", "Completed"
@@ -87,6 +56,10 @@ class CngLiteJobStatus(models.TextChoices):
 ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.PENDING,
     CngLiteJobStatus.PROVISIONING,
+    CngLiteJobStatus.PUSHING,
+    CngLiteJobStatus.POLLING,
+    CngLiteJobStatus.DOWNLOADING,
+    CngLiteJobStatus.PUBLISHING,
     CngLiteJobStatus.RUNNING,
 )
 
@@ -183,12 +156,17 @@ class CngLiteJob(models.Model):
 
         timeout = settings.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT
         deadline = time.monotonic() + timeout
+        waiting_message = "Waiting for CloudNativeGIS to become ready"
         while not _is_healthy(self.cloudnativegis_url):
             if time.monotonic() >= deadline:
                 raise ValueError(
                     f"CloudNativeGIS at {self.cloudnativegis_url} did not become healthy "
                     f"within {timeout}s."
                 )
+            if self.message != waiting_message:
+                # Only message/updated_at: the status is set by the caller.
+                self.message = waiting_message
+                self.save(update_fields=["message", "updated_at"])
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
 
     def cloudnativegis_headers(self):

@@ -62,16 +62,22 @@ def test_hides_geopackages_awaiting_layer_selection_but_not_queued_raster_halves
 
 
 @pytest.mark.django_db
-def test_lists_provisioning_job_as_in_progress():
-    job(status="provisioning", source_name="booting.zip")
+@pytest.mark.parametrize(
+    "active_status", ["provisioning", "pushing", "polling", "downloading", "publishing"]
+)
+def test_lists_job_in_any_active_step_as_in_progress(active_status):
+    job(status=active_status, source_name="busy.zip")
 
     [item] = listed()
 
-    assert item["status"] == "provisioning"
+    assert item["status"] == active_status
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("active_status", ["running", "provisioning"])
+@pytest.mark.parametrize(
+    "active_status",
+    ["provisioning", "pushing", "polling", "downloading", "publishing", "running"],
+)
 def test_stalled_active_job_is_listed_as_failed(settings, active_status):
     settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 1
     stalled = job(status=active_status, source_name="stuck.zip")

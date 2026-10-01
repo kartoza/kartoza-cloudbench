@@ -328,13 +328,13 @@ def run_conversion(
             job.id,
             status=CngLiteJobStatus.PROVISIONING,
             progress=5,
-            message="Provisioning CloudNativeGIS",
+            message="Preparing CloudNativeGIS",
         )
         job.provision()
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
         update_job(
             job.id,
-            status=CngLiteJobStatus.RUNNING,
+            status=CngLiteJobStatus.PUSHING,
             progress=10,
             message="Submitting to CloudNativeGIS",
         )
@@ -358,17 +358,28 @@ def run_conversion(
             )
             update_job(
                 job.id,
+                status=CngLiteJobStatus.POLLING,
                 cng_job_id=cng_job_id,
                 progress=20,
                 message="Waiting for CloudNativeGIS conversion",
             )
             results, layer_errors = wait_for_results(client, job.id, cng_job_id, deadline)
 
-            update_job(job.id, progress=70, message="Downloading converted file(s)")
+            update_job(
+                job.id,
+                status=CngLiteJobStatus.DOWNLOADING,
+                progress=80,
+                message="Downloading converted files",
+            )
             local_paths = {}
             file_info = {}
             total_size = 0
             for index, item in enumerate(results):
+                update_job(
+                    job.id,
+                    progress=80 + round(10 * index / len(results)),
+                    message=f"Downloading file {index + 1}/{len(results)}: {item['name']}",
+                )
                 local_path = directory / f"result-{index}"
                 size, checksum = download_result(
                     client, item["result_url"], local_path, validate_result, invalid_result_message
@@ -377,8 +388,14 @@ def run_conversion(
                 local_paths[item["name"]] = local_path
                 file_info[item["name"]] = {"size": size, "checksum": checksum}
 
-            update_job(job.id, progress=85, message="Publishing to catalog")
+            update_job(
+                job.id,
+                status=CngLiteJobStatus.PUBLISHING,
+                progress=90,
+                message="Publishing to catalog",
+            )
             if job.replace_existing:
+                update_job(job.id, message="Removing the layer(s) being replaced")
                 _clear_for_replace(job, s3_client)
             layers = group_results(job, results)
             base_prefix = str(PurePosixPath(job.output_key).parent)
@@ -399,7 +416,12 @@ def run_conversion(
             host_email = host_contact_email(job.connection_id)
 
             output_keys = []
-            for layer in layers:
+            for index, layer in enumerate(layers):
+                update_job(
+                    job.id,
+                    progress=90 + round(9 * index / len(layers)),
+                    message=f"Publishing layer {index + 1}/{len(layers)}: {layer['title']}",
+                )
                 folder = f"{base_prefix}/{layer['layer_id']}" if base_prefix else layer["layer_id"]
                 data_assets = []
                 info = None

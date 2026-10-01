@@ -27,7 +27,15 @@ export function layerConversionStatuses(job: ConversionJob): LayerProgressStatus
 }
 
 // Not finished yet - matches ACTIVE_CNG_LITE_JOB_STATUSES on the backend.
-const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = ['pending', 'provisioning', 'running']
+const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
+  'pending',
+  'provisioning',
+  'pushing',
+  'polling',
+  'downloading',
+  'publishing',
+  'running',
+]
 
 export function isActiveStatus(status: ConversionJobStatus | undefined): boolean {
   return !!status && ACTIVE_JOB_STATUSES.includes(status)

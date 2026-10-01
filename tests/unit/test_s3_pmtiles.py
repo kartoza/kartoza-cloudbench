@@ -312,8 +312,15 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     s3_client = Mock(bucket_url="http://minio:9000/bucket")
     s3_client.generate_presigned_url.return_value = "http://cloudnativegis/presigned/source.zip"
     uploaded = []
+    # (step, the job's status, its message) as each step hits cng/S3.
+    stages = []
+
+    def stage(step):
+        job = CngLiteJob.objects.get(pk=conversion_job.pk)
+        stages.append((step, job.status, job.message))
 
     def upload(source, bucket, key, **kwargs):
+        stage("upload")
         if outcome == "s3-failed":
             raise RuntimeError("S3 transfer failed")
         uploaded.append((source.read(), bucket, key, kwargs))
@@ -324,8 +331,10 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         nonlocal polls
         requests.append((request.method, request.url.path))
         if request.url.path == "/api/v1/pmtiles":
+            stage("push")
             return httpx.Response(202, json={"job_id": "cng-job-1", "status": "processing"})
         if request.url.path == "/api/v1/jobs/cng-job-1":
+            stage("poll")
             polls += 1
             if outcome == "failed":
                 return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
@@ -345,6 +354,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
                 },
             )
         if request.url.path == "/api/v1/jobs/cng-job-1/result/output.pmtiles":
+            stage("download")
             content = b"NOT-PMTILES" if outcome == "bad-magic" else b"PMTiles\x03fixture"
             return httpx.Response(200, content=content)
         return httpx.Response(404)
@@ -356,7 +366,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     if outcome == "timeout":
         settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 0
     with (
-        patch("apps.s3.models.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.time.sleep"),
@@ -369,9 +379,20 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     # Kept whatever the outcome: every case got as far as submitting to cng.
     assert conversion_job.cng_job_id == "cng-job-1"
     assert conversion_job.cloudnativegis_url == "http://cloudnativegis"
+    push = ("push", "pushing", "Submitting to CloudNativeGIS")
+    poll = ("poll", "polling", "Waiting for CloudNativeGIS conversion")
+    download = ("download", "downloading", "Downloading file 1/1: output.pmtiles")
+    expected_steps = {
+        "timeout": [push],  # a zero timeout never gets to poll
+        "failed": [push, poll],
+    }.get(outcome, [push, poll, download])
+    assert stages[: len(expected_steps)] == expected_steps
     if outcome == "success":
         assert conversion_job.status == "completed"
         assert conversion_job.progress == 100
+        uploads = [stage for stage in stages if stage[0] == "upload"]
+        assert {status for _, status, _ in uploads} == {"publishing"}
+        assert uploads[-1][2].startswith("Publishing layer 1/1: ")
         # Every layer gets its own Portolan folder ("folder/roads/"); a
         # GeoPackage's layers sit inside its sub-catalog ("folder/roads/roads/").
         layer_key = (
@@ -437,7 +458,7 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
 
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
     with (
-        patch("apps.s3.models.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.close_old_connections"),

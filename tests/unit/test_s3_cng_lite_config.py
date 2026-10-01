@@ -49,20 +49,20 @@ def test_is_never_valid_on_demand(on_demand):
     ],
 )
 def test_health_checks_cloudnativegis_url(static, response, healthy):
-    with patch("apps.s3.models.httpx.get", side_effect=[response]) as get:
+    with patch("apps.s3.models.cng_lite_job.httpx.get", side_effect=[response]) as get:
         assert CngLiteJob.health() is healthy
     get.assert_called_once_with("http://cloudnativegis/health", timeout=2.0, follow_redirects=False)
 
 
 def test_health_is_false_without_url(static):
     static.CLOUDNATIVEGIS_URL = ""
-    with patch("apps.s3.models.httpx.get") as get:
+    with patch("apps.s3.models.cng_lite_job.httpx.get") as get:
         assert CngLiteJob.health() is False
     get.assert_not_called()
 
 
 def test_health_raises_on_demand(on_demand):
-    with patch("apps.s3.models.httpx.get") as get, pytest.raises(NotImplementedError):
+    with patch("apps.s3.models.cng_lite_job.httpx.get") as get, pytest.raises(NotImplementedError):
         CngLiteJob.health()
     get.assert_not_called()
 
@@ -85,7 +85,7 @@ def test_tools_report_cloudnativegis_health(static, healthy):
 
 
 def test_tools_report_cloudnativegis_unavailable_on_demand(on_demand):
-    with patch("apps.s3.models.httpx.get") as get:
+    with patch("apps.s3.models.cng_lite_job.httpx.get") as get:
         tools = tools_status()
     get.assert_not_called()
     assert tools["cloudnativegis"]["available"] is False
@@ -126,8 +126,8 @@ def test_provision_uses_fixed_service_and_waits_until_healthy(static, job):
     static.CLOUDNATIVEGIS_API_TOKEN = "secret"
     responses = [httpx.ConnectError("booting"), httpx.Response(503), httpx.Response(200)]
     with (
-        patch("apps.s3.models.httpx.get", side_effect=responses) as get,
-        patch("apps.s3.models.time.sleep") as sleep,
+        patch("apps.s3.models.cng_lite_job.httpx.get", side_effect=responses) as get,
+        patch("apps.s3.models.cng_lite_job.time.sleep") as sleep,
     ):
         job.provision()
 
@@ -143,10 +143,10 @@ def test_provision_uses_fixed_service_and_waits_until_healthy(static, job):
 def test_provision_fails_when_service_never_becomes_healthy(static, job):
     static.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 1
     with (
-        patch("apps.s3.models.httpx.get", return_value=httpx.Response(503)),
-        patch("apps.s3.models.time.sleep"),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(503)),
+        patch("apps.s3.models.cng_lite_job.time.sleep"),
         # deadline, then two health checks: still in time, then past it.
-        patch("apps.s3.models.time.monotonic", side_effect=[0, 0, 5]),
+        patch("apps.s3.models.cng_lite_job.time.monotonic", side_effect=[0, 0, 5]),
         pytest.raises(ValueError, match="did not become healthy within 1s"),
     ):
         job.provision()
@@ -154,7 +154,7 @@ def test_provision_fails_when_service_never_becomes_healthy(static, job):
 
 @pytest.mark.django_db
 def test_provision_raises_on_demand(on_demand, job):
-    with patch("apps.s3.models.httpx.get") as get, pytest.raises(NotImplementedError):
+    with patch("apps.s3.models.cng_lite_job.httpx.get") as get, pytest.raises(NotImplementedError):
         job.provision()
     get.assert_not_called()
     job.refresh_from_db()
@@ -170,9 +170,9 @@ def test_no_auth_header_without_token(job):
 def test_conversion_fails_without_submitting_when_service_is_unhealthy(static, job):
     static.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 1
     with (
-        patch("apps.s3.models.httpx.get", return_value=httpx.Response(503)),
-        patch("apps.s3.models.time.sleep"),
-        patch("apps.s3.models.time.monotonic", side_effect=[0, 0, 5]),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(503)),
+        patch("apps.s3.models.cng_lite_job.time.sleep"),
+        patch("apps.s3.models.cng_lite_job.time.monotonic", side_effect=[0, 0, 5]),
         patch("apps.s3.cng_lite.httpx.Client") as client,
         patch("apps.s3.cng_lite.close_old_connections"),
     ):

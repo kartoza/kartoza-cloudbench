@@ -319,7 +319,7 @@ def test_cog_conversion_pipeline(cog_job, settings, outcome):
 
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
     with (
-        patch("apps.s3.models.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.time.sleep"),

@@ -582,6 +582,11 @@ export type CloudNativeFormat = 'cog' | 'copc' | 'geoparquet' | 'parquet' | 'unk
 export type ConversionJobStatus =
   | 'pending'
   | 'provisioning'
+  | 'pushing'
+  | 'polling'
+  | 'downloading'
+  | 'publishing'
+  // No longer sent for new jobs; older ones may still have it.
   | 'running'
   | 'completed'
   | 'failed'
