@@ -1,4 +1,4 @@
-"""CngLiteJob.is_valid/health: whether CloudNativeGIS is usable for conversions."""
+"""CngLiteJob.is_valid/health/provision: whether and where CloudNativeGIS runs conversions."""
 
 from unittest.mock import Mock, patch
 
@@ -7,8 +7,9 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.s3.cog import start_conversion as start_cog_conversion
-from apps.s3.models import CngLiteJob
+from apps.s3.models import CngLiteJob, CngLiteJobStatus
 from apps.s3.pmtiles import inspect_geopackage
+from apps.s3.pmtiles import run_conversion as run_pmtiles_conversion
 from apps.s3.pmtiles import start_conversion as start_pmtiles_conversion
 
 
@@ -103,3 +104,82 @@ def test_conversions_refuse_to_start_when_not_valid(on_demand, start, name):
     uploaded = type("Upload", (), {"name": name, "size": 1})()
     with pytest.raises(ValueError, match="CloudNativeGIS is not configured"):
         start(uploaded, name, "conn", user=None)
+
+
+@pytest.fixture
+def job(settings, tmp_path):
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    return CngLiteJob.objects.create(
+        owner_id="7",
+        connection_id="conn",
+        bucket="bucket",
+        source_name="roads.zip",
+        source_key="sources/roads.zip",
+        output_key="roads.pmtiles",
+        input_size=1,
+    )
+
+
+@pytest.mark.django_db
+def test_provision_uses_fixed_service_and_waits_until_healthy(static, job):
+    static.CLOUDNATIVEGIS_URL = "http://cloudnativegis/"
+    static.CLOUDNATIVEGIS_API_TOKEN = "secret"
+    responses = [httpx.ConnectError("booting"), httpx.Response(503), httpx.Response(200)]
+    with (
+        patch("apps.s3.models.httpx.get", side_effect=responses) as get,
+        patch("apps.s3.models.time.sleep") as sleep,
+    ):
+        job.provision()
+
+    assert get.call_count == 3
+    assert sleep.call_count == 2
+    job.refresh_from_db()
+    assert job.cloudnativegis_url == "http://cloudnativegis"
+    assert job.cloudnativegis_api_token == "secret"
+    assert job.cloudnativegis_headers() == {"Authorization": "Bearer secret"}
+
+
+@pytest.mark.django_db
+def test_provision_fails_when_service_never_becomes_healthy(static, job):
+    static.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 1
+    with (
+        patch("apps.s3.models.httpx.get", return_value=httpx.Response(503)),
+        patch("apps.s3.models.time.sleep"),
+        # deadline, then two health checks: still in time, then past it.
+        patch("apps.s3.models.time.monotonic", side_effect=[0, 0, 5]),
+        pytest.raises(ValueError, match="did not become healthy within 1s"),
+    ):
+        job.provision()
+
+
+@pytest.mark.django_db
+def test_provision_raises_on_demand(on_demand, job):
+    with patch("apps.s3.models.httpx.get") as get, pytest.raises(NotImplementedError):
+        job.provision()
+    get.assert_not_called()
+    job.refresh_from_db()
+    assert job.cloudnativegis_url == ""
+
+
+@pytest.mark.django_db
+def test_no_auth_header_without_token(job):
+    assert job.cloudnativegis_headers() == {}
+
+
+@pytest.mark.django_db
+def test_conversion_fails_without_submitting_when_service_is_unhealthy(static, job):
+    static.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 1
+    with (
+        patch("apps.s3.models.httpx.get", return_value=httpx.Response(503)),
+        patch("apps.s3.models.time.sleep"),
+        patch("apps.s3.models.time.monotonic", side_effect=[0, 0, 5]),
+        patch("apps.s3.cng_lite.httpx.Client") as client,
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        run_pmtiles_conversion(job.pk)
+
+    client.assert_not_called()
+    job.refresh_from_db()
+    assert job.status == CngLiteJobStatus.FAILED
+    assert "did not become healthy" in job.error
+    assert job.cng_job_id == ""

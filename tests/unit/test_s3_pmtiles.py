@@ -356,6 +356,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     if outcome == "timeout":
         settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 0
     with (
+        patch("apps.s3.models.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.time.sleep"),
@@ -367,6 +368,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     assert not (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(conversion_job.id)).exists()
     # Kept whatever the outcome: every case got as far as submitting to cng.
     assert conversion_job.cng_job_id == "cng-job-1"
+    assert conversion_job.cloudnativegis_url == "http://cloudnativegis"
     if outcome == "success":
         assert conversion_job.status == "completed"
         assert conversion_job.progress == 100
@@ -435,6 +437,7 @@ def test_conversion_publishes_geoparquet_alongside_pmtiles(
 
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
     with (
+        patch("apps.s3.models.httpx.get", return_value=httpx.Response(200)),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.close_old_connections"),

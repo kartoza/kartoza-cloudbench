@@ -324,6 +324,13 @@ def run_conversion(
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     try:
         job = CngLiteJob.objects.get(pk=job_id)
+        update_job(
+            job.id,
+            status=CngLiteJobStatus.PROVISIONING,
+            progress=5,
+            message="Provisioning CloudNativeGIS",
+        )
+        job.provision()
         deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
         update_job(
             job.id,
@@ -336,10 +343,10 @@ def run_conversion(
         s3_client = get_s3_client(job.connection_id, owner)
         extra_payload = build_extra_payload(job) if build_extra_payload else None
         with httpx.Client(
-            base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
+            base_url=f"{job.cloudnativegis_url}/",
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
-            headers=cng_lite_headers(),
+            headers=job.cloudnativegis_headers(),
         ) as client:
             cng_job_id = submit_job(
                 client,

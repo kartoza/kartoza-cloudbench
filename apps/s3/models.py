@@ -1,5 +1,6 @@
 """S3 connections and persistent status for CloudNativeGIS-to-S3 conversions."""
 
+import time
 import uuid
 
 import httpx
@@ -53,6 +54,18 @@ CONVERSION_FORMATS = {
     "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
     "cog": {"sourceFormat": "tiff", "targetFormat": "cog"},
 }
+
+
+def _is_healthy(url):
+    """Whether the CloudNativeGIS service at `url` answers its /health check."""
+    url = url.rstrip("/")
+    if not url:
+        return False
+    try:
+        response = httpx.get(f"{url}/health", timeout=2.0, follow_redirects=False)
+    except (httpx.HTTPError, httpx.InvalidURL):
+        return False
+    return response.status_code == 200
 
 
 class CngLiteJobStatus(models.TextChoices):
@@ -149,14 +162,40 @@ class CngLiteJob(models.Model):
             raise NotImplementedError(
                 "CloudNativeGIS health check is not supported with CLOUDNATIVEGIS_ON_DEMAND."
             )
-        url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
-        if not url:
-            return False
-        try:
-            response = httpx.get(f"{url}/health", timeout=2.0, follow_redirects=False)
-        except (httpx.HTTPError, httpx.InvalidURL):
-            return False
-        return response.status_code == 200
+        return _is_healthy(settings.CLOUDNATIVEGIS_URL)
+
+    def provision(self):
+        """Get the CloudNativeGIS service this job runs on, and wait until it's healthy.
+
+        Fills in cloudnativegis_url/cloudnativegis_api_token - without
+        CLOUDNATIVEGIS_ON_DEMAND, the fixed CLOUDNATIVEGIS_URL/API_TOKEN - then
+        polls its /health. Raises NotImplementedError with on-demand, which
+        isn't supported yet, and ValueError if the service isn't healthy
+        within CLOUDNATIVEGIS_PROVISIONING_TIMEOUT.
+        """
+        if settings.CLOUDNATIVEGIS_ON_DEMAND:
+            raise NotImplementedError(
+                "CloudNativeGIS provisioning is not supported with CLOUDNATIVEGIS_ON_DEMAND."
+            )
+        self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
+        self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
+        self.save(update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"])
+
+        timeout = settings.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT
+        deadline = time.monotonic() + timeout
+        while not _is_healthy(self.cloudnativegis_url):
+            if time.monotonic() >= deadline:
+                raise ValueError(
+                    f"CloudNativeGIS at {self.cloudnativegis_url} did not become healthy "
+                    f"within {timeout}s."
+                )
+            time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
+
+    def cloudnativegis_headers(self):
+        """Auth header for requests to this job's CloudNativeGIS, if it has a token."""
+        if not self.cloudnativegis_api_token:
+            return {}
+        return {"Authorization": f"Bearer {self.cloudnativegis_api_token}"}
 
     def to_dict(self):
         formats = CONVERSION_FORMATS[self.kind]
