@@ -26,7 +26,15 @@ TOKEN_MARGIN = 30
 
 
 class GeoHostingError(Exception):
-    """GeoHosting couldn't be reached, refused us, or answered unexpectedly."""
+    """GeoHosting couldn't be reached, refused us, or answered unexpectedly.
+
+    `status_code` is GeoHosting's HTTP status, when it answered (e.g. 400 for
+    an unknown user, 409 for a server still being deleted).
+    """
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GeoHostingClient:
@@ -74,7 +82,85 @@ class GeoHostingClient:
             )
         return self._json(response)
 
+    # -- A CloudBench job's on-demand server ----------------------------------
+    #
+    # Each takes an optional `log` callback, called once per request with
+    # method, url, request_payload, status_code, response_payload, error and
+    # duration_ms - see apps.s3.models.CngLiteJobLog.
+
+    SERVERS = "api/v1/cloudnative-gis-processing/servers/"
+
+    def create_server(self, job_id, username, log=None):
+        """Ask GeoHosting for a server for `job_id`, owned by GeoHosting user `username`.
+
+        Started in the background: returns GeoHosting's answer, with
+        status "provisioning" - or "ready" (and url/token) if it already
+        was. Asking again for the same job gives the same server. Raises
+        GeoHostingError, with status_code 400 for an unknown user and 409
+        for a server still being deleted (or another user's job).
+        """
+        payload = {"job_id": str(job_id), "username": username}
+        response = self._logged("POST", self.SERVERS, log, json=payload)
+        if response.status_code not in (200, 202):
+            raise self._refused(response, "start a server")
+        return self._json(response)
+
+    def get_server(self, job_id, log=None):
+        """GeoHosting's answer about `job_id`'s server, or None if it has none."""
+        response = self._logged("GET", f"{self.SERVERS}{job_id}/", log)
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise self._refused(response, "look up the server")
+        return self._json(response)
+
+    def delete_server(self, job_id, log=None):
+        """Have GeoHosting delete `job_id`'s server, in the background.
+
+        Returns its answer (status "deleting"), or None if there was none
+        (any more).
+        """
+        response = self._logged("DELETE", f"{self.SERVERS}{job_id}/", log)
+        if response.status_code == 204:
+            return None
+        if response.status_code != 202:
+            raise self._refused(response, "delete the server")
+        return self._json(response)
+
     # -- HTTP ------------------------------------------------------------------
+
+    def _logged(self, method, path, log, **kwargs):
+        """request(), reporting it to `log` (if given) whether or not it got an answer."""
+        started = time.monotonic()
+        response = error = None
+        try:
+            response = self.request(method, path, **kwargs)
+            return response
+        except GeoHostingError as exc:
+            error = exc
+            raise
+        finally:
+            if log is not None:
+                log(
+                    method=method,
+                    url=f"{self.url}/{path.lstrip('/')}",
+                    request_payload=kwargs.get("json"),
+                    status_code=response.status_code if response is not None else None,
+                    response_payload=_body(response) if response is not None else None,
+                    error=str(error) if error else "",
+                    duration_ms=(time.monotonic() - started) * 1000,
+                )
+
+    @staticmethod
+    def _refused(response, action):
+        """A GeoHostingError for an answer that isn't what we asked for."""
+        body = _body(response)
+        detail = body.get("detail") if isinstance(body, dict) else None
+        return GeoHostingError(
+            f"GeoHosting couldn't {action} (HTTP {response.status_code})"
+            + (f": {detail}" if detail else "."),
+            status_code=response.status_code,
+        )
 
     def request(self, method, path, **kwargs):
         """Call GeoHosting's API with an access token, fetching a new one on a 401."""
@@ -134,3 +220,11 @@ class GeoHostingClient:
             raise GeoHostingError(
                 f"GeoHosting returned a non-JSON response (HTTP {response.status_code})."
             ) from exc
+
+
+def _body(response):
+    """A response's JSON body, else None."""
+    try:
+        return response.json()
+    except ValueError:
+        return None

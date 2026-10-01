@@ -108,6 +108,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "cng_results",
         "cng_errors",
         "depends_on",
+        "outcome",
         "created_at",
         "updated_at",
         "completed_at",

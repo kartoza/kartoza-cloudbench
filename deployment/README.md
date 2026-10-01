@@ -106,13 +106,11 @@ Settings in `.env`:
   service will download (default `524288000`, 500MB).
 - `CLOUDNATIVEGIS_CONVERSION_TIMEOUT` / `CLOUDNATIVEGIS_POLL_INTERVAL` — how
   long to wait for a conversion and how often to poll it.
-- `CLOUDNATIVEGIS_PROVISIONING_TIMEOUT` — how long a conversion waits for
-  CloudNativeGIS to answer `/health` before failing (default `300` seconds).
 - `CLOUDNATIVEGIS_ON_DEMAND` — run conversions on servers GeoHosting starts on
   demand instead of `CLOUDNATIVEGIS_URL` (default `false`). Conversions are
   offered once GeoHosting (below) is configured and reports itself healthy;
-  starting a server for one isn't implemented yet, so such a job fails at its
-  provisioning step.
+  each one asks GeoHosting for its own server and waits until GeoHosting says
+  it's ready, or that starting it failed.
 - `GEOHOSTING_URL` / `GEOHOSTING_CLIENT_ID` / `GEOHOSTING_CLIENT_SECRET` —
   GeoHosting's URL, and the client id/secret of an OAuth "Client credentials"
   Application there. Set the same client id as GeoHosting's

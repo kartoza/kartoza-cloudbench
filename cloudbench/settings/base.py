@@ -208,9 +208,7 @@ CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
 # How long a conversion waits for its CloudNativeGIS service to answer /health
 # before failing (see CngLiteJob.provision).
-CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = max(
-    1, int(os.environ.get("CLOUDNATIVEGIS_PROVISIONING_TIMEOUT", "300"))
-)
+CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 600
 # Shared secret sent as `Authorization: Bearer <token>` on every request to
 # CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no
 # auth of its own otherwise. A static token that never expires for now;

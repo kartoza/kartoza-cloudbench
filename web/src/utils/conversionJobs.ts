@@ -35,6 +35,7 @@ const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'downloading',
   'publishing',
   'running',
+  'deprovisioning',
 ]
 
 export function isActiveStatus(status: ConversionJobStatus | undefined): boolean {

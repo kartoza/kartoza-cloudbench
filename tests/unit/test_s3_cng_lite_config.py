@@ -205,8 +205,13 @@ def test_provision_fails_when_service_never_becomes_healthy(static, job):
 
 
 @pytest.mark.django_db
-def test_provision_raises_on_demand(on_demand, job):
-    with patch("apps.s3.models.cng_lite_job.httpx.get") as get, pytest.raises(NotImplementedError):
+def test_provision_on_demand_needs_geohosting(on_demand, job):
+    """On demand, the server comes from GeoHosting (see test_s3_on_demand_provision)."""
+    on_demand.GEOHOSTING_URL = ""
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get") as get,
+        pytest.raises(GeoHostingError, match="isn't configured"),
+    ):
         job.provision()
     get.assert_not_called()
     job.refresh_from_db()

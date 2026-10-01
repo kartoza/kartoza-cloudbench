@@ -588,6 +588,8 @@ export type ConversionJobStatus =
   | 'publishing'
   // No longer sent for new jobs; older ones may still have it.
   | 'running'
+  // Finished; its on-demand server is being deleted before it's completed/failed.
+  | 'deprovisioning'
   | 'completed'
   | 'failed'
   | 'cancelled'

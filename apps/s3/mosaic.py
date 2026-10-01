@@ -36,6 +36,7 @@ from .client import get_s3_client
 from .cng_lite import (
     _provider_name,
     check_target,
+    finish_job,
     host_contact_email,
     job_directory,
     request_json,
@@ -307,6 +308,7 @@ def run_mosaic(job_id):
     """
     close_old_connections()
     directory = job_directory(KIND, job_id)
+    job = None
     try:
         job = CngLiteJob.objects.get(pk=job_id)
         owner = job.owner
@@ -492,16 +494,15 @@ def run_mosaic(job_id):
             visual=visual,
             thumbnail=thumbnail,
         )
-        update_job(
-            job.id,
-            status=CngLiteJobStatus.COMPLETED,
+        finish_job(
+            job,
+            CngLiteJobStatus.COMPLETED,
             progress=100,
             output_size=total_size,
             output_keys=[
                 {"name": PurePosixPath(key).name, "key": f"{folder}/{key}"} for key in output_keys
             ],
             message=f"Published a mosaic of {len(tiles)} tiles to the catalog",
-            completed_at=timezone.now(),
         )
     except Exception as exc:
         logger.exception("Mosaic %s failed", job_id)
@@ -510,13 +511,13 @@ def run_mosaic(job_id):
             error = f"CloudNativeGIS returned HTTP {exc.response.status_code}. Check its logs."
         elif isinstance(exc, httpx.RequestError):
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
-        update_job(
-            job_id,
-            status=CngLiteJobStatus.FAILED,
-            message="Mosaic conversion failed",
-            error=error,
-            completed_at=timezone.now(),
-        )
+        values = {"message": "Mosaic conversion failed", "error": error}
+        if job is None:
+            update_job(
+                job_id, status=CngLiteJobStatus.FAILED, completed_at=timezone.now(), **values
+            )
+        else:
+            finish_job(job, CngLiteJobStatus.FAILED, **values)
     finally:
         shutil.rmtree(directory, ignore_errors=True)
         close_old_connections()

@@ -55,6 +55,9 @@ class CngLiteJobStatus(models.TextChoices):
     # No longer set (split into PUSHING..PUBLISHING); kept for jobs saved
     # before, which still count as active until they finish or stall.
     RUNNING = "running", "Running"
+    # Finished (`outcome` says how): having GeoHosting delete the job's
+    # on-demand server before it's marked completed/failed.
+    DEPROVISIONING = "deprovisioning", "Deprovisioning"
     # Published; a non-empty `error` lists layers CloudNativeGIS skipped.
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
@@ -69,6 +72,7 @@ ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.DOWNLOADING,
     CngLiteJobStatus.PUBLISHING,
     CngLiteJobStatus.RUNNING,
+    CngLiteJobStatus.DEPROVISIONING,
 )
 
 # A GeoPackage still waiting for the user to pick its layers (see
@@ -137,6 +141,11 @@ class CngLiteJob(models.Model):
     status = models.CharField(
         max_length=20, choices=CngLiteJobStatus.choices, default=CngLiteJobStatus.PENDING
     )
+    # While DEPROVISIONING: the status (completed/failed) it ends with once
+    # its server is deleted (see apps.s3.cng_lite.finish_job).
+    outcome = models.CharField(
+        max_length=20, choices=CngLiteJobStatus.choices, blank=True, default=""
+    )
     progress = models.PositiveSmallIntegerField(default=0)
     message = models.TextField(default="Waiting to upload to CloudNativeGIS")
     error = models.TextField(blank=True)
@@ -186,19 +195,110 @@ class CngLiteJob(models.Model):
         """Get the CloudNativeGIS service this job runs on, and wait until it's healthy.
 
         Fills in cloudnativegis_url/cloudnativegis_api_token - without
-        CLOUDNATIVEGIS_ON_DEMAND, the fixed CLOUDNATIVEGIS_URL/API_TOKEN - then
-        polls its /health. Raises NotImplementedError with on-demand, which
-        isn't supported yet, and ValueError if the service isn't healthy
-        within CLOUDNATIVEGIS_PROVISIONING_TIMEOUT.
+        CLOUDNATIVEGIS_ON_DEMAND, the fixed CLOUDNATIVEGIS_URL/API_TOKEN; with
+        it, those of a server GeoHosting starts for this job (see
+        _provision_on_demand) - then polls its /health. Raises ValueError if
+        it can't be had, or isn't healthy within
+        CLOUDNATIVEGIS_PROVISIONING_TIMEOUT.
         """
         if settings.CLOUDNATIVEGIS_ON_DEMAND:
-            raise NotImplementedError(
-                "CloudNativeGIS provisioning is not supported with CLOUDNATIVEGIS_ON_DEMAND."
-            )
-        self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
-        self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
+            url, token = self._provision_on_demand()
+        else:
+            url, token = settings.CLOUDNATIVEGIS_URL, settings.CLOUDNATIVEGIS_API_TOKEN
+        self.cloudnativegis_url = url.rstrip("/")
+        self.cloudnativegis_api_token = token
         self.save(update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"])
         self.wait_until_healthy()
+
+    def _provision_on_demand(self):
+        """Have GeoHosting start this job's server; returns its (url, token).
+
+        Asks for it (owned by this job's owner, a GeoHosting user), then polls
+        until it's ready or failed - GeoHosting decides when starting it has
+        failed (timeouts included), so there's no deadline here. Asking again
+        for the same job - e.g. resuming it - gives the same server, or a new
+        one if it was deleted meanwhile. Every request is logged
+        (CngLiteJobLog), but a poll only if it says something new. Raises
+        ValueError if GeoHosting refuses it or says it failed.
+        """
+        geohosting = GeoHostingClient()
+        log = self._geohosting_log()
+        self._set_message("Starting a CloudNativeGIS server")
+
+        server = self._ask_geohosting_for_server(geohosting, log)
+        while server["status"] != "ready":
+            if server["status"] == "failed":
+                raise ValueError(
+                    "GeoHosting couldn't start a CloudNativeGIS server: "
+                    f"{server.get('error') or 'unknown error'}"
+                )
+            time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
+            server = geohosting.get_server(self.id, log=log)
+            if server is None or server["status"] == "deleted":
+                # Gone meanwhile (e.g. cleaned up): ask for a new one.
+                server = self._ask_geohosting_for_server(geohosting, log)
+        return server["url"], server["token"]
+
+    def _ask_geohosting_for_server(self, geohosting, log):
+        """POST for this job's server; waits out one still being deleted."""
+        while True:
+            try:
+                return geohosting.create_server(self.id, self.owner.get_username(), log=log)
+            except GeoHostingError as exc:
+                if exc.status_code == 400:
+                    raise ValueError(
+                        f"This account isn't linked to GeoHosting, so it can't use on-demand "
+                        f"CloudNativeGIS: {exc}"
+                    ) from exc
+                still_deleting = exc.status_code == 409 and "being deleted" in str(exc)
+                if not still_deleting:
+                    raise ValueError(str(exc)) from exc
+            time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
+
+    def deprovision(self):
+        """Have GeoHosting delete this job's on-demand server, and wait until it's gone.
+
+        Only with CLOUDNATIVEGIS_ON_DEMAND. GeoHosting decides when deleting
+        it has failed, so there's no deadline here. Forgets the server's
+        token once it's asked to delete it. Raises GeoHostingError if
+        GeoHosting refuses or can't be reached.
+        """
+        if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+            return
+        geohosting = GeoHostingClient()
+        log = self._geohosting_log()
+        server = geohosting.delete_server(self.id, log=log)
+        if self.cloudnativegis_api_token:
+            self.cloudnativegis_api_token = ""
+            self.save(update_fields=["cloudnativegis_api_token", "updated_at"])
+        while server is not None and server["status"] != "deleted":
+            time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
+            server = geohosting.get_server(self.id, log=log)
+
+    def _geohosting_log(self):
+        """A GeoHostingClient `log` callback recording into CngLiteJobLog.
+
+        Skips a GET that only repeats the server's status (still starting).
+        """
+        from .cng_lite_job_log import CngLiteJobLog  # noqa: PLC0415 - it imports this module
+
+        last = {"status": None}
+
+        def log(**request):
+            answer = request["response_payload"]
+            status = answer.get("status") if isinstance(answer, dict) else None
+            if request["method"] == "GET" and not request["error"] and status == last["status"]:
+                return
+            last["status"] = status
+            CngLiteJobLog.record(self, target=CngLiteJobLog.Target.GEOHOSTING, **request)
+
+        return log
+
+    def _set_message(self, message):
+        """Only message/updated_at: the status is set by the caller."""
+        if self.message != message:
+            self.message = message
+            self.save(update_fields=["message", "updated_at"])
 
     def wait_until_healthy(self):
         """Poll this job's CloudNativeGIS /health until it answers.
@@ -207,17 +307,13 @@ class CngLiteJob(models.Model):
         """
         timeout = settings.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT
         deadline = time.monotonic() + timeout
-        waiting_message = "Waiting for CloudNativeGIS to become ready"
         while not _is_healthy(self.cloudnativegis_url):
             if time.monotonic() >= deadline:
                 raise ValueError(
                     f"CloudNativeGIS at {self.cloudnativegis_url} did not become healthy "
                     f"within {timeout}s."
                 )
-            if self.message != waiting_message:
-                # Only message/updated_at: the status is set by the caller.
-                self.message = waiting_message
-                self.save(update_fields=["message", "updated_at"])
+            self._set_message("Waiting for CloudNativeGIS to become ready")
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
 
     def cloudnativegis_headers(self):
