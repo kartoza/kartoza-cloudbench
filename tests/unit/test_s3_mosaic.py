@@ -425,9 +425,8 @@ def test_mosaic_over_the_merge_limit_renders_from_its_tiles(owner, settings, tmp
     assert job.status == "completed", job.error
     [payload] = submitted
     assert payload["merged"] is None
-    assert (
-        "maps/test-mosaic/tile-1/tile-1_3857.tif?method=put_object"
-        in (payload["tiles"][1]["web_upload"])
+    assert "maps/test-mosaic/tile-1/tile-1_3857.tif?method=put_object" in (
+        payload["tiles"][1]["web_upload"]
     )
     collection = s3.json("maps/test-mosaic/collection.json")
     assert "visual" not in collection["assets"]
