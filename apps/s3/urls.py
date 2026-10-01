@@ -48,6 +48,11 @@ urlpatterns = [
         views.S3ProxyView.as_view(),
         name="s3-proxy",
     ),
+    path(
+        "s3/attributes/<str:conn_id>",
+        views.S3AttributesView.as_view(),
+        name="s3-attributes",
+    ),
     re_path(
         r"^s3/geojson/(?P<conn_id>[^/]+)/(?P<key>.+)$",
         views.S3GeoJSONView.as_view(),
@@ -80,6 +85,11 @@ urlpatterns = [
         "s3/upload/<str:conn_id>",
         views.S3UploadView.as_view(),
         name="s3-upload",
+    ),
+    path(
+        "s3/mosaic/<str:conn_id>",
+        views.S3MosaicUploadView.as_view(),
+        name="s3-mosaic-upload",
     ),
     # Presigned URLs
     re_path(

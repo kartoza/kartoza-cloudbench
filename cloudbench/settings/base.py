@@ -161,8 +161,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        # TODO: Change to IsAuthenticated once all endpoints are migrated
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_PAGINATION_CLASS": None,
     "EXCEPTION_HANDLER": "apps.core.exceptions.custom_exception_handler",
@@ -226,6 +225,16 @@ CLOUDNATIVEGIS_ON_DEMAND = os.environ.get("CLOUDNATIVEGIS_ON_DEMAND", "False").l
     "1",
     "yes",
 )
+# A TIFF mosaic up to this total upload size (default 10 GB) gets one merged
+# EPSG:3857 COG as its web rendering, built by CloudNativeGIS; a larger one
+# renders from each tile's own EPSG:3857 COG instead (see apps.s3.mosaic).
+MOSAIC_MERGE_MAX_BYTES = int(os.environ.get("MOSAIC_MERGE_MAX_BYTES", str(10 * 1024**3)))
+# How long CloudBench waits for a mosaic's CloudNativeGIS job - and so how
+# long its presigned URLs last: CLOUDNATIVEGIS_CONVERSION_TIMEOUT plus this
+# many seconds per GB uploaded (default 5 minutes), at most
+# MOSAIC_MAX_TIMEOUT seconds (default 6 hours).
+MOSAIC_TIMEOUT_PER_GB = int(os.environ.get("MOSAIC_TIMEOUT_PER_GB", "300"))
+MOSAIC_MAX_TIMEOUT = int(os.environ.get("MOSAIC_MAX_TIMEOUT", str(6 * 3600)))
 
 CLOUDBENCH_CONFIG_DIR = os.environ.get(
     "CLOUDBENCH_CONFIG_DIR",

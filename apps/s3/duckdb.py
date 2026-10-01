@@ -320,6 +320,29 @@ class DuckDBQueryEngine:
             "rowCount": count_rows[0]["num_rows"] if count_rows else None,
         }
 
+    def query_parquet_page(
+        self,
+        s3_path: str,
+        connection_id: str,
+        user: "User",
+        limit: int,
+        offset: int,
+        exclude: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """One page of a Parquet file's rows, for a table: {'fields', 'rows'}.
+
+        DuckDB reads only the row groups the page falls in, so this stays
+        cheap on a file of millions of rows. `exclude` drops columns a
+        table can't show (a GeoParquet's geometry and bbox columns).
+        """
+        columns = ", ".join('"' + name.replace('"', '""') + '"' for name in exclude or [])
+        select = f"SELECT * EXCLUDE ({columns})" if columns else "SELECT *"
+        query = (
+            f"{select} FROM read_parquet('{s3_path}') " f"LIMIT {int(limit)} OFFSET {int(offset)}"
+        )
+        result = self.execute_query(query, connection_id, limit, user=user)
+        return {"fields": result["columns"], "rows": result["rows"]}
+
     def query_geoparquet(
         self,
         s3_path: str,

@@ -189,6 +189,27 @@ def source_object_key(target_key, job_id, filename):
     return f"{sources_directory_key(target_key, job_id)}/{filename}"
 
 
+# How long to wait for one conversion: CLOUDNATIVEGIS_CONVERSION_TIMEOUT,
+# plus this much per GB uploaded, up to a cap - a big shapefile genuinely
+# takes longer to tile than a small one.
+CONVERSION_TIMEOUT_PER_GB = 10 * 60
+MAX_CONVERSION_TIMEOUT = 6 * 60 * 60
+
+# What each kind of result file is, for progress messages.
+_FILE_KINDS = {".pmtiles": "PMTiles", ".parquet": "GeoParquet", ".tif": "COG", ".png": "thumbnail"}
+
+
+def conversion_timeout(input_size):
+    """Seconds to wait for a conversion of `input_size` bytes, scaled to it."""
+    base = settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
+    scaled = base + round(CONVERSION_TIMEOUT_PER_GB * input_size / 1024**3)
+    return max(base, min(scaled, MAX_CONVERSION_TIMEOUT))
+
+
+def _file_kind(name):
+    return _FILE_KINDS.get(PurePosixPath(name).suffix.lower(), "file")
+
+
 def update_job(job_id, **values):
     CngLiteJob.objects.filter(pk=job_id).update(updated_at=timezone.now(), **values)
 
@@ -221,6 +242,36 @@ def request_json(client, method, path, **kwargs):
             f"(HTTP {response.status_code}): {response.text[:200]!r}. "
             "Check that CLOUDNATIVEGIS_URL points at CloudNativeGIS Lite."
         ) from exc
+
+
+def wait_for_job(client, job_id, cng_job_id, deadline):
+    """Poll cng-lite until its job finishes, returning the finished job's body.
+
+    For a mosaic (see apps.s3.mosaic.run_mosaic); a conversion polls through
+    CNGProcessingClient.poll instead.
+
+    Relays cng-lite's live progress (e.g. "Converting layer 2/5: dashboard",
+    40% through) into the job's own message/progress as it goes, so the
+    frontend shows real movement across a multi-layer GeoPackage (or a
+    mosaic's tiles) instead of sitting at one fixed value.
+    """
+    while time.monotonic() < deadline:
+        body = client.get(f"api/v1/jobs/{cng_job_id}").json()
+        if body.get("status") == "failed":
+            raise ValueError(
+                f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
+            )
+        if body.get("status") == "done":
+            return body
+        detail = body.get("detail")
+        if detail:
+            fraction = body.get("detailProgress")
+            values = {"message": detail}
+            if fraction is not None:
+                values["progress"] = 20 + round(60 * fraction)
+            update_job(job_id, **values)
+        time.sleep(min(settings.CLOUDNATIVEGIS_POLL_INTERVAL, max(0, deadline - time.monotonic())))
+    raise TimeoutError("Timed out waiting for CloudNativeGIS to produce the converted file(s).")
 
 
 def download_result(client, result_path, destination, validate_result, invalid_result_message):
@@ -384,10 +435,10 @@ class CNGProcessingClient:
         self.update(
             status=CngLiteJobStatus.PUSHING,
             progress=10,
-            message="Submitting to CloudNativeGIS",
+            message="Sending the file to CloudNativeGIS",
         )
         source_url = self.s3_client.generate_presigned_url(
-            self.job.source_key, expiration=settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
+            self.job.source_key, expiration=conversion_timeout(self.job.input_size)
         )
         payload = {"source": source_url, **self.converter.payload(self.job)}
         submission = request_json(self.http, "POST", self.converter.endpoint, json=payload)
@@ -397,13 +448,19 @@ class CNGProcessingClient:
             cng_job_id=submission["job_id"],
             cng_results=None,
             cng_errors=None,
+            # CloudNativeGIS's own progress (e.g. "Generating vector tiles
+            # (PMTiles): 45% · GeoParquet ready") is relayed from here, as
+            # 20-80%; CloudBench's steps after it take the rest.
             progress=20,
-            message="Waiting for CloudNativeGIS conversion",
+            message="Waiting for CloudNativeGIS to start",
         )
 
     def poll_until_done(self):
-        """poll() every CLOUDNATIVEGIS_POLL_INTERVAL until done, or time out."""
-        deadline = time.monotonic() + settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
+        """poll() every CLOUDNATIVEGIS_POLL_INTERVAL until done, or time out.
+
+        The timeout scales with the upload's size (see conversion_timeout).
+        """
+        deadline = time.monotonic() + conversion_timeout(self.job.input_size)
         while time.monotonic() < deadline:
             if self.poll():
                 return
@@ -439,7 +496,7 @@ class CNGProcessingClient:
                 cng_results=results,
                 cng_errors=body.get("errors") or [],
                 progress=80,
-                message="Downloading converted files",
+                message="Downloading the converted files",
             )
             return True
         detail = body.get("detail")
@@ -461,7 +518,7 @@ class CNGProcessingClient:
             self.update(
                 status=CngLiteJobStatus.DOWNLOADING,
                 progress=80,
-                message="Downloading converted files",
+                message="Downloading the converted files",
             )
         # Usually already created by the staging step (start_conversion/
         # inspect_geopackage) under this same `kind`. A GeoPackage that turns
@@ -475,8 +532,11 @@ class CNGProcessingClient:
             if self._is_downloaded(item):
                 continue
             self.update(
-                progress=80 + round(10 * index / len(results)),
-                message=f"Downloading file {index + 1}/{len(results)}: {item['name']}",
+                progress=80 + round(5 * index / len(results)),
+                message=(
+                    f"Downloading the converted files ({index + 1} of {len(results)}): "
+                    f"{_file_kind(item['name'])}"
+                ),
             )
             filename = f"result-{index}"
             try:
@@ -502,14 +562,16 @@ class CNGProcessingClient:
         job = self.job
         self.update(
             status=CngLiteJobStatus.PUBLISHING,
-            progress=90,
-            message="Publishing to catalog",
+            progress=86,
+            message="Publishing to the catalog",
         )
         if job.replace_existing:
-            self.update(message="Removing the layer(s) being replaced")
+            self.update(message="Removing the layer being replaced")
             _clear_for_replace(job, self.s3_client)
         files = {item["name"]: item for item in job.cng_results}
         layers = self.converter.group_results(job, job.cng_results)
+        uploads = sum(len(layer["assets"]) for layer in layers)
+        uploaded = 0
         base_prefix = str(PurePosixPath(job.output_key).parent)
         base_prefix = "" if base_prefix in ("", ".") else base_prefix
         catalog_folder = catalog_title = ""
@@ -528,16 +590,20 @@ class CNGProcessingClient:
         host_email = host_contact_email(job.connection_id)
 
         output_keys = []
-        for index, layer in enumerate(layers):
-            self.update(
-                progress=90 + round(9 * index / len(layers)),
-                message=f"Publishing layer {index + 1}/{len(layers)}: {layer['title']}",
-            )
+        for layer in layers:
             folder = f"{base_prefix}/{layer['layer_id']}" if base_prefix else layer["layer_id"]
             data_assets = []
             info = None
             table_info = None
             for asset in layer["assets"]:
+                self.update(
+                    progress=88 + round(9 * uploaded / max(uploads, 1)),
+                    message=(
+                        f"Uploading to the bucket ({uploaded + 1} of {uploads}): "
+                        f"{asset['filename']}"
+                    ),
+                )
+                uploaded += 1
                 downloaded = files[asset["item"]["name"]]
                 dest_key = f"{folder}/{asset['filename']}"
                 media_type = asset.get("media_type", self.converter.content_type)
@@ -565,6 +631,7 @@ class CNGProcessingClient:
                 elif media_type != portolan.THUMBNAIL_MEDIA_TYPE and info is None:
                     info = asset["item"].get("info")
 
+            self.update(progress=97, message=f"Writing the catalog entry: {layer['title']}")
             portolan.finalize_layer(
                 self.s3_client,
                 folder=folder,
@@ -690,6 +757,15 @@ def run_conversion(job_id):
     CNGProcessingClient(job).run()
 
 
+def _is_resumable(job):
+    """Whether CNGProcessingClient can carry `job` on (it has a Converter)."""
+    try:
+        converter_for(job.kind)
+    except KeyError:
+        return False
+    return True
+
+
 def resume_interrupted_conversions():
     """Run every conversion a restart left unfinished, oldest first; returns how many.
 
@@ -698,7 +774,8 @@ def resume_interrupted_conversions():
     as any job still active then must have been interrupted. Each carries on
     from the step its status says it got to. GeoPackages still waiting for
     their layers to be picked are left alone; a job that depends on another
-    runs after it, from wherever that one moved their source to.
+    runs after it, from wherever that one moved their source to. A kind that
+    can't be resumed (a mosaic) is failed instead.
     """
     jobs = list(
         CngLiteJob.objects.filter(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
@@ -706,6 +783,19 @@ def resume_interrupted_conversions():
         .order_by("created_at")
     )
     for job in jobs:
+        if not _is_resumable(job):
+            # A mosaic runs in one go (see apps.s3.mosaic.run_mosaic): its
+            # tiles were staged only locally, so it can't pick up again.
+            logger.info("Can't resume %s %s; failing it", job.kind, job.id)
+            update_job(
+                job.id,
+                status=CngLiteJobStatus.FAILED,
+                message="CloudNativeGIS conversion interrupted",
+                error="The conversion was interrupted by a restart. Please retry the upload.",
+                completed_at=timezone.now(),
+            )
+            shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
+            continue
         logger.info("Resuming CloudNativeGIS conversion %s (%s)", job.id, job.status)
         if job.depends_on_id and job.status == CngLiteJobStatus.PENDING:
             # Created after the job it depends on, so that one has run by now.

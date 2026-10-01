@@ -84,3 +84,25 @@ class TestSignedSSOTokenAuthentication:
         request = RequestFactory().get("/", HTTP_AUTHORIZATION="Bearer some-service-token")
 
         assert SignedSSOTokenAuthentication().authenticate(request) is None
+
+
+@pytest.mark.django_db
+def test_anonymous_requests_are_asked_to_log_in_with_401():
+    """With the real authenticators, an anonymous request gets 401, not 403."""
+    from rest_framework.authentication import TokenAuthentication
+    from rest_framework.permissions import IsAuthenticated
+    from rest_framework.response import Response
+    from rest_framework.test import APIRequestFactory
+    from rest_framework.views import APIView
+
+    class Protected(APIView):
+        authentication_classes = [SignedSSOTokenAuthentication, TokenAuthentication]
+        permission_classes = [IsAuthenticated]
+
+        def get(self, request):
+            return Response({})
+
+    response = Protected.as_view()(APIRequestFactory().get("/api/anything"))
+
+    assert response.status_code == 401
+    assert response["WWW-Authenticate"] == "Token"

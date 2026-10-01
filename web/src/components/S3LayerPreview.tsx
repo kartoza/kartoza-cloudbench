@@ -23,6 +23,8 @@ import {
   SliderFilledTrack,
   SliderThumb,
   SliderMark,
+  useToast,
+  Button,
 } from '@chakra-ui/react'
 import { FiInfo, FiRefreshCw, FiX, FiMap, FiBox, FiDownload, FiTriangle, FiTable } from 'react-icons/fi'
 import maplibregl from 'maplibre-gl'
@@ -38,6 +40,7 @@ import * as api from '../api'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
+import { useUIStore } from '../stores/uiStore'
 
 // Disable Cesium Ion (we don't use it)
 Cesium.Ion.defaultAccessToken = ''
@@ -50,6 +53,13 @@ interface S3LayerPreviewProps {
 }
 
 type ViewMode = '2d' | '3d' | 'dem3d' | 'table'
+
+// A GeoParquet up to this size is read whole in the browser, to draw every
+// feature. A bigger one isn't: millions of features exhaust the page's
+// memory and crash it. Its table is paged from the server instead, and its
+// map is its own vector tiles (the PMTiles converted alongside it).
+const IN_BROWSER_MAX_BYTES = 50 * 1024 * 1024
+const IN_BROWSER_MAX_FEATURES = 200_000
 
 export default function S3LayerPreview({
   connectionId,
@@ -93,6 +103,32 @@ export default function S3LayerPreview({
 
   // Extract filename from object key
   const fileName = objectKey.split('/').pop() || objectKey
+  const setS3MapPreview = useUIStore((state) => state.setS3MapPreview)
+  const geoparquetInBrowser =
+    metadata?.format === 'geoparquet' &&
+    metadata.size <= IN_BROWSER_MAX_BYTES &&
+    (metadata.featureCount ?? 0) <= IN_BROWSER_MAX_FEATURES
+  const largeGeoparquet = metadata?.format === 'geoparquet' && !geoparquetInBrowser
+  // A large GeoParquet's map: the PMTiles beside it, when there is one.
+  const [siblingPmtiles, setSiblingPmtiles] = useState<string | null>(null)
+  useEffect(() => {
+    if (!largeGeoparquet) return
+    const slash = objectKey.lastIndexOf('/')
+    const folder = slash >= 0 ? objectKey.slice(0, slash + 1) : ''
+    const stem = objectKey.slice(slash + 1).replace(/\.(geo)?parquet$/i, '')
+    let cancelled = false
+    api.getS3Objects(connectionId, folder)
+      .then((items) => {
+        const pmtiles = items.filter((item) => !item.isFolder && /\.pmtiles$/i.test(item.key))
+        const match = pmtiles.find((item) => item.key === `${folder}${stem}.pmtiles`) ?? pmtiles[0]
+        if (!cancelled) setSiblingPmtiles(match?.key ?? null)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [largeGeoparquet, connectionId, objectKey])
+  const toast = useToast()
 
   // Fetch preview metadata
   useEffect(() => {
@@ -355,10 +391,10 @@ export default function S3LayerPreview({
 
   // Trigger GeoParquet loading when metadata indicates geoparquet format
   useEffect(() => {
-    if (metadata?.format === 'geoparquet' && metadata.proxyUrl && !geoparquetData && !geoparquetLoading) {
+    if (geoparquetInBrowser && metadata?.proxyUrl && !geoparquetData && !geoparquetLoading) {
       loadGeoParquet(metadata.proxyUrl)
     }
-  }, [metadata, geoparquetData, geoparquetLoading, loadGeoParquet])
+  }, [metadata, geoparquetInBrowser, geoparquetData, geoparquetLoading, loadGeoParquet])
 
   // Initialize map when metadata is loaded
   useEffect(() => {
@@ -692,7 +728,8 @@ export default function S3LayerPreview({
     if (viewMode !== 'table') return
 
     // For GeoParquet with client-side data, convert to table format
-    if (metadata?.format === 'geoparquet' && geoparquetData) {
+    if (geoparquetInBrowser) {
+      if (!geoparquetData) return
       const features = geoparquetData.features
       const allFields = new Set<string>()
       features.forEach(f => {
@@ -736,7 +773,7 @@ export default function S3LayerPreview({
     }
 
     loadTableData()
-  }, [viewMode, metadata, geoparquetData, connectionId, bucketName, objectKey, tableOffset])
+  }, [viewMode, metadata, geoparquetInBrowser, geoparquetData, connectionId, bucketName, objectKey, tableOffset])
 
   // Initialize Cesium viewer for DEM 3D mode
   useEffect(() => {
@@ -999,9 +1036,26 @@ export default function S3LayerPreview({
       })
   }
 
-  const handleDownload = () => {
-    if (metadata?.proxyUrl) {
-      window.open(metadata.proxyUrl, '_blank')
+  // A presigned link, not the API's proxy URL: a download (a new tab or a
+  // link click) doesn't carry the app's login token, which the API requires.
+  const handleDownload = async () => {
+    try {
+      const { url } = await api.getS3PresignedURL(connectionId, objectKey)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.target = '_blank'
+      link.rel = 'noopener'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (err) {
+      toast({
+        title: 'Download failed',
+        description: (err as Error).message,
+        status: 'error',
+        duration: 5000,
+      })
     }
   }
 
@@ -1459,7 +1513,7 @@ export default function S3LayerPreview({
             bg="white"
             p={4}
           >
-            {tableLoading || (metadata?.format === 'geoparquet' && geoparquetLoading) ? (
+            {tableLoading || (geoparquetInBrowser && geoparquetLoading) ? (
               <VStack justify="center" h="100%">
                 <Spinner size="xl" color="kartoza.500" />
                 <Text mt={2} color="gray.600">Loading attribute data...</Text>
@@ -1547,6 +1601,46 @@ export default function S3LayerPreview({
           >
             <Spinner size="xl" color="blue.500" />
             <Text mt={2} color="gray.700">Loading GeoParquet...</Text>
+          </Box>
+        )}
+        {/* A GeoParquet too large to draw here: point at its vector tiles */}
+        {viewMode !== 'dem3d' && viewMode !== 'table' && mapLoaded && largeGeoparquet && metadata && (
+          <Box
+            position="absolute"
+            top={4}
+            left="50%"
+            transform="translateX(-50%)"
+            maxW="md"
+            zIndex={10}
+          >
+            <Alert status="info" borderRadius="md" boxShadow="md">
+              <AlertIcon />
+              <VStack align="start" spacing={2}>
+                <AlertDescription fontSize="sm">
+                  {metadata.featureCount != null
+                    ? `${metadata.featureCount.toLocaleString()} features`
+                    : 'This file'}{' '}
+                  is too many to draw in the browser, so only its extent is shown. The table
+                  view pages through its attributes.
+                </AlertDescription>
+                {siblingPmtiles && (
+                  <Button
+                    size="xs"
+                    colorScheme="blue"
+                    onClick={() =>
+                      setS3MapPreview({
+                        connectionId,
+                        bucketName,
+                        objectKey: siblingPmtiles,
+                        format: 'pmtiles',
+                      })
+                    }
+                  >
+                    View its map tiles ({siblingPmtiles.split('/').pop()})
+                  </Button>
+                )}
+              </VStack>
+            </Alert>
           </Box>
         )}
         {/* Error display for GeoParquet loading */}

@@ -12,7 +12,7 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3 import portolan
+from apps.s3 import cng_lite, portolan
 from apps.s3.cng_lite import download_result
 from apps.s3.models import CngLiteJob, S3Connection
 from apps.s3.pmtiles import (
@@ -348,6 +348,16 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
                 return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
             if outcome == "timeout":
                 return httpx.Response(200, json={"status": "processing"})
+            if polls == 1:
+                # CloudNativeGIS reporting what it's doing, part way through.
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "processing",
+                        "detail": "Generating vector tiles (PMTiles): 50% · GeoParquet ready",
+                        "detailProgress": 0.6,
+                    },
+                )
             return httpx.Response(
                 200,
                 json={
@@ -373,8 +383,16 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     )
     if outcome == "timeout":
         settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 0
+    updates = []
+    real_update_job = cng_lite.update_job
+
+    def record(job_id, **values):
+        updates.append(values)
+        real_update_job(job_id, **values)
+
     with (
         patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.cng_lite.update_job", side_effect=record),
         patch("apps.s3.cng_lite.httpx.Client", return_value=client),
         patch("apps.s3.cng_lite.get_s3_client", return_value=s3_client),
         patch("apps.s3.cng_lite.time.sleep"),
@@ -387,9 +405,9 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
     # Kept whatever the outcome: every case got as far as submitting to cng.
     assert conversion_job.cng_job_id == "cng-job-1"
     assert conversion_job.cloudnativegis_url == "http://cloudnativegis"
-    push = ("push", "pushing", "Submitting to CloudNativeGIS")
-    poll = ("poll", "polling", "Waiting for CloudNativeGIS conversion")
-    download = ("download", "downloading", "Downloading file 1/1: output.pmtiles")
+    push = ("push", "pushing", "Sending the file to CloudNativeGIS")
+    poll = ("poll", "polling", "Waiting for CloudNativeGIS to start")
+    download = ("download", "downloading", "Downloading the converted files (1 of 1): PMTiles")
     expected_steps = {
         "timeout": [push],  # a zero timeout never gets to poll
         "failed": [push, poll],
@@ -400,7 +418,7 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         assert conversion_job.progress == 100
         uploads = [stage for stage in stages if stage[0] == "upload"]
         assert {status for _, status, _ in uploads} == {"publishing"}
-        assert uploads[-1][2].startswith("Publishing layer 1/1: ")
+        assert uploads[-1][2] == "Uploading to the bucket (1 of 1): roads.pmtiles"
         # Every layer gets its own Portolan folder ("folder/roads/"); a
         # GeoPackage's layers sit inside its sub-catalog ("folder/roads/roads/").
         layer_key = (
@@ -410,6 +428,16 @@ def test_conversion_pipeline(conversion_job, settings, outcome, source_name):
         )
         assert uploaded[0][:3] == (b"PMTiles\x03fixture", "bucket", layer_key)
         assert conversion_job.to_dict()["outputPath"] == f"s3://bucket/{layer_key}"
+        # Progress says what's happening, and never goes back.
+        steps = [(u["progress"], u.get("message")) for u in updates if "progress" in u]
+        progress = [p for p, _message in steps]
+        assert progress == sorted(progress)
+        messages = [m for _p, m in steps]
+        assert "Generating vector tiles (PMTiles): 50% · GeoParquet ready" in messages
+        assert (56, "Generating vector tiles (PMTiles): 50% · GeoParquet ready") in steps
+        assert "Downloading the converted files (1 of 1): PMTiles" in messages
+        assert "Uploading to the bucket (1 of 1): roads.pmtiles" in messages
+        assert "Writing the catalog entry: Roads" in messages
     else:
         assert conversion_job.status == "failed"
         assert conversion_job.error
@@ -617,3 +645,13 @@ def test_download_result_hashes_exactly_the_bytes_it_writes(tmp_path, size):
     assert written == size
     assert destination.read_bytes() == content
     assert checksum == "1220" + hashlib.sha256(content).hexdigest()
+
+
+def test_conversion_timeout_scales_with_the_upload(settings):
+    settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 1800
+    gb = 1024**3
+
+    assert cng_lite.conversion_timeout(10 * 1024**2) == 1800 + 6  # small: about the base
+    # A 1 GB shapefile of millions of buildings gets 40 minutes, not 30.
+    assert cng_lite.conversion_timeout(gb) == 1800 + 600
+    assert cng_lite.conversion_timeout(1000 * gb) == 6 * 3600  # capped

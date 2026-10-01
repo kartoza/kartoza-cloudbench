@@ -146,6 +146,25 @@ class TestEndpointSweep:
     def test_requires_authentication(self, api_client, path, method):
         response = _call(api_client, path, method)
         if path in PUBLIC_ROUTES:
+            # Reachable without logging in: not refused, and not crashing.
+            assert response.status_code not in (401, 403)
             assert response.status_code < 500
         else:
             assert response.status_code in (401, 403)
+
+
+def test_tests_run_with_the_real_permission_default():
+    """The test settings replace REST_FRAMEWORK wholesale; keep this part real.
+
+    They once required login while the real settings let anyone in, so the
+    suite passed while an anonymous request crashed in production.
+    """
+    from django.conf import settings
+
+    from cloudbench.settings import base
+
+    assert (
+        settings.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
+        == base.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"]
+        == ["rest_framework.permissions.IsAuthenticated"]
+    )

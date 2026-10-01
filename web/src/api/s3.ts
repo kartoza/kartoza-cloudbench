@@ -220,6 +220,15 @@ export async function uploadToS3(
     formData.append('replace', 'true')
   }
 
+  return postWithProgress(`${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}`, formData, onProgress)
+}
+
+// POSTs a multipart upload, reporting how much has been sent (fetch can't).
+function postWithProgress(
+  url: string,
+  formData: FormData,
+  onProgress?: (progress: number) => void
+): Promise<S3UploadResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
 
@@ -242,11 +251,35 @@ export async function uploadToS3(
       reject(new Error('Network error'))
     })
 
-    xhr.open('POST', `${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}`)
+    xhr.open('POST', url)
     const token = localStorage.getItem('token')
     if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
     xhr.send(formData)
   })
+}
+
+// Uploads several GeoTIFFs to publish as one mosaic: a collection with a STAC
+// item per tile, a merged web mosaic and a VRT (see apps.s3.mosaic). The tiles
+// must share CRS, bands, data types and nodata; the upload is refused (400)
+// naming the odd one out if they don't.
+export async function uploadMosaic(
+  connectionId: string,
+  files: File[],
+  name: string,
+  prefix: string,
+  onProgress?: (progress: number) => void,
+  license?: string,
+  licenseUrl?: string,
+  replace?: boolean
+): Promise<S3UploadResult> {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  formData.append('name', name)
+  if (prefix) formData.append('prefix', prefix)
+  if (license) formData.append('license', license)
+  if (licenseUrl) formData.append('licenseUrl', licenseUrl)
+  if (replace) formData.append('replace', 'true')
+  return postWithProgress(`${API_BASE}/s3/mosaic/${encodeURIComponent(connectionId)}`, formData, onProgress)
 }
 
 export interface GeoPackageLayer {
