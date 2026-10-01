@@ -6,6 +6,7 @@ import httpx
 import pytest
 from rest_framework.test import APIClient
 
+from apps.core.geohosting import GeoHostingError
 from apps.s3.cog import start_conversion as start_cog_conversion
 from apps.s3.models import CngLiteJob, CngLiteJobStatus
 from apps.s3.pmtiles import inspect_geopackage
@@ -36,8 +37,13 @@ def test_is_not_valid_without_url(static):
     assert CngLiteJob.is_valid() is False
 
 
-def test_is_never_valid_on_demand(on_demand):
+def test_is_not_valid_on_demand_without_geohosting(on_demand):
+    on_demand.GEOHOSTING_URL = ""
     assert CngLiteJob.is_valid() is False
+
+
+def test_is_valid_on_demand_with_geohosting(geohosting):
+    assert CngLiteJob.is_valid() is True
 
 
 @pytest.mark.parametrize(
@@ -61,9 +67,39 @@ def test_health_is_false_without_url(static):
     get.assert_not_called()
 
 
-def test_health_raises_on_demand(on_demand):
-    with patch("apps.s3.models.cng_lite_job.httpx.get") as get, pytest.raises(NotImplementedError):
-        CngLiteJob.health()
+@pytest.fixture
+def geohosting(on_demand):
+    on_demand.GEOHOSTING_URL = "http://geohosting"
+    on_demand.GEOHOSTING_CLIENT_ID = "cloudbench"
+    on_demand.GEOHOSTING_CLIENT_SECRET = "secret"
+    return on_demand
+
+
+def test_health_on_demand_without_geohosting_is_false(on_demand):
+    on_demand.GEOHOSTING_URL = ""
+    with patch("apps.s3.models.cng_lite_job.GeoHostingClient") as client:
+        assert CngLiteJob.health() is False
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "answer, healthy",
+    [
+        ({"healthy": True, "snapshot": {"id": 1}}, True),
+        ({"healthy": False, "detail": "No snapshot found"}, False),
+        (GeoHostingError("Could not reach GeoHosting"), False),
+    ],
+)
+def test_health_on_demand_asks_geohosting(geohosting, answer, healthy):
+    """Not the fixed CLOUDNATIVEGIS_URL: GeoHosting, which starts the servers."""
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get") as get,
+        patch(
+            "apps.s3.models.cng_lite_job.GeoHostingClient.cloudnative_gis_processing_health",
+            side_effect=[answer],
+        ),
+    ):
+        assert CngLiteJob.health() is healthy
     get.assert_not_called()
 
 
@@ -84,12 +120,28 @@ def test_tools_report_cloudnativegis_health(static, healthy):
     assert tools["gdal"]["available"] is healthy
 
 
-def test_tools_report_cloudnativegis_unavailable_on_demand(on_demand):
+def test_tools_report_cloudnativegis_unavailable_on_demand_without_geohosting(on_demand):
+    on_demand.GEOHOSTING_URL = ""
     with patch("apps.s3.models.cng_lite_job.httpx.get") as get:
         tools = tools_status()
     get.assert_not_called()
     assert tools["cloudnativegis"]["available"] is False
     assert tools["gdal"]["available"] is False
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_tools_report_geohosting_health_on_demand(geohosting, healthy):
+    answer = {"healthy": healthy, "detail": "" if healthy else "No snapshot found"}
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get") as get,
+        patch(
+            "apps.s3.models.cng_lite_job.GeoHostingClient.cloudnative_gis_processing_health",
+            return_value=answer,
+        ),
+    ):
+        tools = tools_status()
+    get.assert_not_called()  # not CLOUDNATIVEGIS_URL
+    assert tools["cloudnativegis"]["available"] is healthy
 
 
 @pytest.mark.parametrize(
@@ -101,6 +153,7 @@ def test_tools_report_cloudnativegis_unavailable_on_demand(on_demand):
     ],
 )
 def test_conversions_refuse_to_start_when_not_valid(on_demand, start, name):
+    on_demand.GEOHOSTING_URL = ""  # on demand, but GeoHosting isn't configured
     uploaded = type("Upload", (), {"name": name, "size": 1})()
     with pytest.raises(ValueError, match="CloudNativeGIS is not configured"):
         start(uploaded, name, "conn", user=None)

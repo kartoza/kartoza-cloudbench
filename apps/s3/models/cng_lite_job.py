@@ -1,5 +1,6 @@
 """Persistent status of CloudNativeGIS-to-S3 conversion jobs."""
 
+import logging
 import time
 import uuid
 
@@ -9,8 +10,11 @@ from django.db import models
 from django.db.models import Q
 
 from apps.core.fields import EncryptedCharField
+from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
 from .s3_connection import S3Connection
+
+logger = logging.getLogger(__name__)
 
 # Source/target labels per job kind, used only for API responses.
 CONVERSION_FORMATS = {
@@ -145,25 +149,35 @@ class CngLiteJob(models.Model):
         """Whether CloudNativeGIS is configured, so conversions can be started.
 
         Without CLOUDNATIVEGIS_ON_DEMAND that's just CLOUDNATIVEGIS_URL being
-        set; on-demand isn't supported yet, so it's never valid.
+        set; with it, GeoHosting - which starts the servers - being configured.
         """
         if settings.CLOUDNATIVEGIS_ON_DEMAND:
-            return False
+            return GeoHostingClient.is_configured()
         return bool(settings.CLOUDNATIVEGIS_URL)
 
     @staticmethod
     def health():
-        """Whether the CloudNativeGIS service answers its /health check.
+        """Whether CloudNativeGIS can take conversions.
 
-        Without CLOUDNATIVEGIS_ON_DEMAND that's the service at
-        CLOUDNATIVEGIS_URL. Raises NotImplementedError with it on, which
-        isn't supported yet.
+        Without CLOUDNATIVEGIS_ON_DEMAND: whether the service at
+        CLOUDNATIVEGIS_URL answers its /health check. With it: whether
+        GeoHosting, which starts its servers, can (it reaches the Hetzner
+        Cloud API, and has a snapshot to start them from).
         """
-        if settings.CLOUDNATIVEGIS_ON_DEMAND:
-            raise NotImplementedError(
-                "CloudNativeGIS health check is not supported with CLOUDNATIVEGIS_ON_DEMAND."
+        if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+            return _is_healthy(settings.CLOUDNATIVEGIS_URL)
+        if not GeoHostingClient.is_configured():
+            return False
+        try:
+            response = GeoHostingClient().cloudnative_gis_processing_health()
+        except GeoHostingError as exc:
+            logger.warning("GeoHosting's CloudNativeGIS health check failed: %s", exc)
+            return False
+        if not response.get("healthy"):
+            logger.warning(
+                "GeoHosting can't start CloudNativeGIS servers: %s", response.get("detail")
             )
-        return _is_healthy(settings.CLOUDNATIVEGIS_URL)
+        return response.get("healthy") is True
 
     # ---------------------------------
     # STEP 2

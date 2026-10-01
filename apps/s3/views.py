@@ -921,11 +921,8 @@ class S3ConversionToolsView(APIView):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             tools["tippecanoe"] = {"available": False}
 
-        try:
-            cloudnativegis_available = CngLiteJob.health()
-        except NotImplementedError:
-            # CLOUDNATIVEGIS_ON_DEMAND isn't supported yet: no conversions.
-            cloudnativegis_available = False
+        # Configured (CLOUDNATIVEGIS_URL, or GeoHosting on demand) and healthy.
+        cloudnativegis_available = CngLiteJob.is_valid() and CngLiteJob.health()
         tools["cloudnativegis"] = {
             "available": cloudnativegis_available,
             "tool": "CloudNativeGIS",

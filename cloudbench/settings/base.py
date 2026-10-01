@@ -218,13 +218,20 @@ CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = max(
 # hasn't set LITE_API_TOKEN either).
 CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
 # Run CloudNativeGIS on demand per conversion job (its URL/token kept on the
-# CngLiteJob) instead of the fixed CLOUDNATIVEGIS_URL. Not supported yet:
-# with it on, conversions are unavailable (see CngLiteJob.is_valid/health).
+# CngLiteJob, the server started by GeoHosting) instead of the fixed
+# CLOUDNATIVEGIS_URL (see CngLiteJob.is_valid/health/provision).
 CLOUDNATIVEGIS_ON_DEMAND = os.environ.get("CLOUDNATIVEGIS_ON_DEMAND", "False").lower() in (
     "true",
     "1",
     "yes",
 )
+# GeoHosting, which starts and deletes those on-demand servers (see
+# apps.core.geohosting): its URL, and an OAuth client-credentials
+# Application there, whose tokens (with the `cloudbench`
+# scope) are all its API needs.
+GEOHOSTING_URL = os.environ.get("GEOHOSTING_URL", "").rstrip("/")
+GEOHOSTING_CLIENT_ID = os.environ.get("GEOHOSTING_CLIENT_ID", "")
+GEOHOSTING_CLIENT_SECRET = os.environ.get("GEOHOSTING_CLIENT_SECRET", "")
 # A TIFF mosaic up to this total upload size (default 10 GB) gets one merged
 # EPSG:3857 COG as its web rendering, built by CloudNativeGIS; a larger one
 # renders from each tile's own EPSG:3857 COG instead (see apps.s3.mosaic).
