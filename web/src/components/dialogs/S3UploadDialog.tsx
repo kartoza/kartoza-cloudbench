@@ -40,7 +40,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { ConversionJob } from '../../types'
-import { layerConversionStatuses } from '../../utils/conversionJobs'
+import { isActiveStatus, layerConversionStatuses } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
@@ -241,7 +241,7 @@ export default function S3UploadDialog() {
     },
   })
   const isConverting = !!conversionJobId &&
-    (!conversionJob || ['pending', 'running'].includes(conversionJob.status))
+    (!conversionJob || isActiveStatus(conversionJob.status))
 
   const resetInputs = useCallback(() => {
     setSelectedFile(null)
@@ -997,7 +997,7 @@ export default function S3UploadDialog() {
 
           {/* Conversion progress — takes over the layer picker's spot as
               the main focus once the layers have been confirmed. */}
-          {gpkgFlowActive && !inLayerPickerMode && conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
+          {gpkgFlowActive && !inLayerPickerMode && conversionJob && isActiveStatus(conversionJob.status) && (
             <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
               <HStack mb={2}>
                 <Icon as={FiRefreshCw} className="spin" color="blue.500" />
@@ -1069,7 +1069,7 @@ export default function S3UploadDialog() {
             )}
 
             {/* Conversion Job Progress (GeoPackage jobs show this above instead) */}
-            {!gpkgFlowActive && conversionJob && ['pending', 'running'].includes(conversionJob.status) && (
+            {!gpkgFlowActive && conversionJob && isActiveStatus(conversionJob.status) && (
               <Box w="100%" p={2} bg="blue.50" borderRadius="lg">
                 <HStack mb={1}>
                   <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />

@@ -1,20 +1,23 @@
 """Listing a user's conversion jobs (the header's Jobs panel)."""
 
 from datetime import timedelta
-from unittest.mock import Mock
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.s3.models import CngLiteJob
 
 
+def user(username="7"):
+    return get_user_model().objects.get_or_create(username=username)[0]
+
+
 def job(owner="7", status="running", source_name="roads.zip", **fields):
     return CngLiteJob.objects.create(
         kind=fields.pop("kind", "pmtiles"),
-        owner_id=owner,
-        connection_id="conn",
+        owner=user(owner),
         bucket="bucket",
         source_name=source_name,
         output_key="roads.pmtiles",
@@ -26,7 +29,7 @@ def job(owner="7", status="running", source_name="roads.zip", **fields):
 
 def listed(username="7"):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username=username, is_authenticated=True))
+    api.force_authenticate(user=user(username))
     response = api.get("/api/s3/conversion/jobs")
     assert response.status_code == 200
     return response.json()
@@ -62,9 +65,25 @@ def test_hides_geopackages_awaiting_layer_selection_but_not_queued_raster_halves
 
 
 @pytest.mark.django_db
-def test_stalled_running_job_is_listed_as_failed(settings):
+@pytest.mark.parametrize(
+    "active_status", ["provisioning", "pushing", "polling", "downloading", "publishing"]
+)
+def test_lists_job_in_any_active_step_as_in_progress(active_status):
+    job(status=active_status, source_name="busy.zip")
+
+    [item] = listed()
+
+    assert item["status"] == active_status
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "active_status",
+    ["provisioning", "pushing", "polling", "downloading", "publishing", "running"],
+)
+def test_stalled_active_job_is_listed_as_failed(settings, active_status):
     settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 1
-    stalled = job(status="running", source_name="stuck.zip")
+    stalled = job(status=active_status, source_name="stuck.zip")
     CngLiteJob.objects.filter(pk=stalled.pk).update(updated_at=timezone.now() - timedelta(hours=1))
 
     [item] = listed()

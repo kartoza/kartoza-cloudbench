@@ -3,6 +3,7 @@
 import io
 import json
 from datetime import datetime
+from functools import partial
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -13,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.s3 import mosaic, portolan, portolan_mosaic
 from apps.s3.cng_lite import TargetExists, job_directory
-from apps.s3.models import CngLiteJob
+from apps.s3.models import CngLiteJob, S3Connection
 
 WGS84 = 'GEOGCRS["WGS 84",ID["EPSG",4326]]'
 UTM = 'PROJCRS["WGS 84 / UTM zone 35S",ID["EPSG",32735]]'
@@ -69,6 +70,22 @@ def owner(django_user_model):
     return django_user_model.objects.create(username="mosaic-owner")
 
 
+def make_connection(owner):
+    """The S3 connection the tiles go to (get_s3_client itself is patched)."""
+    return S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
+
+
+@pytest.fixture
+def connection(owner):
+    return make_connection(owner)
+
+
+# A job first waits for its CloudNativeGIS to answer /health (CngLiteJob.provision).
+healthy = partial(patch, "apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200))
+
+
 @pytest.fixture
 def staging(settings, tmp_path):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
@@ -85,9 +102,9 @@ def staging(settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_start_mosaic_stages_the_tiles_as_one_job(staging, owner):
+def test_start_mosaic_stages_the_tiles_as_one_job(staging, owner, connection):
     job = mosaic.start_mosaic(
-        [tiff("north.tif"), tiff("south.tif")], "Elevation 2024", "maps", "conn", owner
+        [tiff("north.tif"), tiff("south.tif")], "Elevation 2024", "maps", str(connection.id), owner
     )
 
     job.refresh_from_db()
@@ -112,36 +129,38 @@ def test_start_mosaic_stages_the_tiles_as_one_job(staging, owner):
         ([tiff("a.tif"), SimpleUploadedFile("b.tif", b"PK\x03\x04zip")], "not a valid TIFF"),
     ],
 )
-def test_start_mosaic_refuses_bad_uploads(staging, owner, files, message):
+def test_start_mosaic_refuses_bad_uploads(staging, owner, connection, files, message):
     with pytest.raises(ValueError, match=message):
-        mosaic.start_mosaic(files, "m", "", "conn", owner)
+        mosaic.start_mosaic(files, "m", "", str(connection.id), owner)
     assert not CngLiteJob.objects.exists()
 
 
 @pytest.mark.django_db
-def test_mismatched_tiles_leave_nothing_behind(staging, owner):
+def test_mismatched_tiles_leave_nothing_behind(staging, owner, connection):
     staging["read"].side_effect = [header(), header(crs=UTM)]
     with pytest.raises(mosaic.MosaicMismatch):
-        mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", "conn", owner)
+        mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", str(connection.id), owner)
     assert not CngLiteJob.objects.exists()
     assert not list((staging["tmp"] / "mosaic").glob("*/tiles"))
     staging["thread"].assert_not_called()
 
 
 @pytest.mark.django_db
-def test_existing_folder_needs_confirming(staging, owner):
+def test_existing_folder_needs_confirming(staging, owner, connection):
     staging["s3"].list_objects.return_value = {"objects": [{"key": "m/collection.json"}]}
+    tiles = [tiff("a.tif"), tiff("b.tif")]
     with pytest.raises(TargetExists):
-        mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", "conn", owner)
-    job = mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", "conn", owner, replace=True)
+        mosaic.start_mosaic(tiles, "m", "", str(connection.id), owner)
+    tiles = [tiff("a.tif"), tiff("b.tif")]
+    job = mosaic.start_mosaic(tiles, "m", "", str(connection.id), owner, replace=True)
     assert job.replace_existing
 
 
 @pytest.mark.django_db
-def test_mosaic_endpoint(staging, owner):
+def test_mosaic_endpoint(staging, owner, connection):
     api = APIClient()
     api.force_authenticate(user=owner)
-    url = "/api/s3/mosaic/conn"
+    url = f"/api/s3/mosaic/{connection.id}"
 
     accepted = api.post(
         url,
@@ -310,13 +329,14 @@ def _run(owner, settings, tmp_path, s3=None, merge_limit=None, replace=False, ta
             [tiff("Tile 0.tif"), tiff("Tile 1.tif")],
             "Test Mosaic",
             "maps",
-            "conn",
+            str(make_connection(owner).id),
             owner,
             "CC-BY-4.0",
             replace=replace,
         )
     client, submitted = _cng(_outputs, s3, tamper)
     with (
+        healthy(),
         patch("apps.s3.mosaic.get_s3_client", return_value=s3),
         patch("apps.s3.mosaic.read_header", side_effect=headers),
         patch("apps.s3.mosaic.httpx.Client", return_value=client),
@@ -475,8 +495,8 @@ def test_a_failed_check_leaves_a_replaced_mosaic_to_look_into(owner, settings, t
 
 
 @pytest.mark.django_db
-def test_failed_mosaic_fails_the_job_and_cleans_up(owner, settings, tmp_path, staging):
-    job = mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", "conn", owner)
+def test_failed_mosaic_fails_the_job_and_cleans_up(owner, connection, settings, tmp_path, staging):
+    job = mosaic.start_mosaic([tiff("a.tif"), tiff("b.tif")], "m", "", str(connection.id), owner)
 
     def respond(request):
         if request.url.path == "/api/v1/mosaic":
@@ -485,6 +505,7 @@ def test_failed_mosaic_fails_the_job_and_cleans_up(owner, settings, tmp_path, st
 
     client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
     with (
+        healthy(),
         patch("apps.s3.mosaic.httpx.Client", return_value=client),
         patch("apps.s3.mosaic.close_old_connections"),
     ):

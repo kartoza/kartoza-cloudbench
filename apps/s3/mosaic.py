@@ -28,7 +28,6 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.db import close_old_connections
 from django.utils import timezone
 
@@ -37,7 +36,6 @@ from .client import get_s3_client
 from .cng_lite import (
     _provider_name,
     check_target,
-    cng_lite_headers,
     host_contact_email,
     job_directory,
     request_json,
@@ -46,7 +44,7 @@ from .cng_lite import (
     wait_for_job,
 )
 from .cog import TIFF_MAGIC, prepare_tiff
-from .models import CngLiteJob
+from .models import CngLiteJob, CngLiteJobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +157,8 @@ def start_mosaic(
     if the tiles don't agree, or ValueError for anything else wrong with
     the upload.
     """
-    if not settings.CLOUDNATIVEGIS_URL:
-        raise ValueError("CloudNativeGIS URL is not configured.")
+    if not CngLiteJob.is_valid():
+        raise ValueError("CloudNativeGIS is not configured.")
     if len(uploaded_files) < MIN_TILES:
         raise ValueError("A mosaic needs at least two GeoTIFFs.")
     names = [PurePosixPath(f.name).name for f in uploaded_files]
@@ -174,7 +172,7 @@ def start_mosaic(
     folder = check_target(s3_client, output_key, f"{name}.tif", replace)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=user.username,
+        owner=user,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=name,
@@ -311,8 +309,18 @@ def run_mosaic(job_id):
     directory = job_directory(KIND, job_id)
     try:
         job = CngLiteJob.objects.get(pk=job_id)
-        owner = get_user_model().objects.get(username=job.owner_id)
+        owner = job.owner
+        if job.connection_id is None:
+            raise ValueError("The S3 connection this mosaic was uploading to has been deleted.")
         s3_client = get_s3_client(job.connection_id, owner)
+        # The CloudNativeGIS it runs on (see CngLiteJob.provision).
+        update_job(
+            job.id,
+            status=CngLiteJobStatus.PROVISIONING,
+            progress=2,
+            message="Preparing CloudNativeGIS",
+        )
+        job.provision()
         names = list(job.layers or [])
         tiles_dir = _staged_tiles(job.id)
         folder = job.output_key
@@ -326,7 +334,7 @@ def run_mosaic(job_id):
             # Also shows the job is alive while a big upload is staged.
             update_job(
                 job.id,
-                status="running",
+                status=CngLiteJobStatus.PUSHING,
                 progress=5 + round(15 * index / len(names)),
                 message=f"Staging tile {index + 1} of {len(names)}: {name}",
             )
@@ -381,18 +389,29 @@ def run_mosaic(job_id):
                 "upload": put(portolan.THUMBNAIL_FILENAME, portolan.THUMBNAIL_MEDIA_TYPE)
             },
         }
-        update_job(job.id, progress=20, message="Waiting for CloudNativeGIS")
         with httpx.Client(
-            base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
+            base_url=f"{job.cloudnativegis_url}/",
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
-            headers=cng_lite_headers(),
+            headers=job.cloudnativegis_headers(),
         ) as client:
             cng_job_id = request_json(client, "POST", MOSAIC_ENDPOINT, json=payload)["job_id"]
+            update_job(
+                job.id,
+                status=CngLiteJobStatus.POLLING,
+                cng_job_id=cng_job_id,
+                progress=20,
+                message="Waiting for CloudNativeGIS",
+            )
             deadline = time.monotonic() + timeout
             outputs = wait_for_job(client, job.id, cng_job_id, deadline)["outputs"]
 
-        update_job(job.id, progress=85, message="Publishing to catalog")
+        update_job(
+            job.id,
+            status=CngLiteJobStatus.PUBLISHING,
+            progress=85,
+            message="Publishing to catalog",
+        )
         output_keys = []
         for tile, output in zip(tiles, outputs["tiles"], strict=True):
             tile["bbox"] = portolan.wgs84_bbox(output.get("bbox"))
@@ -475,7 +494,7 @@ def run_mosaic(job_id):
         )
         update_job(
             job.id,
-            status="completed",
+            status=CngLiteJobStatus.COMPLETED,
             progress=100,
             output_size=total_size,
             output_keys=[
@@ -493,7 +512,7 @@ def run_mosaic(job_id):
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
         update_job(
             job_id,
-            status="failed",
+            status=CngLiteJobStatus.FAILED,
             message="Mosaic conversion failed",
             error=error,
             completed_at=timezone.now(),

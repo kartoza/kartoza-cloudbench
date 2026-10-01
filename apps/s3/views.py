@@ -21,7 +21,6 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 import httpx
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
 from django.db.models import Q
@@ -42,7 +41,12 @@ from .cog import (
 )
 from .duckdb import get_duckdb_engine
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
-from .models import CngLiteJob, S3Connection
+from .models import (
+    ACTIVE_CNG_LITE_JOB_STATUSES,
+    AWAITING_LAYER_SELECTION,
+    CngLiteJob,
+    S3Connection,
+)
 from .mosaic import start_mosaic
 from .pmtiles import (
     cancel_geopackage_inspection,
@@ -917,18 +921,15 @@ class S3ConversionToolsView(APIView):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             tools["tippecanoe"] = {"available": False}
 
-        tools["cloudnativegis"] = {"available": False, "tool": "CloudNativeGIS"}
-        cloudnativegis_url = getattr(settings, "CLOUDNATIVEGIS_URL", "").rstrip("/")
-        if cloudnativegis_url:
-            try:
-                response = httpx.get(
-                    f"{cloudnativegis_url}/health",
-                    timeout=2.0,
-                    follow_redirects=False,
-                )
-                tools["cloudnativegis"]["available"] = response.status_code == 200
-            except (httpx.HTTPError, httpx.InvalidURL):
-                pass
+        try:
+            cloudnativegis_available = CngLiteJob.health()
+        except NotImplementedError:
+            # CLOUDNATIVEGIS_ON_DEMAND isn't supported yet: no conversions.
+            cloudnativegis_available = False
+        tools["cloudnativegis"] = {
+            "available": cloudnativegis_available,
+            "tool": "CloudNativeGIS",
+        }
 
         # COG conversion runs inside the CloudNativeGIS Lite container, not locally.
         tools["gdal"] = {
@@ -953,18 +954,17 @@ def _recent_conversion_jobs(user):
     left out: that step belongs to the open upload dialog. A running job
     that stopped reporting is marked failed first (see expire_stalled_job).
     """
-    awaiting_selection = Q(status="pending", layers__isnull=True, source_name__iendswith=".gpkg")
     jobs = list(
-        CngLiteJob.objects.filter(owner_id=user.username)
+        CngLiteJob.objects.filter(owner=user)
         .filter(
-            Q(status__in=["pending", "running"])
+            Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
             | Q(completed_at__gte=timezone.now() - RECENT_JOBS_WINDOW)
         )
-        .exclude(awaiting_selection)
+        .exclude(AWAITING_LAYER_SELECTION)
         .order_by("-created_at")[:RECENT_JOBS_LIMIT]
     )
     for job in jobs:
-        if job.status in ("pending", "running"):
+        if job.status in ACTIVE_CNG_LITE_JOB_STATUSES:
             expire_stalled_job(job)
     return jobs
 
@@ -1024,9 +1024,7 @@ class S3ConversionJobsView(APIView):
             conversion_id = uuid.UUID(job_id)
         except ValueError:
             return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
-        cng_lite_job = CngLiteJob.objects.filter(
-            pk=conversion_id, owner_id=request.user.username
-        ).first()
+        cng_lite_job = CngLiteJob.objects.filter(pk=conversion_id, owner=request.user).first()
         if cng_lite_job:
             expire_stalled_job(cng_lite_job)
             return Response(cng_lite_job.to_dict())

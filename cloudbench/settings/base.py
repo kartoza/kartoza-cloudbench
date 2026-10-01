@@ -206,12 +206,25 @@ CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
     1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800"))
 )
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
+# How long a conversion waits for its CloudNativeGIS service to answer /health
+# before failing (see CngLiteJob.provision).
+CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_PROVISIONING_TIMEOUT", "300"))
+)
 # Shared secret sent as `Authorization: Bearer <token>` on every request to
 # CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no
 # auth of its own otherwise. A static token that never expires for now;
 # left blank, no Authorization header is sent (matches a lite instance that
 # hasn't set LITE_API_TOKEN either).
 CLOUDNATIVEGIS_API_TOKEN = os.environ.get("CLOUDNATIVEGIS_API_TOKEN", "")
+# Run CloudNativeGIS on demand per conversion job (its URL/token kept on the
+# CngLiteJob) instead of the fixed CLOUDNATIVEGIS_URL. Not supported yet:
+# with it on, conversions are unavailable (see CngLiteJob.is_valid/health).
+CLOUDNATIVEGIS_ON_DEMAND = os.environ.get("CLOUDNATIVEGIS_ON_DEMAND", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 # A TIFF mosaic up to this total upload size (default 10 GB) gets one merged
 # EPSG:3857 COG as its web rendering, built by CloudNativeGIS; a larger one
 # renders from each tile's own EPSG:3857 COG instead (see apps.s3.mosaic).

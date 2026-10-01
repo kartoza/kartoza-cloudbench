@@ -51,7 +51,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     list_display = [
         "id",
         "kind",
-        "owner_id",
+        "owner",
         "bucket",
         "status",
         "progress",
@@ -59,19 +59,38 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "completed_at",
     ]
     list_filter = ["kind", "status"]
-    search_fields = ["id", "owner_id", "connection_id", "bucket", "source_name", "output_key"]
+    search_fields = [
+        "id",
+        "owner__username",
+        "connection__name",
+        "bucket",
+        "source_name",
+        "output_key",
+    ]
     readonly_fields = [
         "id",
         "kind",
-        "owner_id",
-        "connection_id",
+        "owner",
+        "connection",
         "bucket",
         "source_name",
         "source_key",
         "output_key",
         "input_size",
         "output_size",
+        "cloudnativegis_url",
+        "masked_cloudnativegis_api_token",
+        "cng_job_id",
+        "cng_results",
+        "cng_errors",
+        "depends_on",
         "created_at",
         "updated_at",
         "completed_at",
     ]
+    # Encrypted at rest like S3Connection's keys - never shown in plaintext.
+    exclude = ["cloudnativegis_api_token"]
+
+    @admin.display(description="CloudNativeGIS API token")
+    def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
+        return _mask(obj.cloudnativegis_api_token)

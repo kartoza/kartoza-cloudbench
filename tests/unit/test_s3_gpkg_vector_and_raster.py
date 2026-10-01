@@ -1,6 +1,6 @@
 """Converting a GeoPackage's vector layers and raster tables together."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from rest_framework.test import APIClient
@@ -11,13 +11,12 @@ from apps.s3.models import CngLiteJob
 
 
 @pytest.fixture
-def inspected(settings, tmp_path):
+def inspected(settings, tmp_path, django_user_model):
     """A GeoPackage job as inspect_geopackage leaves it: pending, staged locally."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     job = CngLiteJob.objects.create(
         kind="pmtiles",
-        owner_id="7",
-        connection_id="conn",
+        owner=django_user_model.objects.create(username="7"),
         bucket="bucket",
         source_name="CasteloBranco.gpkg",
         source_key="maps/sources/job/CasteloBranco.gpkg",
@@ -34,7 +33,6 @@ def inspected(settings, tmp_path):
     return job
 
 
-USER = Mock(username="7")
 RASTER_ID = "11111111-2222-3333-4444-555555555555"
 
 
@@ -44,26 +42,28 @@ def test_one_kind_uses_the_single_kind_conversion(inspected):
         patch("apps.s3.geopackage_convert.pmtiles.start_geopackage_conversion") as vector,
         patch("apps.s3.geopackage_convert.cog.start_geopackage_conversion") as raster,
     ):
-        geopackage_convert.start_geopackage_conversion(inspected.id, USER, ["roads"], [])
-        vector.assert_called_once_with(inspected.id, USER, ["roads"])
-        geopackage_convert.start_geopackage_conversion(inspected.id, USER, [], ["dem"])
-        raster.assert_called_once_with(inspected.id, USER, ["dem"])
+        geopackage_convert.start_geopackage_conversion(inspected.id, inspected.owner, ["roads"], [])
+        vector.assert_called_once_with(inspected.id, inspected.owner, ["roads"])
+        geopackage_convert.start_geopackage_conversion(inspected.id, inspected.owner, [], ["dem"])
+        raster.assert_called_once_with(inspected.id, inspected.owner, ["dem"])
 
     with pytest.raises(ValueError, match="at least one"):
-        geopackage_convert.start_geopackage_conversion(inspected.id, USER, [], [])
+        geopackage_convert.start_geopackage_conversion(inspected.id, inspected.owner, [], [])
 
 
 @pytest.mark.django_db
 def test_both_kinds_start_a_vector_job_then_a_raster_job(inspected):
     with patch("apps.s3.geopackage_convert.threading.Thread") as thread:
         vector, raster = geopackage_convert.start_geopackage_conversion(
-            inspected.id, USER, ["roads", "rivers"], ["dem"]
+            inspected.id, inspected.owner, ["roads", "rivers"], ["dem"]
         )
 
     vector.refresh_from_db()
     assert (vector.pk, vector.kind, vector.layers) == (inspected.pk, "pmtiles", ["roads", "rivers"])
     assert raster.kind == "cog"
     assert raster.layers == ["dem"]
+    # ...so a restart resumes it after the vector job (see resume_interrupted_conversions).
+    assert raster.depends_on_id == vector.pk
     # Same upload, same place, same license...
     for field in ("source_name", "source_key", "output_key", "connection_id", "license"):
         assert getattr(raster, field) == getattr(vector, field)
@@ -79,15 +79,16 @@ def test_both_kinds_start_a_vector_job_then_a_raster_job(inspected):
     assert thread.call_args.kwargs["args"] == (vector.id, raster.id)
 
     with pytest.raises(ValueError, match="already started"):
-        geopackage_convert.start_geopackage_conversion(inspected.id, USER, ["roads"], ["dem"])
+        geopackage_convert.start_geopackage_conversion(
+            inspected.id, inspected.owner, ["roads"], ["dem"]
+        )
 
 
 @pytest.mark.django_db
 def test_raster_job_runs_after_vector_from_the_moved_source_into_its_group(inspected):
     raster = CngLiteJob.objects.create(
         kind="cog",
-        owner_id="7",
-        connection_id="conn",
+        owner=inspected.owner,
         bucket="bucket",
         source_name="CasteloBranco.gpkg",
         source_key=inspected.source_key,
@@ -134,7 +135,7 @@ def test_raster_job_still_runs_if_the_vector_job_blows_up(inspected):
 @pytest.mark.django_db
 def test_convert_endpoint_accepts_layers_and_tables(inspected):
     api = APIClient()
-    api.force_authenticate(user=Mock(id=7, username="7", is_authenticated=True))
+    api.force_authenticate(user=inspected.owner)
 
     with patch("apps.s3.geopackage_convert.threading.Thread"):
         both = api.post(

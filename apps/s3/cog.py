@@ -8,10 +8,10 @@ from django.conf import settings
 
 from . import portolan
 from .client import get_s3_client
-from .cng_lite import check_target, job_directory, source_object_key
+from .cng_lite import Converter, check_target, job_directory, source_object_key
 from .cng_lite import run_conversion as run_cng_lite_conversion
 from .geopackage import is_geopackage, prepare_geopackage
-from .models import CngLiteJob
+from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "cog"
 ENDPOINT = "api/v1/cog"
@@ -108,8 +108,8 @@ def start_conversion(
     replace=False,
 ):
     """Start converting an upload; raises TargetExists unless `replace` (see check_target)."""
-    if not settings.CLOUDNATIVEGIS_URL:
-        raise ValueError("CloudNativeGIS URL is not configured.")
+    if not CngLiteJob.is_valid():
+        raise ValueError("CloudNativeGIS is not configured.")
     if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
     geopackage = is_geopackage(uploaded_file.name)
@@ -117,7 +117,7 @@ def start_conversion(
     check_target(s3_client, output_key(key), uploaded_file.name, replace)
     job = CngLiteJob(
         kind=KIND,
-        owner_id=user.username,
+        owner=user,
         connection_id=connection_id,
         bucket=s3_client.bucket,
         source_name=uploaded_file.name,
@@ -178,7 +178,11 @@ def start_geopackage_conversion(job_id, user, tables):
     if not tables:
         raise ValueError("Select at least one raster table.")
     job = CngLiteJob.objects.filter(
-        pk=job_id, owner_id=user.username, kind="pmtiles", status="pending", layers__isnull=True
+        pk=job_id,
+        owner=user,
+        kind="pmtiles",
+        status=CngLiteJobStatus.PENDING,
+        layers__isnull=True,
     ).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
@@ -192,20 +196,21 @@ def start_geopackage_conversion(job_id, user, tables):
     return job
 
 
+CONVERTER = Converter(
+    endpoint=ENDPOINT,
+    content_type=CONTENT_TYPE,
+    validate=validate_cog,
+    invalid_message="CloudNativeGIS did not return a valid COG file.",
+    group_results=group_results,
+    # Only set when confirmed via start_geopackage_conversion (a direct
+    # GeoPackage upload with targetFormat=cog converts every raster table,
+    # same as before).
+    payload=lambda job: {
+        "thumbnail": True,
+        **({"tables": job.layers} if job.layers else {}),
+    },
+)
+
+
 def run_conversion(job_id):
-    run_cng_lite_conversion(
-        job_id,
-        kind=KIND,
-        endpoint=ENDPOINT,
-        validate_result=validate_cog,
-        invalid_result_message="CloudNativeGIS did not return a valid COG file.",
-        output_content_type=CONTENT_TYPE,
-        group_results=group_results,
-        # Only set when confirmed via start_geopackage_conversion (a
-        # direct GeoPackage upload with targetFormat=cog converts every
-        # raster table, same as before).
-        build_extra_payload=lambda job: {
-            "thumbnail": True,
-            **({"tables": job.layers} if job.layers else {}),
-        },
-    )
+    run_cng_lite_conversion(job_id)

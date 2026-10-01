@@ -1,7 +1,7 @@
 // Helpers for showing CloudNativeGIS conversion jobs (the upload dialog and
 // the header's Jobs panel).
 
-import type { ConversionJob } from '../types'
+import type { ConversionJob, ConversionJobStatus } from '../types'
 
 export interface LayerProgressStatus {
   name: string
@@ -26,8 +26,23 @@ export function layerConversionStatuses(job: ConversionJob): LayerProgressStatus
   }))
 }
 
+// Not finished yet - matches ACTIVE_CNG_LITE_JOB_STATUSES on the backend.
+const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
+  'pending',
+  'provisioning',
+  'pushing',
+  'polling',
+  'downloading',
+  'publishing',
+  'running',
+]
+
+export function isActiveStatus(status: ConversionJobStatus | undefined): boolean {
+  return !!status && ACTIVE_JOB_STATUSES.includes(status)
+}
+
 export function isActiveJob(job: ConversionJob): boolean {
-  return job.status === 'pending' || job.status === 'running'
+  return isActiveStatus(job.status)
 }
 
 // What a job produces, for its label: vector layers, rasters, or a mosaic of them.
