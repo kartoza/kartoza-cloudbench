@@ -64,6 +64,8 @@ def test_both_kinds_start_a_vector_job_then_a_raster_job(inspected):
     assert (vector.pk, vector.kind, vector.layers) == (inspected.pk, "pmtiles", ["roads", "rivers"])
     assert raster.kind == "cog"
     assert raster.layers == ["dem"]
+    # ...so a restart resumes it after the vector job (see resume_interrupted_conversions).
+    assert raster.depends_on_id == vector.pk
     # Same upload, same place, same license...
     for field in ("source_name", "source_key", "output_key", "connection_id", "license"):
         assert getattr(raster, field) == getattr(vector, field)

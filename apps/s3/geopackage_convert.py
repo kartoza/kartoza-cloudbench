@@ -62,6 +62,7 @@ def start_geopackage_conversion(job_id, user, layers=None, tables=None):
         # Only the first job clears a confirmed-replace folder: this one
         # publishes beside the layers the vector job just put there.
         replace_existing=False,
+        depends_on=vector,
         message="Waiting for the vector layers to finish",
     )
     _share_staged_source(vector, raster)

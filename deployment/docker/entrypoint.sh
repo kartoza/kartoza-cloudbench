@@ -67,6 +67,14 @@ else:
         print('  PMTiles/COG conversions will be unavailable until it is reachable.')
 " || echo "  CloudNativeGIS: check failed to run, skipping."
 
+# Conversions run in threads of the web server, so this restart cut short
+# any that were in progress. Carry them on in the background - only when
+# starting the server itself, not for one-off commands (shell, migrate, ...).
+if [ "$1" = "gunicorn" ]; then
+    echo "Resuming interrupted CloudNativeGIS conversions in the background..."
+    python manage.py resume_conversions &
+fi
+
 echo "----------------------------------------------------"
 echo "READY"
 echo "----------------------------------------------------"

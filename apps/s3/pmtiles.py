@@ -11,6 +11,7 @@ from django.conf import settings
 from . import portolan
 from .client import get_s3_client
 from .cng_lite import (
+    Converter,
     check_target,
     cng_lite_headers,
     job_directory,
@@ -361,19 +362,20 @@ def validate_pmtiles(output, name=""):
     return output.read(7) == b"PMTiles"
 
 
+CONVERTER = Converter(
+    endpoint=ENDPOINT,
+    content_type=CONTENT_TYPE,
+    validate=validate_pmtiles,
+    invalid_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
+    group_results=group_results,
+    payload=lambda job: {
+        "thumbnail": True,
+        **({"layers": job.layers} if job.layers else {}),
+    },
+)
+
+
 def run_conversion(job_id, create_collection=True):  # noqa: ARG001
     """`create_collection` is no longer used (layer groups come from the catalog;
     see layer_groups) - still accepted for the portolan_backfill command."""
-    run_cng_lite_conversion(
-        job_id,
-        kind=KIND,
-        endpoint=ENDPOINT,
-        validate_result=validate_pmtiles,
-        invalid_result_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
-        output_content_type=CONTENT_TYPE,
-        build_extra_payload=lambda job: {
-            "thumbnail": True,
-            **({"layers": job.layers} if job.layers else {}),
-        },
-        group_results=group_results,
-    )
+    run_cng_lite_conversion(job_id)

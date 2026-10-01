@@ -6,6 +6,7 @@ import uuid
 import httpx
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 from apps.core.fields import EncryptedCharField
 
@@ -63,6 +64,12 @@ ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.RUNNING,
 )
 
+# A GeoPackage still waiting for the user to pick its layers (see
+# apps.s3.pmtiles.inspect_geopackage): pending, but not ready to run.
+AWAITING_LAYER_SELECTION = Q(
+    status=CngLiteJobStatus.PENDING, layers__isnull=True, source_name__iendswith=".gpkg"
+)
+
 
 class CngLiteJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -87,19 +94,31 @@ class CngLiteJob(models.Model):
     # The upload was confirmed to replace an existing layer (or GeoPackage
     # layer group) folder: it's cleared before the new files are published.
     replace_existing = models.BooleanField(default=False)
+    # A job that only runs once this one has finished - a GeoPackage's raster
+    # tables after its vector layers, from wherever publishing those moved the
+    # source to (see apps.s3.geopackage_convert).
+    depends_on = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="dependents"
+    )
     # The CloudNativeGIS service this job's conversion runs on, and its bearer
     # token (encrypted at rest) - for CLOUDNATIVEGIS_ON_DEMAND, where each job
     # gets its own instead of the fixed CLOUDNATIVEGIS_URL/API_TOKEN.
     cloudnativegis_url = models.URLField(max_length=2000, blank=True, default="")
     cloudnativegis_api_token = EncryptedCharField(blank=True, default="")
     # The job's id on the CloudNativeGIS side, set once it has been submitted
-    # there (see apps.s3.cng_lite.run_conversion) - what its status is polled
+    # there (see apps.s3.cng_lite.CNGProcessingClient.push) - what its status is polled
     # and its results downloaded by.
     cng_job_id = models.CharField(max_length=64, blank=True, default="")
+    # CloudNativeGIS' result files once it's done - [{name, result_url, info?}]
+    # - each completed with {file, size, checksum} once downloaded to the job's
+    # directory (see apps.s3.cng_lite.CNGProcessingClient.download), and the
+    # layers/tables it skipped - [{name, error}].
+    cng_results = models.JSONField(null=True, blank=True)
+    cng_errors = models.JSONField(null=True, blank=True)
     # Set when a job produces more than one output file (every GeoPackage
     # job does: one PMTiles per vector layer, or one COG per raster table).
     # `output_key` then becomes the folder they were all stored under,
-    # rather than a single object key — see apps.s3.cng_lite.run_conversion.
+    # rather than a single object key — see apps.s3.cng_lite.CNGProcessingClient.publish.
     output_keys = models.JSONField(null=True, blank=True)
     output_size = models.BigIntegerField(default=0)
     status = models.CharField(
@@ -137,6 +156,9 @@ class CngLiteJob(models.Model):
             )
         return _is_healthy(settings.CLOUDNATIVEGIS_URL)
 
+    # ---------------------------------
+    # STEP 2
+    # ---------------------------------
     def provision(self):
         """Get the CloudNativeGIS service this job runs on, and wait until it's healthy.
 
@@ -153,7 +175,13 @@ class CngLiteJob(models.Model):
         self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
         self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
         self.save(update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"])
+        self.wait_until_healthy()
 
+    def wait_until_healthy(self):
+        """Poll this job's CloudNativeGIS /health until it answers.
+
+        Raises ValueError if it doesn't within CLOUDNATIVEGIS_PROVISIONING_TIMEOUT.
+        """
         timeout = settings.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT
         deadline = time.monotonic() + timeout
         waiting_message = "Waiting for CloudNativeGIS to become ready"

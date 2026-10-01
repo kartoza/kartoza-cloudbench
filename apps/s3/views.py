@@ -41,7 +41,12 @@ from .cog import (
 )
 from .duckdb import get_duckdb_engine
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
-from .models import ACTIVE_CNG_LITE_JOB_STATUSES, CngLiteJob, CngLiteJobStatus, S3Connection
+from .models import (
+    ACTIVE_CNG_LITE_JOB_STATUSES,
+    AWAITING_LAYER_SELECTION,
+    CngLiteJob,
+    S3Connection,
+)
 from .pmtiles import (
     cancel_geopackage_inspection,
     inspect_geopackage,
@@ -876,16 +881,13 @@ def _recent_conversion_jobs(user):
     left out: that step belongs to the open upload dialog. A running job
     that stopped reporting is marked failed first (see expire_stalled_job).
     """
-    awaiting_selection = Q(
-        status=CngLiteJobStatus.PENDING, layers__isnull=True, source_name__iendswith=".gpkg"
-    )
     jobs = list(
         CngLiteJob.objects.filter(owner_id=user.username)
         .filter(
             Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
             | Q(completed_at__gte=timezone.now() - RECENT_JOBS_WINDOW)
         )
-        .exclude(awaiting_selection)
+        .exclude(AWAITING_LAYER_SELECTION)
         .order_by("-created_at")[:RECENT_JOBS_LIMIT]
     )
     for job in jobs:
