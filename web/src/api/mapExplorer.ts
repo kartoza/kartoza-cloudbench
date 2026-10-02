@@ -10,6 +10,10 @@ import { PMTiles } from 'pmtiles'
 import { API_BASE, handleResponse } from './common'
 import { getS3Connections } from './s3'
 
+// What Map Explorer renders: vector/raster PMTiles, an EPSG:3857 COG, or a
+// COPC point cloud (drawn by maplibre-gl-lidar).
+export type LayerFormat = 'pmtiles' | 'cog' | 'copc'
+
 export interface S3PmtilesObject {
   key: string
   size: number
@@ -69,6 +73,10 @@ export async function listPmtilesObjects(connectionId: string): Promise<S3Pmtile
   return listObjectsByExtensions(connectionId, ['.pmtiles'])
 }
 
+export async function listCopcObjects(connectionId: string): Promise<S3PmtilesObject[]> {
+  return listObjectsByExtensions(connectionId, ['.copc.laz'])
+}
+
 export async function listCogObjects(connectionId: string): Promise<S3PmtilesObject[]> {
   const objects = await listObjectsByExtensions(connectionId, ['.tif', '.tiff'])
   // maplibre-cog-protocol only renders Web Mercator COGs. cng-lite's COG
@@ -82,7 +90,7 @@ export interface S3LayerCatalogEntry {
   connectionName: string
   bucketName: string
   key: string
-  format: 'pmtiles' | 'cog'
+  format: LayerFormat
 }
 
 export interface S3LayerCatalog {
@@ -104,7 +112,7 @@ export interface LayerCollectionSummary {
 export interface LayerCollectionItem {
   name: string
   key: string
-  format: 'pmtiles' | 'cog'
+  format: LayerFormat
 }
 
 export interface LayerCollectionDetail extends LayerCollectionSummary {
@@ -128,7 +136,7 @@ export interface CatalogueLayerEntry {
   name: string
   // The file Map Explorer renders: a PMTiles, or an EPSG:3857 COG.
   key: string
-  format: 'pmtiles' | 'cog'
+  format: LayerFormat
   folder: string
   thumbnailKey: string | null
   size: number | null
@@ -173,9 +181,10 @@ export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
 
   for (const connection of connections) {
     try {
-      const [pmtilesObjects, cogObjects] = await Promise.all([
+      const [pmtilesObjects, cogObjects, copcObjects] = await Promise.all([
         listPmtilesObjects(connection.id),
         listCogObjects(connection.id),
+        listCopcObjects(connection.id),
       ])
       for (const obj of pmtilesObjects) {
         entries.push({
@@ -193,6 +202,15 @@ export async function listAllLayerObjects(): Promise<S3LayerCatalog> {
           bucketName: connection.bucket,
           key: obj.key,
           format: 'cog',
+        })
+      }
+      for (const obj of copcObjects) {
+        entries.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          bucketName: connection.bucket,
+          key: obj.key,
+          format: 'copc',
         })
       }
     } catch {

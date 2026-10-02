@@ -21,7 +21,12 @@ _MAGIC = {
     portolan.PMTILES_MEDIA_TYPE: ("a PMTiles file", (b"PMTiles",)),
     portolan.PARQUET_MEDIA_TYPE: ("a Parquet file", (b"PAR1",)),
     portolan.THUMBNAIL_MEDIA_TYPE: ("a PNG", (b"\x89PNG\r\n\x1a\n",)),
+    # A COPC is a LAS file whose first VLR, right after the 375-byte
+    # header, is "copc"'s (user id at byte 377).
+    portolan.COPC_MEDIA_TYPE: ("a COPC point cloud", (b"LASF",)),
 }
+# Bytes further in that a kind must also carry: (offset, bytes).
+_MAGIC_AT = {portolan.COPC_MEDIA_TYPE: (377, b"copc")}
 
 
 def presign_put(s3_client, key: str, expiry: int, content_type: str) -> str:
@@ -66,11 +71,14 @@ def verify_uploads(s3_client, expected: list[tuple[str, int, str]]) -> None:
             raise ValueError(f"{name} was stored as {info['contentType']!r}, not {content_type!r}.")
         if content_type in _MAGIC:
             kind, magic = _MAGIC[content_type]
-            length = max(len(m) for m in magic)
+            offset, inner = _MAGIC_AT.get(content_type, (0, b""))
+            length = max(*(len(m) for m in magic), offset + len(inner))
             head = s3_client.client.get_object(
                 Bucket=s3_client.bucket, Key=key, Range=f"bytes=0-{length - 1}"
             )["Body"].read()
-            if not any(head.startswith(m) for m in magic):
+            if not any(head.startswith(m) for m in magic) or (
+                inner and head[offset : offset + len(inner)] != inner
+            ):
                 raise ValueError(f"{name} in the bucket isn't {kind}.")
 
 

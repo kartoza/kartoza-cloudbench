@@ -121,7 +121,7 @@ describe('mapExplorer API', () => {
       }
       if (url.includes('/s3/objects/bad')) return json({ error: 'down' }, 500)
       return json({
-        objects: [object('l/roads.pmtiles'), object('l/dem_3857.tif')],
+        objects: [object('l/roads.pmtiles'), object('l/dem_3857.tif'), object('l/autzen.copc.laz'), object('l/raw.laz')],
         prefixes: [],
         isTruncated: false,
       })
@@ -144,6 +144,14 @@ describe('mapExplorer API', () => {
         bucketName: 'bkt',
         key: 'l/dem_3857.tif',
         format: 'cog',
+      },
+      // A COPC point cloud (not a plain LAZ, which isn't cloud-optimized).
+      {
+        connectionId: 'good',
+        connectionName: 'Good',
+        bucketName: 'bkt',
+        key: 'l/autzen.copc.laz',
+        format: 'copc',
       },
     ])
   })

@@ -306,10 +306,14 @@ def plan_layers(job, names, assets_for):
 
 
 def converter_for(kind):
-    # pmtiles/cog import this module, so they're only imported when needed.
-    from . import cog, pmtiles  # noqa: PLC0415
+    # pmtiles/cog/copc import this module, so they're only imported when needed.
+    from . import cog, copc, pmtiles  # noqa: PLC0415
 
-    return {pmtiles.KIND: pmtiles.CONVERTER, cog.KIND: cog.CONVERTER}[kind]
+    return {
+        pmtiles.KIND: pmtiles.CONVERTER,
+        cog.KIND: cog.CONVERTER,
+        copc.KIND: copc.CONVERTER,
+    }[kind]
 
 
 class CNGProcessingClient:

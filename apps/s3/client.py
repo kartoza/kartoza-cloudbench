@@ -222,16 +222,18 @@ class S3Client:
         response = self.client.get_object(Bucket=self.bucket, Key=key)
         return cast(bytes, response["Body"].read())
 
-    def get_object_stream(self, key: str) -> BinaryIO:
+    def get_object_stream(self, key: str, byte_range: str | None = None) -> BinaryIO:
         """Get object content as a stream.
 
         Args:
             key: Object key
+            byte_range: An HTTP Range value ("bytes=0-99") to read just that part
 
         Returns:
             StreamingBody for the object
         """
-        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        extra = {"Range": byte_range} if byte_range else {}
+        response = self.client.get_object(Bucket=self.bucket, Key=key, **extra)
         return cast(BinaryIO, response["Body"])
 
     def get_object_info(self, key: str) -> dict[str, Any]:

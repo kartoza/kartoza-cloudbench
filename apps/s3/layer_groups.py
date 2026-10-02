@@ -18,6 +18,7 @@ from typing import Any
 
 from apps.stac import portolan_layers
 
+from . import portolan
 from .client import get_s3_client
 from .models import S3Connection
 
@@ -44,22 +45,39 @@ def _layer_item(layer: dict[str, Any]) -> dict[str, str] | None:
     """A layer as a group item: its renderable file (what Map Explorer opens).
 
     A vector layer's PMTiles (its rel=pmtiles link, or a "visual" asset in
-    older layers); a raster's EPSG:3857 COG ("visual" asset); else its data.
+    older layers); a raster's EPSG:3857 COG ("visual" asset); else its data -
+    a point cloud's COPC, which is its own visual.
     """
     collection = layer["collection"]
-    assets = collection.get("assets", {})
-    pmtiles = next(
-        (link for link in collection.get("links", []) if link.get("rel") == "pmtiles"), None
-    )
-    target = pmtiles or assets.get("visual") or assets.get("data")
+    target = _renderable(collection)
     if not target or not target.get("href"):
         return None
     key = posixpath.normpath(posixpath.join(layer["folder"], target["href"]))
     return {
         "name": collection.get("title") or posixpath.basename(layer["folder"]),
         "key": key,
-        "format": "pmtiles" if key.lower().endswith(".pmtiles") else "cog",
+        "format": _format_of(key, target),
     }
+
+
+def _renderable(collection: dict[str, Any]) -> dict[str, Any] | None:
+    """The asset or link Map Explorer draws for a layer (see _layer_item)."""
+    assets = collection.get("assets", {})
+    pmtiles = next(
+        (link for link in collection.get("links", []) if link.get("rel") == "pmtiles"), None
+    )
+    target: dict[str, Any] | None = pmtiles or assets.get("visual") or assets.get("data")
+    return target
+
+
+def _format_of(key: str, target: dict[str, Any]) -> str:
+    """How Map Explorer draws `key`: "pmtiles", "copc" (point cloud) or "cog"."""
+    lower = key.lower()
+    if lower.endswith(".pmtiles"):
+        return "pmtiles"
+    if target.get("type") == portolan.COPC_MEDIA_TYPE or lower.endswith(".copc.laz"):
+        return "copc"
+    return "cog"
 
 
 def _source_name(layers: list[dict[str, Any]], fallback: str) -> str:
@@ -159,11 +177,7 @@ def _layer_entry(layer: dict[str, Any]) -> dict[str, Any] | None:
     collection = layer["collection"]
     folder = layer["folder"]
     thumbnail = collection.get("assets", {}).get("thumbnail")
-    renderable = (
-        next((link for link in collection.get("links", []) if link.get("rel") == "pmtiles"), None)
-        or collection.get("assets", {}).get("visual")
-        or {}
-    )
+    renderable = _renderable(collection) or {}
     return {
         "kind": "layer",
         **item,
@@ -214,10 +228,18 @@ def _catalog_entries(conn, layers: list[dict[str, Any]]) -> list[dict[str, Any]]
     return entries
 
 
+def _stem(key: str) -> str:
+    """A file's name without its extension ("autzen" for "autzen.copc.laz")."""
+    name = posixpath.basename(key)
+    if name.lower().endswith(".copc.laz"):
+        return name[: -len(".copc.laz")]
+    return posixpath.splitext(name)[0]
+
+
 def _scanned_entries(client) -> list[dict[str, Any]]:
     """For a bucket without a catalog: its map-ready files, as standalone layers.
 
-    PMTiles and EPSG:3857 COGs (what Map Explorer renders), skipping jobs'
+    PMTiles, EPSG:3857 COGs and COPCs (what Map Explorer renders), skipping jobs'
     staged uploads; a sibling thumbnail.png is used when there is one.
     """
     objects: list[dict[str, Any]] = []
@@ -241,6 +263,8 @@ def _scanned_entries(client) -> list[dict[str, Any]]:
             fmt = "pmtiles"
         elif re.search(r"_3857\.tiff?$", lower):
             fmt = "cog"
+        elif lower.endswith(".copc.laz"):
+            fmt = "copc"
         else:
             continue
         folder = posixpath.dirname(key)
@@ -248,7 +272,7 @@ def _scanned_entries(client) -> list[dict[str, Any]]:
         entries.append(
             {
                 "kind": "layer",
-                "name": posixpath.splitext(posixpath.basename(key))[0],
+                "name": _stem(key),
                 "key": key,
                 "format": fmt,
                 "folder": folder,

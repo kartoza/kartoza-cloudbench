@@ -5,6 +5,8 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Protocol } from 'pmtiles'
 import { cogProtocol } from '@geomatico/maplibre-cog-protocol'
+import { LidarControl } from 'maplibre-gl-lidar'
+import 'maplibre-gl-lidar/style.css'
 import {
   getLayerCollection,
   getLayerCollections,
@@ -97,6 +99,8 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
   const overlayContainer = useRef<HTMLDivElement | null>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const protocolRef = useRef<Protocol | null>(null)
+  // Draws every COPC point cloud on the map; added the first time one is opened.
+  const lidarRef = useRef<LidarControl | null>(null)
   // Synchronous add-guard, independent of React's (batched/deferred) state
   // updates — addLayer needs to know immediately whether an id is new.
   const addedLayerIdsRef = useRef<Set<string>>(new Set())
@@ -178,6 +182,7 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     return () => {
       mapInstance.remove()
       map.current = null
+      lidarRef.current = null
       maplibregl.removeProtocol('pmtiles')
       maplibregl.removeProtocol('cog')
     }
@@ -206,10 +211,18 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     }
     setLayers((prev) => [...prev, newLayer])
 
-    loadLayerOntoMap(mapInstance, protocol, option.connectionId, newLayer)
-      .then(({ bounds, isVector, sourceLayer }) => {
+    const getLidar = () => {
+      if (!lidarRef.current) {
+        lidarRef.current = new LidarControl({ collapsed: true, pointSize: 2, colorScheme: 'elevation', pickable: true })
+        mapInstance.addControl(lidarRef.current, 'top-right')
+      }
+      return lidarRef.current
+    }
+
+    loadLayerOntoMap(mapInstance, protocol, option.connectionId, newLayer, getLidar)
+      .then(({ bounds, isVector, sourceLayer, pointCloudId }) => {
         setLayers((cur) =>
-          cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds, isVector, sourceLayer } : l))
+          cur.map((l) => (l.id === id ? { ...l, status: 'ready', bounds, isVector, sourceLayer, pointCloudId } : l))
         )
         mapInstance.fitBounds(
           [
@@ -354,6 +367,11 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
     setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, opacity: value } : l)))
     const mapInstance = map.current
     if (!mapInstance) return
+    // maplibre-gl-lidar has one opacity for all its point clouds.
+    if (layersRef.current.find((l) => l.id === layerId)?.format === 'copc') {
+      lidarRef.current?.setOpacity(value / 100)
+      return
+    }
 
     // Covers every rendered layer for this id: the default `-fill`/`-line`
     // pair, a raster/cog layer (bare id), or a saved custom style's
@@ -392,6 +410,8 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
   const handleRemoveLayer = useCallback((layerId: string) => {
     const mapInstance = map.current
+    const pointCloudId = layersRef.current.find((l) => l.id === layerId)?.pointCloudId
+    if (pointCloudId) lidarRef.current?.unloadPointCloud(pointCloudId)
     if (mapInstance) {
       // Covers the raster case (plain `layerId`), the default fill/line
       // rendering, and a custom style's own layers (`${layerId}-custom-0`,

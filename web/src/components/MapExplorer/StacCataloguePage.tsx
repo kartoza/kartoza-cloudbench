@@ -23,6 +23,7 @@ import {
   type CatalogueConnection,
   type CatalogueGroupEntry,
   type CatalogueLayerEntry,
+  type LayerFormat,
 } from '../../api/mapExplorer'
 import { getConnections } from '../../api/connection'
 import { getWorkspaces } from '../../api/workspace'
@@ -33,7 +34,7 @@ export interface MapTarget {
   connectionId: string
   bucketName: string
   key: string
-  format?: 'pmtiles' | 'cog'
+  format?: LayerFormat
   name?: string
 }
 
@@ -125,7 +126,7 @@ function layerItem(connection: CatalogueConnection, layer: CatalogueLayerEntry):
   return {
     id: `s3-${connection.connectionId}-${layer.key}`,
     title: layer.name,
-    badge: isVector ? 'Vector' : 'Raster',
+    badge: isVector ? 'Vector' : layer.format === 'copc' ? 'Point cloud' : 'Raster',
     description: describe([layer.size != null && formatBytes(layer.size), updatedLabel(layer.updated)]),
     hasThumbnail: true,
     thumbnail: layer.thumbnailKey ? { connectionId: connection.connectionId, key: layer.thumbnailKey } : undefined,
