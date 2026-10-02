@@ -13,8 +13,10 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .config import get_config
-from .models import Connection, GeoNodeConnection, PGService
+from apps.connections.models import GeoServerConnection
+from apps.geonode.models import GeoNodeConnection
+from apps.postgres.models import PostgresService
+
 from .sso_auth import sign_sso_token
 
 
@@ -46,15 +48,6 @@ def _connection_id(instance_id) -> str:
     return f"geohosting_{instance_id}"
 
 
-def _update_password_if_empty(items, conn_id: str, password: str) -> bool:
-    """Fill in a blank password on an existing connection, if one is given."""
-    for item in items:
-        if item.id == conn_id and not item.password and password:
-            item.password = password
-            return True
-    return False
-
-
 class GeoHostingInstanceView(APIView):
     """Upsert or remove a GeoHosting-managed connection in CloudBench."""
 
@@ -82,72 +75,43 @@ class GeoHostingInstanceView(APIView):
         username = data.get("username", "")
         password = data.get("password", "")
         is_active = bool(data.get("is_active", False))
-        conn_id = _connection_id(instance_id)
-
-        manager = get_config(get_user(owner_username))
-        config = manager.config
-        changed = False
 
         if product == ProductNames.GEOSERVER:
-            existing_ids = {c.id for c in config.connections}
-            if conn_id not in existing_ids:
-                config.connections.append(
-                    Connection(
-                        id=conn_id,
-                        name=name,
-                        url=f"{url}/geoserver",
-                        username=username,
-                        password=password,
-                        is_active=is_active,
-                    )
-                )
-                changed = True
-            else:
-                changed = _update_password_if_empty(config.connections, conn_id, password)
+            model = GeoServerConnection
+            fields = {"url": f"{url}/geoserver", "username": username}
         elif product == ProductNames.GEONODE:
-            existing_ids = {c.id for c in config.geonode_connections}
-            if conn_id not in existing_ids:
-                config.geonode_connections.append(
-                    GeoNodeConnection(
-                        id=conn_id,
-                        name=name,
-                        url=url,
-                        username=username,
-                        password=password,
-                        is_active=is_active,
-                    )
-                )
-                changed = True
-            else:
-                changed = _update_password_if_empty(config.geonode_connections, conn_id, password)
+            model = GeoNodeConnection
+            fields = {"url": url, "username": username}
         elif product == ProductNames.POSTGIS:
-            existing_ids = {s.id for s in config.pg_services}
-            if conn_id not in existing_ids:
-                host = url.removeprefix("https://").removeprefix("http://")
-                config.pg_services.append(
-                    PGService(
-                        id=conn_id,
-                        name=name,
-                        host=host,
-                        port=5432,
-                        dbname="gis",
-                        user=username,
-                        password=password,
-                        is_active=is_active,
-                        sslmode="require",
-                    )
-                )
-                changed = True
-            else:
-                changed = _update_password_if_empty(config.pg_services, conn_id, password)
+            model = PostgresService
+            fields = {
+                "host": url.removeprefix("https://").removeprefix("http://"),
+                "port": 5432,
+                "dbname": "gis",
+                "user": username,
+                "sslmode": "require",
+            }
         else:
             return Response(
                 {"detail": f"Unknown product '{product}'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if changed:
-            manager.save()
+        owner = get_user(owner_username)
+        conn_id = _connection_id(instance_id)
+        existing = model.objects.filter(owner=owner, connection_id=conn_id).first()
+        if existing is None:
+            model.objects.create(
+                owner=owner,
+                connection_id=conn_id,
+                name=name,
+                password=password,
+                is_active=is_active,
+                **fields,
+            )
+        elif not existing.password and password:
+            existing.password = password
+            existing.save()
         return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
     def delete(self, request, instance_id):
@@ -159,28 +123,10 @@ class GeoHostingInstanceView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        owner = get_user(owner_username)
         conn_id = _connection_id(instance_id)
-        manager = get_config(get_user(owner_username))
-        config = manager.config
-        changed = False
-
-        filtered = [c for c in config.connections if c.id != conn_id]
-        if len(filtered) != len(config.connections):
-            config.connections = filtered
-            changed = True
-
-        filtered = [c for c in config.geonode_connections if c.id != conn_id]
-        if len(filtered) != len(config.geonode_connections):
-            config.geonode_connections = filtered
-            changed = True
-
-        filtered = [s for s in config.pg_services if s.id != conn_id]
-        if len(filtered) != len(config.pg_services):
-            config.pg_services = filtered
-            changed = True
-
-        if changed:
-            manager.save()
+        for model in (GeoServerConnection, GeoNodeConnection, PostgresService):
+            model.objects.filter(owner=owner, connection_id=conn_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

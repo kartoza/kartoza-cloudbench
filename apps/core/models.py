@@ -8,10 +8,19 @@ from pydantic import BaseModel, Field
 T = TypeVar("T", bound=BaseModel)
 
 
+def _new_id(prefix: str):
+    """Default-id factory: `<prefix>_<random hex>`.
+
+    Ids used to be `<prefix>_<timestamp to the second>`, which collided when
+    two connections were created within the same second.
+    """
+    return lambda: f"{prefix}_{uuid.uuid4().hex}"
+
+
 class Connection(BaseModel):
     """GeoServer connection configuration."""
 
-    id: str = Field(default_factory=lambda: f"conn_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=_new_id("conn"))
     name: str
     url: str
     username: str
@@ -106,7 +115,7 @@ class QGISProject(BaseModel):
 class GeoNodeConnection(BaseModel):
     """GeoNode instance connection configuration."""
 
-    id: str = Field(default_factory=lambda: f"geonode_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=_new_id("geonode"))
     name: str
     url: str
     username: str = ""
@@ -118,9 +127,7 @@ class GeoNodeConnection(BaseModel):
 class QFieldCloudConnection(BaseModel):
     """QFieldCloud instance connection configuration."""
 
-    id: str = Field(
-        default_factory=lambda: f"qfieldcloud_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    id: str = Field(default_factory=_new_id("qfieldcloud"))
     name: str
     url: str = "https://app.qfield.cloud"
     username: str = ""
@@ -132,7 +139,7 @@ class QFieldCloudConnection(BaseModel):
 class MerginMapsConnection(BaseModel):
     """Mergin Maps server connection configuration."""
 
-    id: str = Field(default_factory=lambda: f"mergin_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=_new_id("mergin"))
     name: str
     url: str = "https://app.merginmaps.com"
     username: str
@@ -144,7 +151,7 @@ class MerginMapsConnection(BaseModel):
 class IcebergCatalogConnection(BaseModel):
     """Apache Iceberg REST Catalog connection."""
 
-    id: str = Field(default_factory=lambda: f"iceberg_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=_new_id("iceberg"))
     name: str
     url: str
     warehouse: str = ""
@@ -171,26 +178,27 @@ class SavedQuery(BaseModel):
 
 
 class Config(BaseModel):
-    """Main application configuration."""
+    """Main application configuration (the per-user config.json).
 
-    connections: list[Connection] = Field(default_factory=list)
+    Saved connections are no longer part of this — they live in the
+    database (see apps.core.db.ConnectionModel).
+    """
+
     active_connection: str = ""
     last_local_path: str = Field(default_factory=lambda: str(Path.home()))
     theme: str = "default"
     sync_configs: list[SyncConfiguration] = Field(default_factory=list)
     ping_interval_secs: int = 60
-    pg_services: list[PGService] = Field(default_factory=list)
     saved_queries: list[SavedQuery] = Field(default_factory=list)
     qgis_projects: list[QGISProject] = Field(default_factory=list)
-    geonode_connections: list[GeoNodeConnection] = Field(default_factory=list)
-    qfieldcloud_connections: list[QFieldCloudConnection] = Field(default_factory=list)
-    iceberg_connections: list[IcebergCatalogConnection] = Field(default_factory=list)
-    merginmaps_connections: list[MerginMapsConnection] = Field(default_factory=list)
 
     class Config:
         """Pydantic configuration."""
 
-        # Allow extra fields for forward compatibility
+        # Allow extra fields for forward compatibility. This also keeps the
+        # legacy connection lists (e.g. "connections", "pg_services") intact
+        # in an old config.json until `manage.py migrate_connections` has
+        # imported them into the database.
         extra = "allow"
 
 
@@ -216,3 +224,8 @@ class ProvidersConfig(BaseModel):
         """Pydantic configuration."""
 
         extra = "allow"
+
+
+# Django discovers an app's models through its `models` module; this one is
+# otherwise Pydantic schemas, so the core Django model lives in db.py.
+from .db import LegacyConnectionImport  # noqa: E402, F401

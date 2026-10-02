@@ -1,7 +1,14 @@
 """Configuration manager for Kartoza CloudBench.
 
-Provides JSON file-based configuration compatible with the Go backend.
-Uses XDG Base Directory specification for config file location.
+Saved connections (GeoServer, PostgreSQL, GeoNode, QFieldCloud, Mergin Maps,
+Iceberg) are stored in the database, one table per type with secrets
+encrypted at rest — see apps.core.db.ConnectionModel. Everything else
+(settings, sync configs, saved queries, QGIS projects) is still a per-user
+JSON file, located via the XDG Base Directory specification.
+
+Connections still in an old config.json are imported automatically on
+deploy by the `cloudbench_core.0001_import_legacy_connections` data
+migration (re-runnable with `python manage.py migrate_connections`).
 """
 
 import json
@@ -10,6 +17,14 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from apps.connections.models import GeoServerConnection
+from apps.geonode.models import GeoNodeConnection as GeoNodeConnectionModel
+from apps.iceberg.models import IcebergCatalogConnection as IcebergCatalogConnectionModel
+from apps.mergin.models import MerginMapsConnection as MerginMapsConnectionModel
+from apps.postgres.models import PostgresService
+from apps.qfieldcloud.models import QFieldCloudConnection as QFieldCloudConnectionModel
+
+from .db import ConnectionModel
 from .models import (
     Config,
     Connection,
@@ -94,13 +109,38 @@ class ConfigManager:
 
         return self.post_process_config(config)
 
+    # Generic connection storage, one table per connection type.
+    def _rows(self, model: type[ConnectionModel]):
+        return model.objects.filter(owner=self._user)
+
+    def _list(self, model: type[ConnectionModel]) -> list:
+        return [row.to_schema() for row in self._rows(model)]
+
+    def _get(self, model: type[ConnectionModel], conn_id: str):
+        row = self._rows(model).filter(connection_id=conn_id).first()
+        return row.to_schema() if row else None
+
+    def _add(self, model: type[ConnectionModel], obj) -> None:
+        row = model(owner=self._user)
+        row.apply_schema(obj)
+        row.save()
+
+    def _update(self, model: type[ConnectionModel], obj, **lookup) -> bool:
+        row = self._rows(model).filter(**(lookup or {"connection_id": obj.id})).first()
+        if row is None:
+            return False
+        row.apply_schema(obj)
+        row.save()
+        return True
+
+    def _delete(self, model: type[ConnectionModel], **lookup) -> bool:
+        deleted, _ = self._rows(model).filter(**lookup).delete()
+        return deleted > 0
+
     # Connection management methods
     def get_connection(self, conn_id: str) -> Connection | None:
         """Get a connection by ID."""
-        for conn in self.config.connections:
-            if conn.id == conn_id:
-                return conn
-        return None
+        return self._get(GeoServerConnection, conn_id)
 
     def get_active_connection(self) -> Connection | None:
         """Get the currently active connection."""
@@ -108,24 +148,18 @@ class ConfigManager:
 
     def add_connection(self, conn: Connection) -> None:
         """Add a new connection."""
-        self.config.connections.append(conn)
-        self.save()
+        self._add(GeoServerConnection, conn)
 
     def update_connection(self, conn: Connection) -> bool:
         """Update an existing connection."""
-        for i, existing in enumerate(self.config.connections):
-            if existing.id == conn.id:
-                self.config.connections[i] = conn
-                self.save()
-                return True
-        return False
+        return self._update(GeoServerConnection, conn)
 
     def remove_connection(self, conn_id: str) -> None:
         """Remove a connection by ID."""
-        self.config.connections = [c for c in self.config.connections if c.id != conn_id]
+        self._delete(GeoServerConnection, connection_id=conn_id)
         if self.config.active_connection == conn_id:
             self.config.active_connection = ""
-        self.save()
+            self.save()
 
     def set_active_connection(self, conn_id: str) -> None:
         """Set the active connection."""
@@ -134,7 +168,7 @@ class ConfigManager:
 
     def list_connections(self) -> list[Connection]:
         """List all connections."""
-        return list(self.config.connections)
+        return self._list(GeoServerConnection)
 
     # Sync config management
     def get_sync_config(self, config_id: str) -> SyncConfiguration | None:
@@ -163,211 +197,122 @@ class ConfigManager:
         self.config.sync_configs = [c for c in self.config.sync_configs if c.id != config_id]
         self.save()
 
-    # PostgreSQL service state management
+    # PostgreSQL service state management (looked up by name, not id)
     def list_pg_services(self) -> list[PGService]:
-        return list(self.config.pg_services)
+        return self._list(PostgresService)
 
     def get_pg_service(self, name: str) -> PGService | None:
-        for svc in self.config.pg_services:
-            if svc.name == name:
-                return svc
-        return None
+        row = self._rows(PostgresService).filter(name=name).first()
+        return row.to_schema() if row else None
 
     def add_pg_service(self, svc: PGService) -> None:
-        self.config.pg_services.append(svc)
-        self.save()
+        self._add(PostgresService, svc)
 
     def update_pg_service(self, svc: PGService) -> bool:
-        for i, s in enumerate(self.config.pg_services):
-            if s.name == svc.name:
-                self.config.pg_services[i] = svc
-                self.save()
-                return True
-        return False
+        return self._update(PostgresService, svc, name=svc.name)
 
     def delete_pg_service(self, name: str) -> bool:
-        before = len(self.config.pg_services)
-        self.config.pg_services = [s for s in self.config.pg_services if s.name != name]
-        if len(self.config.pg_services) < before:
-            self.save()
-            return True
-        return False
+        return self._delete(PostgresService, name=name)
 
     # QFieldCloud connection management
     def list_qfieldcloud_connections(self) -> list[QFieldCloudConnection]:
         """List all QFieldCloud connections."""
-        return list(self.config.qfieldcloud_connections)
+        return self._list(QFieldCloudConnectionModel)
 
     def get_qfieldcloud_connection(self, conn_id: str) -> QFieldCloudConnection | None:
         """Get a QFieldCloud connection by ID."""
-        for conn in self.config.qfieldcloud_connections:
-            if conn.id == conn_id:
-                return conn
-        return None
+        return self._get(QFieldCloudConnectionModel, conn_id)
 
     def add_qfieldcloud_connection(self, conn: QFieldCloudConnection) -> None:
         """Add a new QFieldCloud connection."""
-        self.config.qfieldcloud_connections.append(conn)
-        self.save()
+        self._add(QFieldCloudConnectionModel, conn)
 
     def update_qfieldcloud_connection(self, conn: QFieldCloudConnection) -> bool:
         """Update an existing QFieldCloud connection."""
-        for i, existing in enumerate(self.config.qfieldcloud_connections):
-            if existing.id == conn.id:
-                self.config.qfieldcloud_connections[i] = conn
-                self.save()
-                return True
-        return False
+        return self._update(QFieldCloudConnectionModel, conn)
 
     def remove_qfieldcloud_connection(self, conn_id: str) -> None:
         """Remove a QFieldCloud connection by ID."""
-        self.config.qfieldcloud_connections = [
-            c for c in self.config.qfieldcloud_connections if c.id != conn_id
-        ]
-        self.save()
+        self.delete_qfieldcloud_connection(conn_id)
 
     def delete_qfieldcloud_connection(self, conn_id: str) -> bool:
         """Delete a QFieldCloud connection by ID. Returns True if found."""
-        original_len = len(self.config.qfieldcloud_connections)
-        self.config.qfieldcloud_connections = [
-            c for c in self.config.qfieldcloud_connections if c.id != conn_id
-        ]
-        if len(self.config.qfieldcloud_connections) < original_len:
-            self.save()
-            return True
-        return False
+        return self._delete(QFieldCloudConnectionModel, connection_id=conn_id)
 
     # Mergin Maps connection management
     def list_mergin_connections(self) -> list[MerginMapsConnection]:
         """List all Mergin Maps connections."""
-        return list(self.config.merginmaps_connections)
+        return self._list(MerginMapsConnectionModel)
 
     def get_mergin_connection(self, conn_id: str) -> MerginMapsConnection | None:
         """Get a Mergin Maps connection by ID."""
-        for conn in self.config.merginmaps_connections:
-            if conn.id == conn_id:
-                return conn
-        return None
+        return self._get(MerginMapsConnectionModel, conn_id)
 
     def add_mergin_connection(self, conn: MerginMapsConnection) -> None:
         """Add a new Mergin Maps connection."""
-        self.config.merginmaps_connections.append(conn)
-        self.save()
+        self._add(MerginMapsConnectionModel, conn)
 
     def update_mergin_connection(self, conn: MerginMapsConnection) -> bool:
         """Update an existing Mergin Maps connection."""
-        for i, existing in enumerate(self.config.merginmaps_connections):
-            if existing.id == conn.id:
-                self.config.merginmaps_connections[i] = conn
-                self.save()
-                return True
-        return False
+        return self._update(MerginMapsConnectionModel, conn)
 
     def remove_mergin_connection(self, conn_id: str) -> None:
         """Remove a Mergin Maps connection by ID."""
-        self.config.merginmaps_connections = [
-            c for c in self.config.merginmaps_connections if c.id != conn_id
-        ]
-        self.save()
+        self.delete_mergin_connection(conn_id)
 
     def delete_mergin_connection(self, conn_id: str) -> bool:
         """Delete a Mergin Maps connection by ID. Returns True if found."""
-        original_len = len(self.config.merginmaps_connections)
-        self.config.merginmaps_connections = [
-            c for c in self.config.merginmaps_connections if c.id != conn_id
-        ]
-        if len(self.config.merginmaps_connections) < original_len:
-            self.save()
-            return True
-        return False
+        return self._delete(MerginMapsConnectionModel, connection_id=conn_id)
 
     # GeoNode connection management
     def list_geonode_connections(self) -> list[GeoNodeConnection]:
         """List all GeoNode connections."""
-        return list(self.config.geonode_connections)
+        return self._list(GeoNodeConnectionModel)
 
     def get_geonode_connection(self, conn_id: str) -> GeoNodeConnection | None:
         """Get a GeoNode connection by ID."""
-        for conn in self.config.geonode_connections:
-            if conn.id == conn_id:
-                return conn
-        return None
+        return self._get(GeoNodeConnectionModel, conn_id)
 
     def add_geonode_connection(self, conn: GeoNodeConnection) -> None:
         """Add a new GeoNode connection."""
-        self.config.geonode_connections.append(conn)
-        self.save()
+        self._add(GeoNodeConnectionModel, conn)
 
     def update_geonode_connection(self, conn: GeoNodeConnection) -> bool:
         """Update an existing GeoNode connection."""
-        for i, existing in enumerate(self.config.geonode_connections):
-            if existing.id == conn.id:
-                self.config.geonode_connections[i] = conn
-                self.save()
-                return True
-        return False
+        return self._update(GeoNodeConnectionModel, conn)
 
     def remove_geonode_connection(self, conn_id: str) -> None:
         """Remove a GeoNode connection by ID."""
-        self.config.geonode_connections = [
-            c for c in self.config.geonode_connections if c.id != conn_id
-        ]
-        self.save()
+        self.delete_geonode_connection(conn_id)
 
     def delete_geonode_connection(self, conn_id: str) -> bool:
         """Delete a GeoNode connection by ID. Returns True if found."""
-        original_len = len(self.config.geonode_connections)
-        self.config.geonode_connections = [
-            c for c in self.config.geonode_connections if c.id != conn_id
-        ]
-        if len(self.config.geonode_connections) < original_len:
-            self.save()
-            return True
-        return False
+        return self._delete(GeoNodeConnectionModel, connection_id=conn_id)
 
     # Iceberg connection management
     def list_iceberg_connections(self) -> list[IcebergCatalogConnection]:
         """List all Iceberg connections."""
-        return list(self.config.iceberg_connections)
+        return self._list(IcebergCatalogConnectionModel)
 
     def get_iceberg_connection(self, conn_id: str) -> IcebergCatalogConnection | None:
         """Get an Iceberg connection by ID."""
-        for conn in self.config.iceberg_connections:
-            if conn.id == conn_id:
-                return conn
-        return None
+        return self._get(IcebergCatalogConnectionModel, conn_id)
 
     def add_iceberg_connection(self, conn: IcebergCatalogConnection) -> None:
         """Add a new Iceberg connection."""
-        self.config.iceberg_connections.append(conn)
-        self.save()
+        self._add(IcebergCatalogConnectionModel, conn)
 
     def update_iceberg_connection(self, conn: IcebergCatalogConnection) -> bool:
         """Update an existing Iceberg connection."""
-        for i, existing in enumerate(self.config.iceberg_connections):
-            if existing.id == conn.id:
-                self.config.iceberg_connections[i] = conn
-                self.save()
-                return True
-        return False
+        return self._update(IcebergCatalogConnectionModel, conn)
 
     def remove_iceberg_connection(self, conn_id: str) -> None:
         """Remove an Iceberg connection by ID."""
-        self.config.iceberg_connections = [
-            c for c in self.config.iceberg_connections if c.id != conn_id
-        ]
-        self.save()
+        self.delete_iceberg_connection(conn_id)
 
     def delete_iceberg_connection(self, conn_id: str) -> bool:
         """Delete an Iceberg connection by ID. Returns True if found."""
-        original_len = len(self.config.iceberg_connections)
-        self.config.iceberg_connections = [
-            c for c in self.config.iceberg_connections if c.id != conn_id
-        ]
-        if len(self.config.iceberg_connections) < original_len:
-            self.save()
-            return True
-        return False
+        return self._delete(IcebergCatalogConnectionModel, connection_id=conn_id)
 
 
 def get_config(user: "User") -> ConfigManager:
