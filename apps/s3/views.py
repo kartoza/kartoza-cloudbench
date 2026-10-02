@@ -21,6 +21,7 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 import httpx
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
 from django.db.models import Q
@@ -32,7 +33,13 @@ from rest_framework.views import APIView
 
 from . import layer_groups, portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
-from .cng_lite import TargetExists, expire_stalled_job, folder_exists, target_folder
+from .cng_lite import (
+    TargetExists,
+    cancel_job,
+    expire_stalled_job,
+    folder_exists,
+    target_folder,
+)
 from .cog import (
     start_conversion as start_cog_conversion,
 )
@@ -103,6 +110,25 @@ def _requested_license(data):
     except ValidationError:
         return license_id, None
     return license_id, license_url
+
+
+def _requested_hetzner_server_id(data):
+    """The server type picked for a conversion's on-demand server.
+
+    Required with CLOUDNATIVEGIS_ON_DEMAND - `hetznerServerId`, the `id` of
+    one of the tools' cloudnativegis.servers - and ignored (None) without
+    it. Raises ValueError if it's missing or not an id; whether it's one
+    GeoHosting has enabled, GeoHosting checks.
+    """
+    if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+        return None
+    try:
+        hetzner_server_id = int(data.get("hetznerServerId") or 0)
+    except (TypeError, ValueError):
+        hetzner_server_id = 0
+    if hetzner_server_id <= 0:
+        raise ValueError("Pick a server to run the conversion on.")
+    return hetzner_server_id
 
 
 def _clean_contact_email(value):
@@ -921,12 +947,9 @@ class S3ConversionToolsView(APIView):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             tools["tippecanoe"] = {"available": False}
 
-        # Configured (CLOUDNATIVEGIS_URL, or GeoHosting on demand) and healthy.
-        cloudnativegis_available = CngLiteJob.is_valid() and CngLiteJob.health()
-        tools["cloudnativegis"] = {
-            "available": cloudnativegis_available,
-            "tool": "CloudNativeGIS",
-        }
+        # Configured (CLOUDNATIVEGIS_URL, or GeoHosting on demand) and healthy;
+        # on demand, also the server types its servers can start as.
+        tools["cloudnativegis"] = {"tool": "CloudNativeGIS", **CngLiteJob.availability()}
 
         # COG conversion runs inside the CloudNativeGIS Lite container, not locally.
         tools["gdal"] = {
@@ -1046,6 +1069,26 @@ class S3ConversionJobsView(APIView):
             }
         )
 
+    def delete(self, request, job_id=None):
+        """Cancel one of the user's conversions (see cng_lite.cancel_job).
+
+        202 with the job, now cancelling - it ends cancelled once whatever
+        runs it has stopped (and its on-demand server is deleted). 409 if
+        it can't be cancelled any more (publishing, or finished).
+        """
+        try:
+            conversion_id = uuid.UUID(job_id or "")
+        except ValueError:
+            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+        job = CngLiteJob.objects.filter(pk=conversion_id, owner=request.user).first()
+        if job is None:
+            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            cancel_job(job)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(job.to_dict(), status=status.HTTP_202_ACCEPTED)
+
 
 class S3UploadView(APIView):
     """Upload files to S3."""
@@ -1096,6 +1139,7 @@ class S3UploadView(APIView):
                             license_id,
                             license_url,
                             replace=_wants_replace(request.data),
+                            hetzner_server_id=_requested_hetzner_server_id(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -1112,6 +1156,7 @@ class S3UploadView(APIView):
                             license_id,
                             license_url,
                             replace=_wants_replace(request.data),
+                            hetzner_server_id=_requested_hetzner_server_id(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                 except TargetExists as exc:
@@ -1201,6 +1246,7 @@ class S3MosaicUploadView(APIView):
                 license_id,
                 license_url,
                 replace=_wants_replace(request.data),
+                hetzner_server_id=_requested_hetzner_server_id(request.data),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)
@@ -1241,6 +1287,7 @@ class S3GeoPackageInspectView(APIView):
                 license_id,
                 license_url,
                 replace=_wants_replace(request.data),
+                hetzner_server_id=_requested_hetzner_server_id(request.data),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)

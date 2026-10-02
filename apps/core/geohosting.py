@@ -82,6 +82,19 @@ class GeoHostingClient:
             )
         return self._json(response)
 
+    def cloudnative_gis_processing_server_types(self):
+        """The server types GeoHosting may start servers as - the enabled ones.
+
+        [{id, type, location, specifications, currency, price, available}],
+        the cheapest first; [] if none is enabled. `available`: whether
+        Hetzner has it in stock right now. Raises GeoHostingError if
+        GeoHosting couldn't be asked (or couldn't ask Hetzner).
+        """
+        response = self.request("GET", "api/v1/cloudnative-gis-processing/server-types/")
+        if response.status_code != 200:
+            raise self._refused(response, "list its server types")
+        return self._json(response)
+
     # -- A CloudBench job's on-demand server ----------------------------------
     #
     # Each takes an optional `log` callback, called once per request with
@@ -90,16 +103,23 @@ class GeoHostingClient:
 
     SERVERS = "api/v1/cloudnative-gis-processing/servers/"
 
-    def create_server(self, job_id, username, log=None):
+    def create_server(self, job_id, username, hetzner_server_id, log=None):
         """Ask GeoHosting for a server for `job_id`, owned by GeoHosting user `username`.
 
-        Started in the background: returns GeoHosting's answer, with
-        status "provisioning" - or "ready" (and url/token) if it already
-        was. Asking again for the same job gives the same server. Raises
-        GeoHostingError, with status_code 400 for an unknown user and 409
-        for a server still being deleted (or another user's job).
+        Started in the background as `hetzner_server_id` - the `id` of one
+        of cloudnative_gis_processing_server_types, the only type it's
+        started as. Returns GeoHosting's answer, with status "provisioning"
+        - or "ready" (and url/token) if it already was. Asking again for the
+        same job gives the same server. Raises GeoHostingError, with
+        status_code 400 for an unknown user or a server type that isn't
+        enabled, and 409 for a server still being deleted (or another
+        user's job).
         """
-        payload = {"job_id": str(job_id), "username": username}
+        payload = {
+            "job_id": str(job_id),
+            "username": username,
+            "hetzner_server_id": hetzner_server_id,
+        }
         response = self._logged("POST", self.SERVERS, log, json=payload)
         if response.status_code not in (200, 202):
             raise self._refused(response, "start a server")

@@ -39,8 +39,8 @@ import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle, 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
-import type { ConversionJob } from '../../types'
-import { isActiveStatus, layerConversionStatuses } from '../../utils/conversionJobs'
+import type { CloudNativeGISServerType, ConversionJob } from '../../types'
+import { isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
@@ -55,6 +55,13 @@ const LICENSE_CHOICES = [
 ]
 
 // Helper to format file size
+// e.g. "cx23 · fsn1 · 2 vCPU / 4 GB · 0.0060 EUR/h"
+function serverLabel(server: CloudNativeGISServerType): string {
+  const { cores, memory } = server.specifications as { cores?: number; memory?: number }
+  const spec = cores && memory ? ` · ${cores} vCPU / ${memory} GB` : ''
+  return `${server.type} · ${server.location}${spec} · ${server.price} ${server.currency}/h`
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -227,6 +234,15 @@ export default function S3UploadDialog() {
     enabled: isOpen,
   })
   const cngLiteConnected = !!toolStatus?.cloudnativegis?.available
+  // On-demand CloudNativeGIS: each conversion gets its own server, started
+  // as the server type picked here (the cheapest in stock by default). One
+  // out of stock is listed, but can't be picked: starting it would fail.
+  const onDemandServers = toolStatus?.cloudnativegis?.onDemand ? toolStatus.cloudnativegis.servers ?? [] : []
+  const inStockServers = onDemandServers.filter((server) => server.available !== false)
+  const [hetznerServerId, setHetznerServerId] = useState<number>()
+  const pickedServerId = inStockServers.some((server) => server.id === hetznerServerId)
+    ? hetznerServerId
+    : inStockServers[0]?.id
   const showPMTiles = (isShapefile || isGpkgFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
 
@@ -422,7 +438,8 @@ export default function S3UploadDialog() {
       setUploadResult(null)
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
-          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace
+          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
+          pickedServerId
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -474,7 +491,8 @@ export default function S3UploadDialog() {
             (progress) => setUploadProgress(progress),
             license,
             requestedLicenseUrl,
-            replace
+            replace,
+            pickedServerId
           )
         : await api.uploadToS3(
             connectionId,
@@ -490,7 +508,8 @@ export default function S3UploadDialog() {
             companionFiles,
             license,
             requestedLicenseUrl,
-            replace
+            replace,
+            convertToCloudNative ? pickedServerId : undefined
           )
 
       setUploadResult({
@@ -604,6 +623,23 @@ export default function S3UploadDialog() {
       default:
         return false
     }
+  }
+
+  // Stop the conversion being followed (see cng_lite.cancel_job): it shows
+  // as cancelling until it has stopped and its server is deleted.
+  const [isCancelling, setIsCancelling] = useState(false)
+  const handleCancelConversion = async () => {
+    if (!conversionJobId) return
+    setIsCancelling(true)
+    try {
+      await api.cancelConversionJob(conversionJobId)
+    } catch (err) {
+      toast({ title: "Couldn't stop the conversion", description: (err as Error).message, status: 'error', duration: 5000 })
+    } finally {
+      setIsCancelling(false)
+    }
+    queryClient.invalidateQueries({ queryKey: ['conversionJob', conversionJobId] })
+    queryClient.invalidateQueries({ queryKey: CONVERSION_JOBS_QUERY_KEY })
   }
 
   const handleClose = () => {
@@ -859,6 +895,30 @@ export default function S3UploadDialog() {
                     />
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Link to the license terms. Leave empty if they&apos;re not known — the catalog will say so.
+                    </Text>
+                  </FormControl>
+                )}
+
+                {/* On-demand CloudNativeGIS: the server type the conversion runs on */}
+                {onDemandServers.length > 0 && (
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Conversion server</FormLabel>
+                    <Select
+                      value={pickedServerId}
+                      isDisabled={isUploading || isConverting || isInspecting}
+                      onChange={(e) => setHetznerServerId(Number(e.target.value))}
+                      size="sm"
+                      borderRadius="lg"
+                    >
+                      {onDemandServers.map((server) => (
+                        <option key={server.id} value={server.id} disabled={server.available === false}>
+                          {serverLabel(server)}
+                          {server.available === false && ' — out of stock'}
+                        </option>
+                      ))}
+                    </Select>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      Started for this conversion only, and deleted once it&apos;s done. Billed per started hour.
                     </Text>
                   </FormControl>
                 )}
@@ -1211,6 +1271,19 @@ export default function S3UploadDialog() {
                 </motion.div>
               )}
 
+              {conversionJob && conversionJob.status === 'cancelled' && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  style={{ width: '100%' }}
+                >
+                  <Alert status="info" borderRadius="lg" variant="subtle" py={2}>
+                    <AlertIcon boxSize={4} />
+                    <Text fontSize="xs" fontWeight="500">Conversion cancelled — nothing was published.</Text>
+                  </Alert>
+                </motion.div>
+              )}
+
               {conversionJob && conversionJob.status === 'failed' && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
@@ -1260,6 +1333,18 @@ export default function S3UploadDialog() {
           borderTopColor="gray.100"
           bg="gray.50"
         >
+          {conversionJob && (isCancellableJob(conversionJob) || conversionJob.status === 'cancelling') && (
+            <Button
+              variant="outline"
+              colorScheme="red"
+              onClick={handleCancelConversion}
+              isLoading={isCancelling || conversionJob.status === 'cancelling'}
+              loadingText="Stopping..."
+              borderRadius="lg"
+            >
+              Stop conversion
+            </Button>
+          )}
           <Button variant="ghost" onClick={handleClose} borderRadius="lg">
             {uploadResult?.success ? 'Close' : 'Cancel'}
           </Button>

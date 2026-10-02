@@ -120,6 +120,30 @@ def test_errors_raise_geohosting_error(geohosting, token, health, error):
         GeoHostingClient().cloudnative_gis_processing_health()
 
 
+SERVER_TYPES = "http://geohosting/api/v1/cloudnative-gis-processing/server-types/"
+
+
+def test_server_types_are_the_enabled_ones(geohosting):
+    answer = [{"type": "cx23", "location": "fsn1", "currency": "EUR", "price": "0.0060"}]
+    with (
+        patch("apps.core.geohosting.httpx.post", return_value=token_response()),
+        patch(
+            "apps.core.geohosting.httpx.request", return_value=httpx.Response(200, json=answer)
+        ) as request,
+    ):
+        assert GeoHostingClient().cloudnative_gis_processing_server_types() == answer
+    assert request.call_args.args == ("GET", SERVER_TYPES)
+
+
+def test_server_types_refused(geohosting):
+    with (
+        patch("apps.core.geohosting.httpx.post", return_value=token_response()),
+        patch("apps.core.geohosting.httpx.request", return_value=httpx.Response(403)),
+        pytest.raises(GeoHostingError, match="couldn't list its server types"),
+    ):
+        GeoHostingClient().cloudnative_gis_processing_server_types()
+
+
 # -- A job's on-demand server ----------------------------------------------------
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
@@ -141,29 +165,43 @@ def server_call(geohosting, answer, method_name, *args):
     return result, request, logged
 
 
-def test_create_server_posts_the_job_and_its_owner(geohosting):
+def test_create_server_posts_the_job_its_owner_and_server_type(geohosting):
     answer = {"job_id": JOB_ID, "status": "provisioning", "url": "", "token": ""}
     result, request, logged = server_call(
-        geohosting, httpx.Response(202, json=answer), "create_server", JOB_ID, "tim"
+        geohosting, httpx.Response(202, json=answer), "create_server", JOB_ID, "tim", 7
     )
     assert result == answer
     assert request.call_args.args == ("POST", SERVERS)
-    assert request.call_args.kwargs["json"] == {"job_id": JOB_ID, "username": "tim"}
+    assert request.call_args.kwargs["json"] == {
+        "job_id": JOB_ID,
+        "username": "tim",
+        "hetzner_server_id": 7,
+    }
     [entry] = logged
     assert entry["method"] == "POST"
     assert entry["url"] == SERVERS
-    assert entry["request_payload"] == {"job_id": JOB_ID, "username": "tim"}
+    assert entry["request_payload"] == {"job_id": JOB_ID, "username": "tim", "hetzner_server_id": 7}
     assert entry["status_code"] == 202
     assert entry["response_payload"] == answer
     assert entry["error"] == ""
 
 
 @pytest.mark.parametrize(
-    "status, detail", [(400, "No GeoHosting user 'tim'."), (409, "still being deleted")]
+    "status, detail",
+    [
+        (400, "No GeoHosting user 'tim'."),
+        (400, "Server type 7 isn't enabled."),
+        (409, "still being deleted"),
+    ],
 )
 def test_create_server_refusals_carry_the_status(geohosting, status, detail):
     error, _, logged = server_call(
-        geohosting, httpx.Response(status, json={"detail": detail}), "create_server", JOB_ID, "tim"
+        geohosting,
+        httpx.Response(status, json={"detail": detail}),
+        "create_server",
+        JOB_ID,
+        "tim",
+        7,
     )
     assert isinstance(error, GeoHostingError)
     assert error.status_code == status
@@ -198,7 +236,7 @@ def test_delete_server(geohosting):
 
 def test_an_unreachable_geohosting_is_logged(geohosting):
     error, _, logged = server_call(
-        geohosting, httpx.ConnectError("refused"), "create_server", JOB_ID, "tim"
+        geohosting, httpx.ConnectError("refused"), "create_server", JOB_ID, "tim", 7
     )
     assert isinstance(error, GeoHostingError)
     [entry] = logged

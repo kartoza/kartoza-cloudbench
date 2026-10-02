@@ -27,6 +27,7 @@ def job(settings, django_user_model):
         output_key="roads.pmtiles",
         input_size=1,
         status=CngLiteJobStatus.PROVISIONING,
+        hetzner_server_id=7,
     )
     GeoHostingClient.clear_token_cache()
 
@@ -89,7 +90,7 @@ def test_asks_geohosting_and_waits_until_its_ready(job):
 
 
 @pytest.mark.django_db
-def test_posts_the_jobs_owner(job):
+def test_posts_the_jobs_owner_and_its_server_type(job):
     with (
         patch.object(
             GeoHostingClient, "create_server", return_value=server(job, "ready", **READY)
@@ -98,6 +99,37 @@ def test_posts_the_jobs_owner(job):
     ):
         job.provision()
     assert create.call_args.args == (job.id, "tim")
+    assert create.call_args.kwargs["hetzner_server_id"] == 7
+
+
+@pytest.mark.django_db
+def test_needs_a_server_type_picked(job):
+    job.hetzner_server_id = None
+    with (
+        patch.object(GeoHostingClient, "create_server") as create,
+        pytest.raises(ValueError, match="No server was picked"),
+    ):
+        job.provision()
+    create.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_keeps_its_server_types_specification(job):
+    specification = {"cores": 2, "memory": 4.0, "disk": 40}
+    picked = {"id": 7, "type": "cx23", "location": "fsn1", "specifications": specification}
+    provision(
+        job,
+        httpx.Response(202, json={**server(job, "provisioning"), "server": picked}),
+        httpx.Response(200, json={**server(job, "ready", **READY), "server": picked}),
+    )
+    assert job.hetzner_server_specification == specification
+
+
+@pytest.mark.django_db
+def test_a_server_type_geohosting_hasnt_enabled(job):
+    with pytest.raises(ValueError, match="isn't enabled") as raised:
+        provision(job, httpx.Response(400, json={"detail": "Server type 7 isn't enabled."}))
+    assert "isn't linked" not in str(raised.value)
 
 
 @pytest.mark.django_db

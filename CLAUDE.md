@@ -30,8 +30,8 @@ Two modes, chosen by `CLOUDNATIVEGIS_ON_DEMAND`:
    ▼
 [PROVISIONING]  CngLiteJob.provision()
    non-demand: url/token from settings
-   on-demand:  POST GeoHosting /servers/ {job_id, username}
-                 400 account not linked ──────────────────────→ error
+   on-demand:  POST GeoHosting /servers/ {job_id, username, hetzner_server_id}
+                 400 account not linked / type not enabled ───→ error
                  409 "being deleted" → wait, POST again
                poll GET /servers/<job_id>/ (no deadline — GeoHosting decides)
                  provisioning → wait
@@ -56,10 +56,19 @@ finish_job(outcome)   ◄── an error at any step (outcome = completed / fail
 [COMPLETED] / [FAILED]   (completed_at set)
 ```
 
+Cancelling (`DELETE /api/s3/conversion/jobs/<id>`, `cng_lite.cancel_job`):
+allowed while pending … downloading (not once publishing). The job goes
+`CANCELLING`; whatever runs it stops at its next `update_job`/poll
+(`JobCancelled`), then `finish_job(CANCELLED)` — deprovisioning on demand.
+Jobs depending on it (a GeoPackage's raster job) are cancelled with it; a
+restart finishes a `CANCELLING` job as `CANCELLED`.
+
 | | Non-demand | On-demand |
 |---|---|---|
 | `is_valid()` | `CLOUDNATIVEGIS_URL` set | GeoHosting configured (`GEOHOSTING_URL`, client id/secret) |
-| `health()` | `GET {CLOUDNATIVEGIS_URL}/health` | GeoHosting's `/healthy/` |
+| `health()` / `availability()` | `GET {CLOUDNATIVEGIS_URL}/health` | GeoHosting's `/healthy/` OK **and** one of `/server-types/` in stock (`available`, from Hetzner's `server_types[].locations[].available`) |
+| Tools API `cloudnativegis` | `onDemand: false`, `servers: []` | `onDemand: true`, `servers`: the enabled types |
+| Server type | — | picked in the upload dialog (`hetznerServerId`, required); saved as `hetzner_server_id`, its specs in `hetzner_server_specification` |
 | Provisioning | URL/token from settings | POST, poll until `ready` |
 | `/health` wait | max 600s (`CLOUDNATIVEGIS_PROVISIONING_TIMEOUT`, hardcoded) | same (normally instant: GeoHosting already checked it) |
 | Finishing | straight to completed/failed | deprovisioning, then completed/failed |
@@ -109,16 +118,26 @@ Decisions:
 - Asynchronous: POST answers 202, Celery spins the server up, CloudBench polls.
 - The cng-lite token is stored encrypted on both sides and cleared once the
   server is deleted.
-- Server type: the first enabled, cheapest x86 `HetznerServer`; falls back to
-  the next when Hetzner's out of stock.
+- Server type: the user picks one of GeoHosting's enabled x86 `HetznerServer`s
+  (by id) in the upload dialog; it's required on demand. Only that one is
+  started — out of stock fails the job, no fallback.
+- `HetznerServer` sync: a changed price/currency is a new row (no unique
+  constraint), taking over `enable` from the old one; the old row is kept.
 - No CloudBench-side timeout for starting/deleting a server, and no stale
   handling there: GeoHosting handles it.
+- GeoHosting never waits for Hetzner inside a task: `spin_up_server` /
+  `delete_server` only create/delete the server and save Hetzner's
+  `action_id`; the beat task `check_servers` (every 10 s) carries each
+  provisioning/deleting instance on (action done → cng-lite up → ready;
+  deletion done → deleted), with `START_TIMEOUT` (10 min) and
+  `PICKUP_TIMEOUT` (5 min). A worker restart loses nothing.
 
 Still to do:
 
-- Migrations: CloudBench `s3` (`CngLiteJobLog`, `outcome`, `deprovisioning`
-  status, FK changes); GeoHosting `geohosting_controller`.
-- Run the tests on both sides.
+- Run the tests on both sides (migrations are made: CloudBench `s3` up to
+  `0016`, GeoHosting `geohosting_controller` `0002`).
+- Rebuild the frontend bundle (`make build-frontend`): the one in `static/`
+  predates the per-step statuses and the server picker.
 - G5 reaper (its max server age is undecided, e.g. 7 hours).
 
 Deferred:

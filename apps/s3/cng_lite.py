@@ -29,9 +29,11 @@ from .geopackage import is_geopackage
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
+    CANCELLABLE_CNG_LITE_JOB_STATUSES,
     CngLiteJob,
     CngLiteJobLog,
     CngLiteJobStatus,
+    JobCancelled,
     S3Connection,
 )
 
@@ -212,22 +214,48 @@ def _file_kind(name):
 
 
 def update_job(job_id, **values):
-    CngLiteJob.objects.filter(pk=job_id).update(updated_at=timezone.now(), **values)
+    """Save `values` on job `job_id` - unless it's being cancelled.
+
+    Raises JobCancelled instead if the user has asked to stop it
+    (CANCELLING): whatever runs it stops at its next update, rather than
+    carrying on (or overwriting CANCELLING). finish_job is what ends it.
+    """
+    updated = (
+        CngLiteJob.objects.filter(pk=job_id)
+        .exclude(status=CngLiteJobStatus.CANCELLING)
+        .update(updated_at=timezone.now(), **values)
+    )
+    if not updated:
+        raise_if_cancelling(job_id)
+
+
+def raise_if_cancelling(job_id):
+    """Raise JobCancelled if the user has asked to stop job `job_id`."""
+    if CngLiteJob.objects.filter(pk=job_id, status=CngLiteJobStatus.CANCELLING).exists():
+        raise JobCancelled(f"Conversion {job_id} was cancelled.")
 
 
 def finish_job(job, outcome, **values):
-    """End `job` as `outcome` (completed/failed), saving `values` with it.
+    """End `job` as `outcome` (completed/failed/cancelled), saving `values` with it.
 
     With CLOUDNATIVEGIS_ON_DEMAND it's DEPROVISIONING first - `outcome` and
     `values` saved, so a restart can carry on with just this - while
     GeoHosting deletes its server. A failure to delete it is only logged:
-    the job's outcome stands either way.
+    the job's outcome stands either way. A job failing while it was being
+    cancelled ends cancelled. Saved even while CANCELLING (unlike
+    update_job): this is what ends it.
     """
 
     def save(**fields):
-        update_job(job.id, **fields)
+        CngLiteJob.objects.filter(pk=job.id).update(updated_at=timezone.now(), **fields)
         for field, value in fields.items():
             setattr(job, field, value)
+
+    if outcome == CngLiteJobStatus.FAILED and (
+        CngLiteJob.objects.filter(pk=job.id, status=CngLiteJobStatus.CANCELLING).exists()
+    ):
+        outcome = CngLiteJobStatus.CANCELLED
+        values = {**values, "message": "Conversion cancelled", "error": ""}
 
     if settings.CLOUDNATIVEGIS_ON_DEMAND:
         save(status=CngLiteJobStatus.DEPROVISIONING, outcome=outcome, **values)
@@ -237,6 +265,33 @@ def finish_job(job, outcome, **values):
             logger.exception("Job %s: couldn't delete its CloudNativeGIS server", job.id)
         values = {}
     save(status=outcome, completed_at=timezone.now(), **values)
+
+
+def cancel_job(job):
+    """Ask `job` to stop: CANCELLING, until whatever runs it stops.
+
+    That's at its next update or poll (JobCancelled), when it's deprovisioned
+    and ends CANCELLED (see finish_job). The jobs waiting on it (a
+    GeoPackage's raster job, after its vector one) are cancelled with it.
+    Only while it's CANCELLABLE: raises ValueError otherwise (e.g. already
+    publishing, or finished). A GeoPackage still waiting for its layers to
+    be picked has nothing running: see pmtiles.cancel_geopackage_inspection.
+    """
+    cancelling = {
+        "status": CngLiteJobStatus.CANCELLING,
+        "message": "Cancelling the conversion",
+        "updated_at": timezone.now(),
+    }
+    cancelled = (
+        CngLiteJob.objects.filter(pk=job.pk, status__in=CANCELLABLE_CNG_LITE_JOB_STATUSES)
+        .exclude(AWAITING_LAYER_SELECTION)
+        .update(**cancelling)
+    )
+    if not cancelled:
+        job.refresh_from_db()
+        raise ValueError(f"A {job.get_status_display().lower()} conversion can't be cancelled.")
+    CngLiteJob.objects.filter(depends_on=job, status=CngLiteJobStatus.PENDING).update(**cancelling)
+    job.refresh_from_db()
 
 
 def expire_stalled_job(job):
@@ -304,6 +359,7 @@ def wait_for_job(client, job_id, cng_job_id, deadline):
             )
         if body.get("status") == "done":
             return body
+        raise_if_cancelling(job_id)
         detail = body.get("detail")
         if detail:
             fraction = body.get("detailProgress")
@@ -382,9 +438,12 @@ class CNGProcessingClient:
         download   downloading          -> publishing (cng_results' files)
         publish    publishing           -> (deprovisioning ->) completed
         fail       any                  -> (deprovisioning ->) failed
+        cancel     cancelling           -> (deprovisioning ->) cancelled
 
     Deprovisioning - only with CLOUDNATIVEGIS_ON_DEMAND - deletes the job's
-    server, whether it completed or failed (see finish_job).
+    server, whether it completed, failed or was cancelled (see finish_job).
+    A job the user cancels (see cancel_job) stops at its next update or
+    poll (JobCancelled).
 
     Each step reads what it needs from the job and writes its outcome back to
     it, so run() carries on from whichever step the job's status says it's at
@@ -425,10 +484,17 @@ class CNGProcessingClient:
             # Re-checks the downloaded files (downloading any that are gone).
             CngLiteJobStatus.PUBLISHING: 3,
         }
-        if self.job.status == CngLiteJobStatus.DEPROVISIONING:
-            # Interrupted once finished: only its server's left to delete.
+        if self.job.status in (CngLiteJobStatus.DEPROVISIONING, CngLiteJobStatus.CANCELLING):
+            # Interrupted once finished, or cancelled before it got to run
+            # (e.g. waiting for the job it depends on): only its server's
+            # left to delete.
+            outcome = (
+                CngLiteJobStatus.CANCELLED
+                if self.job.status == CngLiteJobStatus.CANCELLING
+                else self.job.outcome or CngLiteJobStatus.FAILED
+            )
             try:
-                self.finish(self.job.outcome or CngLiteJobStatus.FAILED)
+                self.finish(outcome)
             finally:
                 close_old_connections()
             return
@@ -457,6 +523,9 @@ class CNGProcessingClient:
                     index = steps.index(self.push)
                     continue
                 index += 1
+        except JobCancelled:
+            logger.info("CloudNativeGIS conversion %s cancelled", self.job.id)
+            self.finish(CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
         except Exception as exc:
             logger.exception("CloudNativeGIS conversion %s failed", self.job.id)
             self.fail(exc)
@@ -524,6 +593,7 @@ class CNGProcessingClient:
         while time.monotonic() < deadline:
             if self.poll():
                 return
+            raise_if_cancelling(self.job.id)
             time.sleep(
                 min(settings.CLOUDNATIVEGIS_POLL_INTERVAL, max(0, deadline - time.monotonic()))
             )
@@ -885,6 +955,12 @@ def resume_interrupted_conversions():
             # Finished - a mosaic too - but its server is still to be deleted.
             logger.info("Resuming deleting the server of %s %s", job.kind, job.id)
             finish_job(job, job.outcome or CngLiteJobStatus.FAILED)
+            continue
+        if job.status == CngLiteJobStatus.CANCELLING:
+            # Cancelled - a mosaic too - but not stopped before the restart.
+            logger.info("Finishing cancelling %s %s", job.kind, job.id)
+            shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
+            finish_job(job, CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
             continue
         if not _is_resumable(job):
             # A mosaic runs in one go (see apps.s3.mosaic.run_mosaic): its

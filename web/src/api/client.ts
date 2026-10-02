@@ -926,14 +926,14 @@ export async function getConversionJob(jobId: string): Promise<ConversionJob> {
   return handleResponse<ConversionJob>(response)
 }
 
-export async function cancelConversionJob(jobId: string): Promise<{
-  success: boolean;
-  message: string
-}> {
+// Ask a conversion to stop: it comes back 'cancelling', and ends 'cancelled'
+// once it has stopped (and its on-demand server is deleted). Refused (409)
+// once it's publishing or finished.
+export async function cancelConversionJob(jobId: string): Promise<ConversionJob> {
   const response = await fetch(`${API_BASE}/s3/conversion/jobs/${jobId}`, {
     method: 'DELETE',
   })
-  return handleResponse<{ success: boolean; message: string }>(response)
+  return handleResponse<ConversionJob>(response)
 }
 
 // ============================================================================

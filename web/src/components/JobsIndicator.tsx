@@ -20,10 +20,10 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw } from 'react-icons/fi'
+import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw, FiSquare, FiXCircle } from 'react-icons/fi'
 import * as api from '../api'
 import type { ConversionJob } from '../types'
-import { isActiveJob, isActiveStatus, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
+import { isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
 
 // The header's list of conversions: they run on the server, so progress can
 // be followed from anywhere - after the upload dialog that started one is
@@ -41,8 +41,19 @@ function relativeTime(iso: string): string {
 }
 
 function JobRow({ job }: { job: ConversionJob }) {
+  const toast = useToast()
+  const queryClient = useQueryClient()
   const active = isActiveJob(job)
   const layers = active ? layerConversionStatuses(job) : null
+  const cancel = async () => {
+    try {
+      await api.cancelConversionJob(job.id)
+    } catch (err) {
+      toast({ title: "Couldn't stop the conversion", description: (err as Error).message, status: 'error', duration: 5000 })
+    }
+    queryClient.invalidateQueries({ queryKey: CONVERSION_JOBS_QUERY_KEY })
+    queryClient.invalidateQueries({ queryKey: ['conversionJob', job.id] })
+  }
   return (
     <Box py={2.5} borderBottom="1px solid" borderColor="gray.100" _last={{ borderBottom: 'none' }}>
       <HStack justify="space-between" align="start" spacing={2}>
@@ -56,7 +67,24 @@ function JobRow({ job }: { job: ConversionJob }) {
         </Box>
         {job.status === 'completed' && <Icon as={job.error ? FiAlertCircle : FiCheckCircle} color={job.error ? 'orange.400' : 'green.500'} mt={1} />}
         {job.status === 'failed' && <Icon as={FiAlertCircle} color="red.500" mt={1} />}
-        {active && <Spinner size="xs" color="blue.500" mt={1} />}
+        {job.status === 'cancelled' && <Icon as={FiXCircle} color="gray.400" mt={1} />}
+        {active && (
+          <HStack spacing={1} mt={0.5}>
+            {isCancellableJob(job) && (
+              <Tooltip label="Stop conversion">
+                <IconButton
+                  aria-label="Stop conversion"
+                  icon={<FiSquare />}
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="red"
+                  onClick={cancel}
+                />
+              </Tooltip>
+            )}
+            <Spinner size="xs" color={job.status === 'cancelling' ? 'gray.400' : 'blue.500'} />
+          </HStack>
+        )}
       </HStack>
       {active && (
         <Progress value={job.progress} size="xs" colorScheme="blue" borderRadius="sm" mt={2} hasStripe isAnimated />
@@ -110,10 +138,13 @@ export default function JobsIndicator() {
         const before = previous.get(job.id)
         if (!before || !isActiveStatus(before) || isActiveJob(job)) continue
         const finished = job.status === 'completed'
+        const cancelled = job.status === 'cancelled'
         toast({
-          title: `${job.sourcePath}: ${finished ? 'conversion finished' : 'conversion failed'}`,
-          description: finished ? job.message : job.error || job.message,
-          status: finished ? (job.error ? 'warning' : 'success') : 'error',
+          title: `${job.sourcePath}: ${
+            finished ? 'conversion finished' : cancelled ? 'conversion cancelled' : 'conversion failed'
+          }`,
+          description: finished || cancelled ? job.message : job.error || job.message,
+          status: finished ? (job.error ? 'warning' : 'success') : cancelled ? 'info' : 'error',
           duration: 6000,
           isClosable: true,
         })

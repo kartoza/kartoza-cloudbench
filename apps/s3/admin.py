@@ -104,6 +104,8 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "output_size",
         "cloudnativegis_url",
         "masked_cloudnativegis_api_token",
+        "hetzner_server_id",
+        "hetzner_server_specification",
         "cng_job_id",
         "cng_results",
         "cng_errors",
