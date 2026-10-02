@@ -74,6 +74,8 @@ interface GpkgItem {
 
 // Helper to detect recommended conversion
 const TIFF_PATTERN = /\.(tif|tiff)$/i
+// Single-file vector sources CloudNativeGIS converts as one layer each.
+const VECTOR_FILE_PATTERN = /\.(geojson|fgb|kml|kmz)$/i
 
 // A mosaic's default name: what its tiles' names have in common
 // ("dem_n01.tif", "dem_n02.tif" -> "dem"), else the first tile's.
@@ -212,6 +214,7 @@ export default function S3UploadDialog() {
   // A GeoPackage can hold vector layers (-> PMTiles) or raster tiles (-> COG);
   // CloudNativeGIS Lite figures out which, so offer both.
   const isGpkgFile = !!selectedFile && /\.gpkg$/i.test(selectedFile.name)
+  const isVectorFile = !!selectedFile && VECTOR_FILE_PATTERN.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
   // Once the GeoPackage has been inspected, the layer picker (and later
@@ -227,7 +230,7 @@ export default function S3UploadDialog() {
     enabled: isOpen,
   })
   const cngLiteConnected = !!toolStatus?.cloudnativegis?.available
-  const showPMTiles = (isShapefile || isGpkgFile) && cngLiteConnected
+  const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
 
   // Poll for conversion job status
@@ -754,7 +757,8 @@ export default function S3UploadDialog() {
                           Drop file or click to browse
                         </Text>
                         <Text fontSize="sm" color="gray.500">
-                          GeoTIFF, Shapefile, LAS, GeoPackage... or several GeoTIFFs for one mosaic
+                          GeoTIFF, Shapefile, GeoPackage, GeoJSON, FlatGeobuf, KML/KMZ, LAS...
+                          or several GeoTIFFs for one mosaic
                         </Text>
                       </VStack>
                     )}
@@ -789,10 +793,14 @@ export default function S3UploadDialog() {
                           : 'Cloudbench will ZIP them automatically.'}
                       </Text>
                     </Box>
-                  ) : isShapefile && (
+                  ) : isShapefile ? (
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Select .shp, .shx and .dbf together (plus .prj if available).
                       Cloudbench will ZIP them automatically.
+                    </Text>
+                  ) : selectedFile && /\.(kml|kmz)$/i.test(selectedFile.name) && showPMTiles && (
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      A KML's folders become one layer, each feature's folder kept in a "folder" column.
                     </Text>
                   )}
                 </FormControl>

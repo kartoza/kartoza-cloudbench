@@ -1,4 +1,7 @@
-"""Convert shapefiles via CloudNativeGIS Lite and transfer the resulting PMTiles to S3."""
+"""Convert vector uploads via CloudNativeGIS Lite and transfer the resulting PMTiles to S3.
+
+A shapefile, a GeoPackage, or a single GeoJSON, FlatGeobuf or KML/KMZ file.
+"""
 
 import shutil
 import threading
@@ -31,6 +34,15 @@ CONTENT_TYPE = "application/vnd.pmtiles"
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# Single-file vector sources, staged as they are (cng-lite reads each with
+# OGR, by its suffix): their media types.
+VECTOR_FILE_TYPES = {
+    ".geojson": "application/geo+json",
+    ".fgb": "application/vnd.flatgeobuf",
+    ".kml": "application/vnd.google-earth.kml+xml",
+    ".kmz": "application/vnd.google-earth.kmz",
+}
+
 
 def assets_for(layer_id):
     """A vector layer's files: its GeoParquet (data), PMTiles (visual), thumbnail."""
@@ -48,6 +60,10 @@ def assets_for(layer_id):
 def pick_layers(inspection):
     """A GeoPackage's vector layers, from CloudNativeGIS's inspection of it."""
     return [layer["name"] for layer in inspection.get("layers", [])]
+
+
+def is_vector_file(filename):
+    return PurePosixPath(filename).suffix.lower() in VECTOR_FILE_TYPES
 
 
 def output_key(key):
@@ -159,8 +175,11 @@ def start_conversion(
     if not CngLiteJob.is_valid():
         raise ValueError("CloudNativeGIS is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
+    vector_file = is_vector_file(uploaded_file.name)
     if geopackage and companion_files:
         raise ValueError("GeoPackage conversion accepts a single file.")
+    if vector_file and companion_files:
+        raise ValueError("GeoJSON, FlatGeobuf and KML conversion accepts a single file.")
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
@@ -186,6 +205,14 @@ def start_conversion(
             prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
             source_filename = PurePosixPath(uploaded_file.name).name
             content_type = "application/geopackage+sqlite3"
+        elif vector_file:
+            suffix = PurePosixPath(uploaded_file.name).suffix.lower()
+            source_path = directory / f"source{suffix}"
+            with source_path.open("wb") as output:
+                for chunk in uploaded_file.chunks():
+                    output.write(chunk)
+            source_filename = PurePosixPath(uploaded_file.name).name
+            content_type = VECTOR_FILE_TYPES[suffix]
         else:
             source_path = directory / "source.zip"
             prepare_shapefile(uploaded_file, source_path, job.id, companion_files)

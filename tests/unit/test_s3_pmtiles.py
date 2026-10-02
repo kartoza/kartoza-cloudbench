@@ -259,6 +259,56 @@ def conversion_job(settings, tmp_path, owner, connection):
         return start_conversion(shapefile_zip(), "folder/roads.zip", str(connection.id), owner)
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "name,content_type",
+    [
+        ("roads.geojson", "application/geo+json"),
+        ("roads.fgb", "application/vnd.flatgeobuf"),
+        ("roads.kml", "application/vnd.google-earth.kml+xml"),
+        ("Roads.KMZ", "application/vnd.google-earth.kmz"),
+    ],
+)
+def test_start_conversion_stages_a_vector_file_as_it_is(
+    settings, tmp_path, owner, connection, name, content_type
+):
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    staged = {}
+
+    def capture(fileobj, bucket, key, ExtraArgs):
+        staged[key] = (fileobj.read(), ExtraArgs["ContentType"])
+
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}
+        get_client.return_value.client.upload_fileobj.side_effect = capture
+        job = start_conversion(
+            SimpleUploadedFile(name, b"vector-bytes"), f"folder/{name}", str(connection.id), owner
+        )
+
+    assert job.output_key == f"folder/{name.split('.')[0]}.pmtiles"
+    # Kept under its own name: cng-lite reads it by its suffix.
+    assert job.source_key.endswith(f"/{name}")
+    assert staged == {job.source_key: (b"vector-bytes", content_type)}
+
+
+@pytest.mark.django_db
+def test_start_conversion_refuses_companions_for_a_vector_file(settings, owner, connection):
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    with pytest.raises(ValueError, match="accepts a single file"):
+        start_conversion(
+            SimpleUploadedFile("roads.geojson", b"{}"),
+            "folder/roads.geojson",
+            str(connection.id),
+            owner,
+            companion_files=[SimpleUploadedFile("roads.dbf", b"attributes")],
+        )
+
+
 PMTILES = b"PMTiles\x03fixture"
 PARQUET = b"PAR1fixture"
 PNG = b"\x89PNG\r\n\x1a\nfixture"
