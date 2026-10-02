@@ -100,7 +100,7 @@ function detectRecommendedConversion(filename: string): string | null {
     return 'cog'
   }
   // Point cloud formats -> COPC
-  if (['las', 'laz', 'e57', 'ply', 'xyz'].includes(ext)) {
+  if (['las', 'laz'].includes(ext)) {
     return 'copc'
   }
   // Vector formats -> GeoParquet
@@ -232,6 +232,9 @@ export default function S3UploadDialog() {
   const cngLiteConnected = !!toolStatus?.cloudnativegis?.available
   const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
+  // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
+  const isPointCloud = !!selectedFile && /\.(las|laz)$/i.test(selectedFile.name)
+  const showCOPC = isPointCloud && cngLiteConnected
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -606,7 +609,7 @@ export default function S3UploadDialog() {
       case 'cog':
         return showCOG
       case 'copc':
-        return toolStatus.pdal?.available || false
+        return showCOPC
       case 'geoparquet':
         return toolStatus.ogr2ogr?.available || false
       case 'pmtiles':

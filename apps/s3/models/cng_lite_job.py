@@ -16,6 +16,7 @@ from .s3_connection import S3Connection
 CONVERSION_FORMATS = {
     "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
     "cog": {"sourceFormat": "tiff", "targetFormat": "cog"},
+    "copc": {"sourceFormat": "las", "targetFormat": "copc"},
     "mosaic": {"sourceFormat": "tiff", "targetFormat": "mosaic"},
 }
 

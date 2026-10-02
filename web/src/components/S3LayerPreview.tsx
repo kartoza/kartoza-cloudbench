@@ -37,6 +37,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import { parquetMetadata, parquetReadObjects } from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 import * as api from '../api'
+import { getS3PresignedUrl } from '../api/mapExplorer'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
@@ -1005,9 +1006,12 @@ export default function S3LayerPreview({
       lidarControl.current = control
       mapInstance.addControl(control, 'top-right')
 
-      // Load the point cloud from the proxy URL
-      const copcUrl = window.location.origin + metadata.proxyUrl
-      control.loadPointCloud(copcUrl)
+      // From a presigned URL, not the proxy: maplibre-gl-lidar fetches the
+      // file itself, without CloudBench's auth token (the proxy answered
+      // 401), and S3 serves the octree's byte ranges directly.
+      getS3PresignedUrl(connectionId, objectKey)
+        .then((url) => control.loadPointCloud(url))
+        .catch((err) => setError(`Could not load the point cloud: ${err instanceof Error ? err.message : err}`))
       setPointCloudLoaded(true)
     })
 
@@ -1019,6 +1023,7 @@ export default function S3LayerPreview({
         setPointCloudLoaded(false)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metadata])
 
   const handleRefresh = () => {
