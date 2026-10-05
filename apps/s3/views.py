@@ -11,6 +11,7 @@ Provides endpoints for:
 import contextlib
 import json
 import mimetypes
+import re
 import subprocess
 import tempfile
 import threading
@@ -39,6 +40,7 @@ from .cog import (
 from .cog import (
     start_geopackage_conversion as start_cog_geopackage_conversion,
 )
+from .copc import start_conversion as start_copc_conversion
 from .duckdb import get_duckdb_engine
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
 from .models import (
@@ -590,18 +592,50 @@ class S3PreviewView(APIView):
             )
 
 
+_BYTE_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def _byte_range(header: str, size: int) -> tuple[int, int] | None:
+    """The (first, last) byte a single-range Range header asks for, or None.
+
+    None for no header, several ranges, or one past the end - the whole
+    object is sent then, as HTTP allows.
+    """
+    match = _BYTE_RANGE.match(header.strip())
+    if not match or not size:
+        return None
+    first, last = match.groups()
+    if first == "":
+        if last == "":
+            return None
+        start, end = max(size - int(last), 0), size - 1  # the last N bytes
+    else:
+        start, end = int(first), min(int(last), size - 1) if last else size - 1
+    return (start, end) if start <= end else None
+
+
 class S3ProxyView(APIView):
-    """Proxy S3 object content."""
+    """Proxy S3 object content, honouring a byte Range.
+
+    Range requests matter for cloud-native formats read in pieces: a COPC
+    point cloud's octree nodes (maplibre-gl-lidar), a PMTiles' tiles.
+    Answering one with the whole object made such readers parse the start
+    of the file as whatever part they had asked for.
+    """
 
     def get(self, request, conn_id, key):
-        """Stream object content."""
+        """Stream object content - all of it, or the requested byte range."""
         try:
             client = get_s3_client(conn_id, request.user)
             info = client.get_object_info(key)
             content_type = info.get("contentType", "application/octet-stream")
+            size = int(info.get("contentLength", 0))
+            requested = _byte_range(request.headers.get("Range", ""), size)
 
             # Stream the content
-            stream = client.get_object_stream(key)
+            stream = client.get_object_stream(
+                key, f"bytes={requested[0]}-{requested[1]}" if requested else None
+            )
 
             def generate():
                 yield from stream.iter_chunks()
@@ -609,8 +643,14 @@ class S3ProxyView(APIView):
             response = StreamingHttpResponse(
                 generate(),
                 content_type=content_type,
+                status=status.HTTP_206_PARTIAL_CONTENT if requested else status.HTTP_200_OK,
             )
-            response["Content-Length"] = info.get("contentLength", 0)
+            response["Accept-Ranges"] = "bytes"
+            if requested:
+                response["Content-Range"] = f"bytes {requested[0]}-{requested[1]}/{size}"
+                response["Content-Length"] = requested[1] - requested[0] + 1
+            else:
+                response["Content-Length"] = size
 
             # Set filename for downloads
             filename = key.split("/")[-1]
@@ -1087,6 +1127,7 @@ class S3UploadView(APIView):
             if str(request.data.get("convert", "false")).lower() == "true" and target_format in (
                 "pmtiles",
                 "cog",
+                "copc",
             ):
                 try:
                     if target_format == "pmtiles":
@@ -1104,10 +1145,18 @@ class S3UploadView(APIView):
                     else:
                         if companion_files:
                             return Response(
-                                {"error": "COG conversion accepts a single file."},
+                                {
+                                    "error": f"{target_format.upper()} conversion "
+                                    "accepts a single file."
+                                },
                                 status=status.HTTP_400_BAD_REQUEST,
                             )
-                        job = start_cog_conversion(
+                        start = (
+                            start_copc_conversion
+                            if target_format == "copc"
+                            else start_cog_conversion
+                        )
+                        job = start(
                             uploaded_file,
                             key,
                             conn_id,

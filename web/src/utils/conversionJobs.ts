@@ -46,8 +46,9 @@ export function isActiveJob(job: ConversionJob): boolean {
   return isActiveStatus(job.status)
 }
 
-// What a job produces, for its label: vector layers, rasters, or a mosaic of them.
+// What a job produces, for its label: vector layers, rasters, a mosaic, or a point cloud.
 export function jobKindLabel(job: ConversionJob): string {
   if (job.targetFormat === 'mosaic') return 'COG mosaic'
+  if (job.targetFormat === 'copc') return 'COPC point cloud'
   return job.targetFormat === 'cog' ? 'COG' : 'PMTiles + GeoParquet'
 }

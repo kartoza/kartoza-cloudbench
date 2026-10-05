@@ -96,7 +96,7 @@ export default function LayerSearch({ options, onSelect, isDisabled }: LayerSear
                 <Badge
                   flexShrink={0}
                   fontSize="9px"
-                  colorScheme={option.format === 'cog' ? 'purple' : 'blue'}
+                  colorScheme={option.format === 'cog' ? 'purple' : option.format === 'copc' ? 'teal' : 'blue'}
                 >
                   {option.format.toUpperCase()}
                 </Badge>

@@ -85,4 +85,28 @@ describe('S3UploadDialog', () => {
     )
     expect(refreshes).toHaveLength(2)
   })
+
+  it('converts a LAS/LAZ point cloud to COPC', async () => {
+    useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
+    render(
+      <ChakraProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          <S3UploadDialog />
+        </QueryClientProvider>
+      </ChakraProvider>
+    )
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, {
+      target: { files: [new File(['LASF'], 'autzen.laz', { type: 'application/octet-stream' })] },
+    })
+    const upload = await screen.findByRole('button', { name: 'Upload' })
+    await waitFor(() => expect(upload).toBeEnabled())
+    await userEvent.click(upload)
+
+    await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+    const [, file, , convert, targetFormat] = api.uploadToS3.mock.calls[0]
+    expect(file.name).toBe('autzen.laz')
+    expect(convert).toBe(true)
+    expect(targetFormat).toBe('copc')
+  })
 })
