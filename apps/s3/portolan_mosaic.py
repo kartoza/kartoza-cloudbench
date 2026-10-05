@@ -283,11 +283,13 @@ def build_collection_json(
     visual: dict[str, Any] | None,
     thumbnail: dict[str, Any] | None,
     mirror: dict[str, Any] | None = None,
+    style_file: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The mosaic's collection.json: whole-mosaic assets, and an item link per tile.
 
     `vrt`, `visual` (the merged web mosaic, None when tiles render on their
-    own) and `thumbnail` are {'filename', 'file'}.
+    own) and `thumbnail` are {'filename', 'file'}; `style_file` is the
+    style's {'size', 'checksum'} (see portolan.file_of).
     """
     datetimes = sorted(tile["datetime"] for tile in tiles)
     assets: dict[str, Any] = {}
@@ -308,10 +310,11 @@ def build_collection_json(
             thumbnail.get("file"),
         )
     assets["style-default"] = {
-        "href": "./styles/default.json",
-        "type": "application/vnd.mapbox.style+json",
+        "href": f"./{portolan.STYLE_KEY}",
+        "type": portolan.STYLE_MEDIA_TYPE,
         "title": f"{title} default style",
         "roles": ["style", "default"],
+        **portolan._file_fields({"file": style_file}),
     }
     assets["mosaic-vrt"] = _asset(
         f"./{vrt['filename']}",
@@ -367,10 +370,7 @@ def build_collection_json(
         "title": title,
         "description": f"{title}: a mosaic of {len(tiles)} GeoTIFFs, uploaded via CloudBench.",
         "license": license_id,
-        "providers": [
-            {"name": provider_name, "roles": ["producer"]},
-            *([host] if host else []),
-        ],
+        "providers": portolan.providers(host, provider_name),
         "extent": {
             "spatial": {
                 "bbox": [

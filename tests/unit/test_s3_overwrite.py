@@ -2,13 +2,15 @@
 
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
-from apps.s3 import cog, pmtiles, portolan
+from apps.s3 import cng_lite, cog, pmtiles, portolan
 from apps.s3.cng_lite import target_folder
 from apps.s3.models import CngLiteJob, S3Connection
+from tests.unit.fake_s3 import FakeS3, converting_cng
 
 GPKG_MAGIC = b"SQLite format 3\x00"
 
@@ -66,27 +68,14 @@ def test_unique_layer_id_suffixes_repeats():
 
 def test_geopackage_layers_differing_only_in_case_get_distinct_folders():
     job = Mock(source_name="data.gpkg", layers=["Roads", "roads"])
-    results = [
-        {"name": "Roads.parquet"},
-        {"name": "Roads.pmtiles"},
-        {"name": "roads.parquet"},
-        {"name": "roads.pmtiles"},
-    ]
-    layers = pmtiles.group_results(job, results)
+    layers = cng_lite.plan_layers(job, job.layers, pmtiles.assets_for)
     assert [layer["layer_id"] for layer in layers] == ["roads", "roads-2"]
     assert layers[1]["assets"][0]["filename"] == "roads-2.parquet"
 
 
 def test_raster_tables_differing_only_in_case_get_distinct_folders():
-    job = Mock(source_name="rasters.gpkg", layers=None)
-    results = [
-        {"name": "DEM_cog.tif"},
-        {"name": "DEM_cog_3857.tif"},
-        {"name": "dem_cog.tif"},
-        {"name": "dem_cog_3857.tif"},
-    ]
-    with patch("apps.s3.cog.is_geopackage", return_value=True):
-        layers = cog.group_results(job, results)
+    job = Mock(source_name="rasters.gpkg", layers=["DEM", "dem"])
+    layers = cng_lite.plan_layers(job, job.layers, cog.assets_for)
     assert [layer["layer_id"] for layer in layers] == ["dem", "dem-2"]
 
 
@@ -196,21 +185,45 @@ def test_target_endpoint_reports_before_uploading(api):
 
 
 @pytest.mark.django_db
-def test_replace_clears_the_folder_before_publishing(owner):
-    from apps.s3.cng_lite import _clear_for_replace
-
+def test_replacing_a_geopackage_keeps_its_new_files_and_original_only(owner, connection):
     job = CngLiteJob.objects.create(
         kind="pmtiles",
         owner=owner,
+        connection=connection,
         bucket="bucket",
         source_name="castelo-branco.gpkg",
+        source_key="maps/sources/job/castelo-branco.gpkg",
         output_key="maps/castelo-branco.pmtiles",
         input_size=1,
+        layers=["roads"],
         replace_existing=True,
     )
-    client = Mock()
+    s3 = FakeS3()
+    s3.objects[job.source_key] = b"SQLite format 3\x00gpkg"
+    # The GeoPackage being replaced had a layer this one doesn't.
+    s3.objects["maps/castelo-branco/rivers/rivers.pmtiles"] = b"PMTiles old"
+    s3.objects["maps/castelo-branco/roads/roads.pmtiles"] = b"PMTiles old"
+    results = {
+        "roads": {
+            "data": (b"PAR1new", {}),
+            "visual": (b"PMTiles new", {"bbox": [1, 2, 3, 4], "layers": ["roads"]}),
+        }
+    }
+    client, _submitted = converting_cng(s3, "pmtiles", results)
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
+        patch("apps.s3.cng_lite.time.sleep"),
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        pmtiles.run_conversion(job.id)
 
-    _clear_for_replace(job, client)
-
-    # Map Explorer's group for it is read from the catalog, so it goes with the folder.
-    client.delete_prefix.assert_called_once_with("maps/castelo-branco/")
+    job.refresh_from_db()
+    assert job.status == "completed", job.error
+    # The whole group folder is the replaced thing: the dropped layer goes...
+    assert not any(k.startswith("maps/castelo-branco/rivers/") for k in s3.objects)
+    # ...the new files stay, as does the original, moved in beside them.
+    assert s3.objects["maps/castelo-branco/roads/roads.pmtiles"] == b"PMTiles new"
+    assert "maps/castelo-branco/source/castelo-branco.gpkg" in s3.objects
+    assert "maps/castelo-branco/roads/collection.json" in s3.objects

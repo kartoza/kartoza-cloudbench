@@ -1,0 +1,124 @@
+Written for: you, as a design proposal to review before any code changes.
+
+Comparing what CloudBench writes against the Portolan spec (core.md, formats.md) turned up more than the four limits I listed. Several spec MUST rules are also missed, so the current output doesn't conform even as a "trimmed subset". Below is a fix for each gap, most important first.
+
+A. Spec violations in today's output
+#	Gap	Proposed fix	Where
+A1	Vector layers are PMTiles only. The spec requires GeoParquet as the data file; PMTiles is only the map-display copy (the rel: pmtiles link we already write).	Have cng-lite also write <layer>.parquet (ogr2ogr -f Parquet) and add it as the data asset. PMTiles stays as the pmtiles link (the spec prefers a link, not an asset). Catch: the cng-lite image has GDAL 3.6.2 with no Parquet driver. It needs a newer base image (ghcr.io/osgeo/gdal:ubuntu-full-3.10 or similar), or GeoPandas and PyArrow.	shapefile_to_pmtiles.py, portolan.py
+A2	COGs have no embedded band stats (MUST: min/max/mean/stddev stored inside the file) and don't pin the tile size.	Add -stats and -co BLOCKSIZE=512 to gdal_translate and gdalwarp. Add a check that no .aux.xml sidecar file is produced.	tiff_to_cog.py
+A3	No host provider. The spec requires exactly one, with a url or email. We only write producer: admin.	Add a host provider built from the connection (endpoint and bucket URL), plus an optional contact email from settings or the connection.	build_collection_json
+A4	License other has no rel: license link (MUST). Also, proprietary is in the dropdown, but the spec forbids that value.	Remove proprietary. When the license is other, show a "License URL" field in the upload dialog and write it as the rel: license link. If nothing is given, link to a LICENSE.md in the layer folder that says the terms aren't specified.	LICENSE_CHOICES, S3UploadDialog.tsx, job model (new license_url)
+A5	Bucket root has no README.md or AGENTS.md (MUST for every catalog).	Have ensure_root_catalog and prune_root_catalog regenerate both from the child links on each change, as a layer table for people and a file map for agents.	portolan.py
+A6	No thumbnail. The spec says collections MUST include one generated from the default style.	See B2.	
+B. The limits I listed earlier
+B1. Checksums. While the files are still local, cng-lite computes the SHA-256 of each output, which it already has in hand before uploading. It returns that value (and the size) in the job result. finalize_layer then writes file:checksum (multihash, i.e. 1220 + hex digest) and file:size on every asset, and adds the File extension schema. This can't go stale: each layer folder is written once, and a re-upload rewrites its collection.json too. The spec says to omit checksums rather than risk stale ones, so metadata files that get regenerated (style, README) won't have them.
+
+B2. Thumbnails. cng-lite renders thumbnail.png at 512 px from the same colours as styles/default.json, and it's registered as an asset with the thumbnail role.
+
+Vector: GeoPandas + Matplotlib, fill #2d7d9b at 0.5 opacity plus the outline. This is cheap and needs no headless browser.
+Raster: gdal_translate -of PNG -outsize 512 0 -scale using the new embedded stats from A2.
+The Map Explorer layer list and the STAC API (B4) can show it too.
+
+B3. Multi-language. The spec's model is one full STAC tree per language, linked from the root with alternate. My recommendation is to do the cheap part now and defer the rest:
+
+Now: set language: {code: "en"} (Language extension) on the catalog and every collection. This is enough to conform.
+Later, on request: a "Translate catalog" action that writes /<lang>/catalog.json with translated titles, descriptions and READMEs, keeping the same IDs. It's only worth building when a client actually needs a second language.
+B4. CloudBench's own STAC API ignores the Portolan files. Change apps/stac/catalog.py so that when a bucket has a catalog.json, it becomes the source of truth:
+
+Each Portolan collection becomes one STAC API collection with ID s3:<conn>:<layer_id>. It gets its real bbox, license, providers and thumbnail, instead of today's placeholders (world bbox, proprietary).
+Items are built from the collection's assets, with hrefs turned into presigned URLs.
+Buckets without a catalog.json keep the current .pmtiles scan as a fallback.
+Add a short cache keyed on catalog.json's ETag, because every request currently lists the whole bucket.
+C. Other problems I found
+C1. Source files end up orphaned. Originals go to sources/<job-id>/, outside the layer folder. Deleting a layer leaves them behind, which is what happened with semarang in your local bucket. Store them at <layer>/source/ instead and register them as the source asset role (the spec exempts this role from the format rules). Deleting the folder then removes everything, and the metadata records where the layer came from.
+C2. Existing layers. Add a management command, manage.py portolan_backfill <conn>, that regenerates metadata for folders already published, such as bahamas-sub-1. It can't create GeoParquet for layers whose source is gone, and will report those.
+C3. Validation. Add a unit test that checks the generated JSON against the spec rules above, so we don't drift out of conformance again.
+Suggested order
+Metadata only, no image change: A3, A4, A5, B3 (language field), C2, C3. Mostly edits to portolan.py. This gets the current output conformant except for formats and thumbnails.
+cng-lite work: A1, A2, B1, B2, C1. This needs the GDAL image upgrade.
+STAC API: B4.
+Three decisions I need from you:
+
+A1: is it OK to move cng-lite to a newer GDAL base image? It's a bigger image and a rebuild, but it's the only clean way to get GeoParquet.
+A3: where should the host contact come from? Options: a global setting (e.g. a Kartoza email), a new optional field on each S3 connection, or just the bucket URL.
+Should I start on phase 1 now?
+Separately, for your earlier minio.do.kartoza.com test: your saved "Kartoza" connection uses api.minio.do.kartoza.com. That's the S3 API host; minio.do.kartoza.com is the web console, which is why you got the 400.
+
+
+I've traced how GeoPackages flow through the Portolan pipeline, and there's more to fix than I expected. Here are the findings, then a plan.
+
+How it works today
+Uploading a .gpkg first inspects it and lists its vector layers and raster tables. You pick layers, and one job converts them.
+Each selected layer becomes its own top-level layer folder, placed next to where the .gpkg would have gone. CasteloBranco.gpkg uploaded at the root produces highway/, building/, flood/ and so on at the bucket root, each linked directly from the root catalog.json.
+Each layer gets the full treatment: GeoParquet, PMTiles, thumbnail, checksums, host, license.
+The "these layers came from one GeoPackage" grouping exists only in CloudBench's database (LayerCollection, used by the Map Explorer), not in the bucket's catalog.
+Problems
+#	Problem	Where
+G1	Nothing in the catalog links layers to their GeoPackage. A 5-layer GeoPackage adds 5 unrelated top-level folders, and external tools and the root README can't see they belong together.	cng_lite.py: base_prefix = parent of output_key
+G2	The "Create subfolder" toggle does nothing. The dialog sends subfolder, but no backend code reads it.	S3UploadDialog.tsx:343
+G3	Silent overwrites. Two GeoPackages that both have a roads layer, or a GeoPackage layer sharing a name with an existing shapefile layer, write into the same folder, and the second silently replaces the first. Two layers in one GeoPackage whose names differ only in case or punctuation (Roads and roads) also collide.	layer_id = sanitize_layer_id(name)
+G4	Mixed GeoPackages lose data. If a GeoPackage has any vector layers, its raster tables are never offered or converted.	S3UploadDialog.tsx:308
+G5	The original GeoPackage is orphaned. It's kept in sources/<job-id>/, outside every layer folder, and no collection records it as a source asset. Deleting the layers leaves it behind. (This is C1 from the plan.)	sources_directory_key
+G6	Map Explorer groups go stale. Deleting a layer folder removes it from catalog.json but not from the database groups, which keep pointing at deleted layers.	views.py: delete only calls prune_root_catalog
+G7	Nested collection IDs don't meet the spec. It says a nested collection's ID is its POSIX path (imports/roads), but we write only roads.	build_collection_json(id=layer_id)
+Proposed plan
+Phase 1. Make each GeoPackage a sub-catalog (fixes G1, G2, G7). The spec explicitly supports sub-catalogs, as long as each has its own catalog.json, README.md and AGENTS.md, with root and parent links:
+
+
+catalog.json                       ← root: child → ./castelo-branco/catalog.json
+castelo-branco/
+  catalog.json  README.md  AGENTS.md   ← sub-catalog: one child per layer
+  source/CasteloBranco.gpkg            ← the original (Phase 3)
+  highway/   collection.json, highway.parquet, highway.pmtiles, thumbnail.png, …
+  building/  …
+Layer collection IDs become paths like castelo-branco/highway. Their root link points to ../../catalog.json and their parent link to ../catalog.json.
+The existing root-catalog helpers get a sub-catalog equivalent, and deleting one layer updates its GeoPackage's catalog.json.
+Shapefiles and TIFFs stay as single top-level layers, as now.
+Phase 2. Stop silent overwrites (G3).
+
+Within one GeoPackage, add a numeric suffix to duplicate layer IDs (roads, roads-2).
+Across uploads, check whether the target folder already exists before converting, and have the dialog ask whether to replace it. The sub-catalog folder in Phase 1 already makes collisions much rarer, because layers are scoped to their GeoPackage.
+Phase 3. Keep the original as a source asset (G5, and C1 for GeoPackages). Store the uploaded .gpkg once at <gpkg>/source/, and register it in each layer's collection as a source asset (../source/CasteloBranco.gpkg). The spec exempts source files from its format rules. Deleting the GeoPackage folder then removes everything, and each layer records where it came from.
+
+Phase 4. Convert vector and raster from one GeoPackage (G4). Show both vector layers and raster tables in the picker. From the one staged source, run a PMTiles job and a COG job, both publishing into the same sub-catalog.
+
+Phase 5. Update everything that reads the catalog. The STAC API, checksum verify and "Add checksums", and the root README/AGENTS all currently follow only the root's direct links to collection.json. They'll need to follow child links into sub-catalogs as well. In the STAC API, castelo-branco/highway would become s3:<conn>:castelo-branco~highway (this is in the stac-portolan branch).
+
+Phase 6. Fix Map Explorer groups (G6).
+
+Now: when a layer folder or GeoPackage folder is deleted, remove it from the database groups too.
+Later, optionally: drop the database groups and build them from the sub-catalogs, so the bucket is the single source of truth.
+Existing data: layers from GeoPackages published before this stay where they are (flat). They move into a sub-catalog when re-published.
+
+Out of scope, but possible later:
+
+Converting QGIS styles stored in a GeoPackage's layer_styles table into MapLibre default styles. That's a hard conversion.
+Publishing non-spatial attribute tables as tabular Parquet collections.
+Suggested order: 6 (small, stops the stale groups) → 1 → 5 → 2 → 3 → 4. Phases 1 and 5 have to ship together, or catalog readers stop seeing GeoPackage layers.
+
+A few decisions for you:
+
+Sub-catalog layout: always use one for GeoPackages (remove the toggle), or keep "Create subfolder", with off meaning today's flat layout? I'd recommend always, so there's one layout to support.
+Re-uploading the same GeoPackage: replace its whole sub-catalog (layers you didn't select this time get removed), or only overwrite the layers you converted?
+Mixed GeoPackages (Phase 4): convert vector and raster together in one upload, or keep it as a follow-up?
+
+Mosaics now publish an items.parquet, and rashid no longer reports PTL-MIR-001. It's committed as a717a2a on tiff-mosaics, not pushed.
+
+What it is: a single file listing every tile in the mosaic: its id, footprint, date, bbox and file links. A client can find the tiles covering an area with one query instead of fetching each tile's metadata separately.
+
+How it's built:
+
+It's written from the same item documents CloudBench publishes, so it can't drift from them. It uses DuckDB, which CloudBench already has, so there's no new dependency.
+It's in the STAC-GeoParquet format on GeoParquet 1.1, with rows sorted spatially and a bbox column that lets readers skip irrelevant parts of the file.
+Its file links are relative to items.parquet itself, so tools can resolve the tile files from it directly.
+It's registered on the collection with the collection-mirror role, as the spec and rashid require.
+If writing it ever fails, the mosaic still publishes without it (the spec only says it SHOULD exist).
+The mosaic's README and AGENTS docs now describe it, with an example DuckDB query.
+Checked:
+
+A real 4-tile mosaic, run through the processing service and Sandbox. rashid, with its byte-level checks on, confirmed the mirror matches the items row for row: ids, geometry, dates and bboxes.
+The only findings left on the mosaic are the provider question (PTL-PRO-001), which you chose to leave, and the style file's deliberately missing checksum (a warning).
+rashid skips its row-order check for only 4 tiles, so a unit test covers the spatial sorting. It runs in CI too, since it only needs DuckDB.
+All 1,358 backend tests pass (backfill, TUI and browser tests excluded).
+I deleted the test mosaic from Sandbox afterwards.
+Still open from stage 4: grouping 20+ tiles into sub-catalogs, and item support in checksum verify, the STAC API and the catalogue's Mosaic badge.

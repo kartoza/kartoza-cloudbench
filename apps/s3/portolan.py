@@ -8,6 +8,7 @@ full spec — no checksums, thumbnails, or multi-language support yet.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import posixpath
@@ -22,6 +23,9 @@ PORTOLAN_SCHEMA = "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json"
 WEB_MAP_LINKS_SCHEMA = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
 TABLE_SCHEMA = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 FILE_SCHEMA = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+POINTCLOUD_SCHEMA = "https://stac-extensions.github.io/pointcloud/v1.0.0/schema.json"
+STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
+STYLE_KEY = "styles/default.json"
 # Multihash prefix for SHA-256: function code 0x12, digest length 0x20 (32 bytes).
 _SHA256_MULTIHASH_PREFIX = "1220"
 CATALOG_KEY = "catalog.json"
@@ -46,6 +50,8 @@ UNSPECIFIED_LICENSE_FILE = "LICENSE.md"
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
+# Portolan's point cloud format (formats.md, Point Cloud).
+COPC_MEDIA_TYPE = "application/vnd.laszip+copc"
 THUMBNAIL_MEDIA_TYPE = "image/png"
 GEOPACKAGE_MEDIA_TYPE = "application/geopackage+sqlite3"
 SOURCE_FOLDER = "source"
@@ -55,7 +61,26 @@ _THUMBNAIL_SUFFIX = "_thumbnail.png"
 _MEDIA_TYPES = {
     "pmtiles": PMTILES_MEDIA_TYPE,
     "cog": COG_MEDIA_TYPE,
+    "copc": COPC_MEDIA_TYPE,
 }
+# Kinds with a MapLibre default style: a style can't draw a point cloud.
+_STYLED_KINDS = {"pmtiles", "cog"}
+
+
+def pointcloud_fields(info: dict) -> dict:
+    """A COPC's pc:* fields (STAC Point Cloud extension) from its info.
+
+    `info` is CloudNativeGIS's report on the COPC: point `count` and
+    `dimensions` ([{'name', 'size', 'type'}]).
+    """
+    fields: dict[str, Any] = {"pc:type": "lidar", "pc:encoding": "LASzip"}
+    if info.get("count") is not None:
+        fields["pc:count"] = info["count"]
+    if info.get("dimensions"):
+        fields["pc:schemas"] = [
+            {"name": d["name"], "size": d["size"], "type": d["type"]} for d in info["dimensions"]
+        ]
+    return fields
 
 
 def sha256_multihash(digest: bytes) -> str:
@@ -63,13 +88,18 @@ def sha256_multihash(digest: bytes) -> str:
     return _SHA256_MULTIHASH_PREFIX + digest.hex()
 
 
+def file_of(body: bytes) -> dict:
+    """{'size', 'checksum'} of a file CloudBench writes itself (see _file_fields)."""
+    return {"size": len(body), "checksum": sha256_multihash(hashlib.sha256(body).digest())}
+
+
 def _file_fields(asset: dict) -> dict:
     """An asset's file:checksum/file:size (File extension), if it has them.
 
-    Only data files written once per publish carry them (see
-    run_conversion); the style — which the style editor rewrites in place —
-    and regenerated docs never do, since Portolan counts a stale checksum
-    as a conformance failure.
+    The data files and the style carry them. The style editor rewrites the
+    style in place, so saving it records them again (see record_style):
+    Portolan counts a stale checksum as a conformance failure. Regenerated
+    docs are links rather than assets, and carry none.
     """
     file = asset.get("file") or {}
     fields = {}
@@ -213,6 +243,21 @@ def host_provider(bucket_url: str, name: str = "", email: str = "") -> dict:
     return provider
 
 
+def providers(host: dict | None, uploader: str) -> list[dict]:
+    """A collection's providers: who produced its data, who hosts it.
+
+    The organisation hosting the data (`host`, see host_provider) is its
+    producer too: Portolan derives provenance from the two names, and a
+    producer that isn't the host makes the collection a mirror, which must
+    link to its upstream source (PTL-PRO-001). The uploader, who ran the
+    conversion, is listed as its processor. The host comes last, as
+    Portolan requires (PTL-PRV-002).
+    """
+    if not host:
+        return [{"name": uploader, "roles": ["producer"]}]
+    return [{"name": uploader, "roles": ["processor"]}, {**host, "roles": ["producer", "host"]}]
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -295,8 +340,10 @@ def build_collection_json(
     host: dict | None = None,
     license_url: str = "",
     style_filename: str = "default.json",
+    style_file: dict | None = None,
     pmtiles_layers: list | None = None,
     table_info: dict | None = None,
+    pointcloud_info: dict | None = None,
 ) -> dict:
     """`data_assets` is [{'filename', 'role', 'media_type'?}, ...] — every
     asset the layer's folder holds. A vector layer has two: its GeoParquet
@@ -306,9 +353,12 @@ def build_collection_json(
 
     `table_info` ({'columns', 'rowCount'}) describes the GeoParquet file's
     schema, as the STAC table extension's `table:columns`. `host` is the
-    `host` provider (see host_provider), alongside the uploader as
-    `producer`. `license_url` is where an "other" license's terms live
-    (see license_link)."""
+    `host` provider (see host_provider), the producer too, with the
+    uploader as processor (see providers). `license_url` is where an "other" license's terms live
+    (see license_link). `style_file` is the style's {'size', 'checksum'}
+    (see file_of). A point cloud ("copc") has no style; its
+    `pointcloud_info` (count, dimensions) goes on its data asset as the
+    Point Cloud extension's fields."""
     bbox = wgs84_bbox(bbox) or [-180.0, -90.0, 180.0, 90.0]
     # The renderable one drives the style/pmtiles link — "visual" if there
     # is one (PMTiles, or COG's "_3857" file), else the only asset there is.
@@ -336,13 +386,20 @@ def build_collection_json(
             }.get(media_type, title),
             "roles": [asset["role"]],
             **_file_fields(asset),
+            **(
+                pointcloud_fields(pointcloud_info)
+                if pointcloud_info is not None and media_type == COPC_MEDIA_TYPE
+                else {}
+            ),
         }
-    assets["style-default"] = {
-        "href": f"./styles/{style_filename}",
-        "type": "application/vnd.mapbox.style+json",
-        "title": f"{title} default style",
-        "roles": ["style", "default"],
-    }
+    if kind in _STYLED_KINDS:
+        assets["style-default"] = {
+            "href": f"./styles/{style_filename}",
+            "type": STYLE_MEDIA_TYPE,
+            "title": f"{title} default style",
+            "roles": ["style", "default"],
+            **_file_fields({"file": style_file}),
+        }
 
     links: list[dict[str, Any]] = [
         {"rel": "root", "href": root_relative_path, "type": "application/json"},
@@ -391,10 +448,7 @@ def build_collection_json(
         "title": title,
         "description": description,
         "license": license_id,
-        "providers": [
-            {"name": provider_name, "roles": ["producer"]},
-            *([host] if host else []),
-        ],
+        "providers": providers(host, provider_name),
         "extent": {
             "spatial": {"bbox": [bbox]},
             "temporal": {"interval": [[_now_iso(), None]]},
@@ -405,6 +459,8 @@ def build_collection_json(
     }
     if any("file:checksum" in obj for obj in [*assets.values(), *links]):
         collection["stac_extensions"].append(FILE_SCHEMA)
+    if pointcloud_info is not None:
+        collection["stac_extensions"].append(POINTCLOUD_SCHEMA)
     if table_info and table_info.get("columns"):
         collection["stac_extensions"].append(TABLE_SCHEMA)
         collection["table:columns"] = table_info["columns"]
@@ -425,6 +481,7 @@ def build_readme(
     license_url: str = "",
     thumbnail: bool = False,
     source_href: str = "",
+    point_count: int | None = None,
 ) -> str:
     lines = [f"# {title}", ""]
     if thumbnail:
@@ -454,6 +511,10 @@ def build_readme(
         lines.append("- Web map: PMTiles (vector tiles)")
         if layer_names:
             lines.append(f"- Layer(s): {', '.join(layer_names)}")
+    elif kind == "copc":
+        lines.append("- Format: Cloud Optimized Point Cloud (COPC, LAZ)")
+        if point_count is not None:
+            lines.append(f"- Points: {point_count}")
     else:
         lines.append("- Format: Cloud Optimized GeoTIFF (raster)")
     if bbox:
@@ -465,7 +526,8 @@ def build_readme(
 def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) -> str:
     file_lines = "\n".join(
         (
-            f"- Thumbnail: `./{asset['filename']}` (PNG preview of the default style)"
+            f"- Thumbnail: `./{asset['filename']}` (PNG preview of "
+            f"{'the default style' if kind in _STYLED_KINDS else 'the elevation'})"
             if asset["role"] == "thumbnail"
             else (
                 f"- Source: `{_asset_href(asset['filename'])}` (the original upload this "
@@ -487,11 +549,23 @@ def build_agents_md(*, title: str, layer_id: str, kind: str, data_assets: list) 
         if geoparquet
         else ""
     )
+    copc = next((a for a in data_assets if _asset_media_type(a, kind) == COPC_MEDIA_TYPE), None)
+    if copc:
+        query_hint += (
+            f"- Read the points from `./{copc['filename']}` with PDAL (`readers.copc`) "
+            "or any COPC reader; it's an octree, so a reader can fetch just an area "
+            "or a coarse level of detail with HTTP range requests.\n"
+        )
+    style_line = (
+        "- Default style: `./styles/default.json` (MapLibre GL style v8)\n"
+        if kind in _STYLED_KINDS
+        else ""
+    )
     return (
         f"# Agent notes for {title}\n\n"
         f"{file_lines}\n"
         f"{query_hint}"
-        "- Default style: `./styles/default.json` (MapLibre GL style v8)\n"
+        f"{style_line}"
         "- This collection was generated automatically by CloudBench on upload; "
         "no manual curation has been applied.\n"
         f"- Collection id: `{layer_id}`\n"
@@ -503,6 +577,43 @@ def _load_json(s3_client, key: str) -> dict | None:
         return cast(dict, json.loads(s3_client.get_object(key)))
     except Exception:
         return None
+
+
+def layer_style(s3_client, key: str) -> dict | None:
+    """The collection.json of the layer whose default style `key` is, if it is one.
+
+    The style editor saves a layer's style through a plain upload, to
+    "<layer folder>/styles/default.json" (see record_style).
+    """
+    if not key.endswith(f"/{STYLE_KEY}"):
+        return None
+    folder = key.removesuffix(f"/{STYLE_KEY}")
+    collection = _load_json(s3_client, f"{folder}/collection.json")
+    asset = (collection or {}).get("assets", {}).get("style-default") or {}
+    href = str(asset.get("href", ""))
+    if posixpath.normpath(posixpath.join(folder, href)) != key:
+        return None
+    return collection
+
+
+def record_style(s3_client, key: str, collection: dict, body: bytes) -> None:
+    """Record a rewritten style's file:size/file:checksum in its collection.json.
+
+    `collection` is the layer's (see layer_style); `body` the style as just
+    saved to `key`. Without this the checksum recorded when the layer was
+    published would go stale on the first edit, which Portolan counts as a
+    conformance failure.
+    """
+    folder = key.removesuffix(f"/{STYLE_KEY}")
+    collection["assets"]["style-default"].update(_file_fields({"file": file_of(body)}))
+    extensions = collection.setdefault("stac_extensions", [])
+    if FILE_SCHEMA not in extensions:
+        extensions.append(FILE_SCHEMA)
+    s3_client.put_object(
+        key=f"{folder}/collection.json",
+        body=json.dumps(collection, indent=2).encode("utf-8"),
+        content_type="application/json",
+    )
 
 
 ROOT_README_KEY = "README.md"
@@ -934,8 +1045,9 @@ def finalize_layer(
         style = (
             default_style_for_pmtiles(layer_names[0], visual["filename"])
             if kind == "pmtiles"
-            else default_style_for_cog(visual["filename"])
+            else default_style_for_cog(visual["filename"]) if kind == "cog" else None
         )
+        style_body = json.dumps(style, indent=2).encode("utf-8") if style else b""
         collection = build_collection_json(
             layer_id=layer_id,
             title=title,
@@ -952,6 +1064,8 @@ def finalize_layer(
             pmtiles_layers=layer_names if kind == "pmtiles" else None,
             table_info=table_info,
             license_url=license_url,
+            style_file=file_of(style_body) if style else None,
+            pointcloud_info=info if kind == "copc" else None,
         )
         readme = build_readme(
             title=title,
@@ -966,6 +1080,7 @@ def finalize_layer(
             source_href=next(
                 (_asset_href(a["filename"]) for a in data_assets if a["role"] == "source"), ""
             ),
+            point_count=info.get("count") if kind == "copc" else None,
         )
         agents = build_agents_md(title=title, layer_id=layer_id, kind=kind, data_assets=data_assets)
 
@@ -973,12 +1088,10 @@ def finalize_layer(
             ("collection.json", json.dumps(collection, indent=2), "application/json"),
             ("README.md", readme, "text/markdown"),
             ("AGENTS.md", agents, "text/markdown"),
-            (
-                "styles/default.json",
-                json.dumps(style, indent=2),
-                "application/vnd.mapbox.style+json",
-            ),
         ]
+        if style:
+            # The very bytes its file:checksum was taken of.
+            files.append((STYLE_KEY, style_body.decode("utf-8"), STYLE_MEDIA_TYPE))
         needs_license_file = license_id == "other" and not license_url
         if needs_license_file:
             files.append(

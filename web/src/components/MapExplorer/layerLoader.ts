@@ -1,5 +1,5 @@
 /**
- * Shared PMTiles/COG layer loading logic for MapLibre maps.
+ * Shared PMTiles/COG/COPC layer loading logic for MapLibre maps.
  *
  * Used by both the full Map Explorer overlay (index.tsx) and the inline
  * single-layer preview shown in the main panel (S3MapPreview.tsx).
@@ -7,7 +7,8 @@
 import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
-import { getS3PresignedUrl } from '../../api/mapExplorer'
+import type { LidarControl } from 'maplibre-gl-lidar'
+import { getS3PresignedUrl, type LayerFormat } from '../../api/mapExplorer'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -15,6 +16,24 @@ export interface LoadedLayerInfo {
   /** Vector PMTiles layers can switch between the default coloring and a saved style; raster/COG can't. */
   isVector: boolean
   sourceLayer?: string
+  /** A point cloud's id in the map's LidarControl (see addCopcLayer). */
+  pointCloudId?: string
+}
+
+/**
+ * Streams a COPC point cloud onto the map through maplibre-gl-lidar, which
+ * reads only the octree nodes in view (HTTP range requests) and draws them
+ * with deck.gl. Returns its id in `lidar` and its WGS84 bounds.
+ */
+export async function addCopcLayer(
+  lidar: LidarControl,
+  url: string,
+  opacity: number
+): Promise<{ pointCloudId: string; bounds: [number, number, number, number] }> {
+  const info = await lidar.loadPointCloud(url)
+  lidar.setOpacity(opacity / 100)
+  const { minX, minY, maxX, maxY } = info.bounds
+  return { pointCloudId: info.id, bounds: [minX, minY, maxX, maxY] }
 }
 
 export async function addCogLayer(
@@ -167,9 +186,17 @@ export async function loadLayerOntoMap(
   mapInstance: maplibregl.Map,
   protocol: Protocol,
   connectionId: string,
-  layer: { id: string; key: string; format: 'pmtiles' | 'cog'; color: string; opacity: number }
+  layer: { id: string; key: string; format: LayerFormat; color: string; opacity: number },
+  // The map's point cloud control, created on first use (COPC only).
+  getLidar?: () => LidarControl
 ): Promise<LoadedLayerInfo> {
   const url = await getS3PresignedUrl(connectionId, layer.key)
+
+  if (layer.format === 'copc') {
+    if (!getLidar) throw new Error('This map cannot show point clouds.')
+    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), url, layer.opacity)
+    return { bounds, isVector: false, pointCloudId }
+  }
 
   if (layer.format === 'cog') {
     const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
@@ -202,13 +229,14 @@ export async function loadLayerOntoMap(
   return { bounds, isVector: true, sourceLayer: sourceLayerName }
 }
 
-export function layerNameFromKey(key: string, format: 'pmtiles' | 'cog'): string {
+export function layerNameFromKey(key: string, format: LayerFormat): string {
   const base = key.split('/').pop() ?? key
+  if (format === 'copc') return base.replace(/\.copc\.laz$/i, '')
   return format === 'cog' ? base.replace(/\.tiff?$/i, '') : base.replace(/\.pmtiles$/i, '')
 }
 
 /** Stable, content-derived id so the same object is never added twice and needs no counter. */
-export function layerIdFor(option: { connectionId: string; bucketName: string; key: string; format: 'pmtiles' | 'cog' }): string {
+export function layerIdFor(option: { connectionId: string; bucketName: string; key: string; format: LayerFormat }): string {
   const slug = `${option.connectionId}-${option.bucketName}-${option.key}`.replace(/[^a-zA-Z0-9]/g, '_')
   return `${option.format}-${slug}`
 }

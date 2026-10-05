@@ -1,4 +1,7 @@
-"""Convert shapefiles via CloudNativeGIS Lite and transfer the resulting PMTiles to S3."""
+"""Convert vector uploads via CloudNativeGIS Lite and transfer the resulting PMTiles to S3.
+
+A shapefile, a GeoPackage, or a single GeoJSON, FlatGeobuf or KML/KMZ file.
+"""
 
 import shutil
 import threading
@@ -31,43 +34,36 @@ CONTENT_TYPE = "application/vnd.pmtiles"
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# Single-file vector sources, staged as they are (cng-lite reads each with
+# OGR, by its suffix): their media types.
+VECTOR_FILE_TYPES = {
+    ".geojson": "application/geo+json",
+    ".fgb": "application/vnd.flatgeobuf",
+    ".kml": "application/vnd.google-earth.kml+xml",
+    ".kmz": "application/vnd.google-earth.kmz",
+}
 
-def group_results(job, results):
-    """Groups cng-lite's output into one logical layer per vector layer."""
-    is_multi = job.layers is not None
-    groups = {}
-    for item in results:
-        if portolan.is_thumbnail_result(item["name"]):
-            groups.setdefault(portolan.thumbnail_stem(item["name"]), {})["thumbnail"] = item
-            continue
-        path = PurePosixPath(item["name"])
-        role = "data" if path.suffix.lower() == ".parquet" else "visual"
-        groups.setdefault(path.stem, {})[role] = item
 
-    layers = []
-    taken = set()
-    for stem, items in groups.items():
-        title_stem = stem if is_multi else PurePosixPath(job.source_name).stem
-        title = portolan.prettify(title_stem)
-        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
-        assets = []
-        if "data" in items:
-            assets.append(
-                {
-                    "item": items["data"],
-                    "filename": f"{layer_id}.parquet",
-                    "role": "data",
-                    "media_type": PARQUET_CONTENT_TYPE,
-                }
-            )
-        if "visual" in items:
-            assets.append(
-                {"item": items["visual"], "filename": f"{layer_id}.pmtiles", "role": "visual"}
-            )
-        if "thumbnail" in items:
-            assets.append(portolan.thumbnail_asset(items["thumbnail"]))
-        layers.append({"layer_id": layer_id, "title": title, "assets": assets})
-    return layers
+def assets_for(layer_id):
+    """A vector layer's files: its GeoParquet (data), PMTiles (visual), thumbnail."""
+    return [
+        {"role": "data", "filename": f"{layer_id}.parquet", "media_type": PARQUET_CONTENT_TYPE},
+        {"role": "visual", "filename": f"{layer_id}.pmtiles", "media_type": CONTENT_TYPE},
+        {
+            "role": "thumbnail",
+            "filename": portolan.THUMBNAIL_FILENAME,
+            "media_type": portolan.THUMBNAIL_MEDIA_TYPE,
+        },
+    ]
+
+
+def pick_layers(inspection):
+    """A GeoPackage's vector layers, from CloudNativeGIS's inspection of it."""
+    return [layer["name"] for layer in inspection.get("layers", [])]
+
+
+def is_vector_file(filename):
+    return PurePosixPath(filename).suffix.lower() in VECTOR_FILE_TYPES
 
 
 def output_key(key):
@@ -180,8 +176,11 @@ def start_conversion(
     if not CngLiteJob.is_valid():
         raise ValueError("CloudNativeGIS is not configured.")
     geopackage = is_geopackage(uploaded_file.name)
+    vector_file = is_vector_file(uploaded_file.name)
     if geopackage and companion_files:
         raise ValueError("GeoPackage conversion accepts a single file.")
+    if vector_file and companion_files:
+        raise ValueError("GeoJSON, FlatGeobuf and KML conversion accepts a single file.")
     input_size = uploaded_file.size + sum(component.size for component in companion_files)
     if input_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise ValueError("The file exceeds the upload size limit.")
@@ -208,6 +207,14 @@ def start_conversion(
             prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
             source_filename = PurePosixPath(uploaded_file.name).name
             content_type = "application/geopackage+sqlite3"
+        elif vector_file:
+            suffix = PurePosixPath(uploaded_file.name).suffix.lower()
+            source_path = directory / f"source{suffix}"
+            with source_path.open("wb") as output:
+                for chunk in uploaded_file.chunks():
+                    output.write(chunk)
+            source_filename = PurePosixPath(uploaded_file.name).name
+            content_type = VECTOR_FILE_TYPES[suffix]
         else:
             source_path = directory / "source.zip"
             prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
@@ -358,21 +365,10 @@ def cancel_geopackage_inspection(job_id, user):
     job.delete()
 
 
-def validate_pmtiles(output, name=""):
-    """PMTiles output, or the GeoParquet/thumbnail paired with it."""
-    if name.lower().endswith(".parquet"):
-        return output.read(4) == b"PAR1"
-    if portolan.is_thumbnail_result(name):
-        return output.read(8) == PNG_MAGIC
-    return output.read(7) == b"PMTiles"
-
-
 CONVERTER = Converter(
     endpoint=ENDPOINT,
-    content_type=CONTENT_TYPE,
-    validate=validate_pmtiles,
-    invalid_message="CloudNativeGIS did not return a valid PMTiles/GeoParquet file.",
-    group_results=group_results,
+    assets_for=assets_for,
+    pick_layers=pick_layers,
     payload=lambda job: {
         "thumbnail": True,
         **({"layers": job.layers} if job.layers else {}),

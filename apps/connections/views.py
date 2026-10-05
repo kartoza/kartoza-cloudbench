@@ -68,7 +68,7 @@ class ConnectionListView(APIView):
     def get(self, request):
         """List all GeoServer connections."""
         config_manager = get_config(request.user)
-        connections = config_manager.config.connections
+        connections = config_manager.list_connections()
         serializer = ConnectionResponseSerializer(connections, many=True)
         return Response(serializer.data)
 

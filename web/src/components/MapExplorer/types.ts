@@ -1,15 +1,19 @@
+import type { LayerFormat } from '../../api/mapExplorer'
+
 export interface MapLayerState {
   id: string
   connectionId: string
   bucketName: string
   key: string
   name: string
-  format: 'pmtiles' | 'cog'
+  format: LayerFormat
   color: string
   opacity: number
   status: 'loading' | 'ready' | 'error'
   bounds?: [number, number, number, number]
   isVector?: boolean
+  /** A COPC layer's id in the map's LidarControl. */
+  pointCloudId?: string
   sourceLayer?: string
   hasCustomStyle?: boolean
   styleMode?: 'default' | 'custom'
@@ -30,5 +34,5 @@ export interface LayerSearchOption {
   bucketName: string
   key: string
   name: string
-  format: 'pmtiles' | 'cog'
+  format: LayerFormat
 }

@@ -303,3 +303,46 @@ def test_catalogue_leaves_out_empty_and_unreachable_buckets(api, serve, owner, c
 
     with patch("apps.s3.layer_groups.get_s3_client", side_effect=RuntimeError("down")):
         assert api.get("/api/s3/catalogue").json() == []
+
+
+@pytest.mark.django_db
+def test_catalogue_lists_a_point_cloud_as_copc(api, serve, connection):
+    bucket = FakeBucket()
+    publish(
+        bucket,
+        "lidar/autzen",
+        "Autzen",
+        [
+            {
+                "filename": "autzen.copc.laz",
+                "role": "data",
+                "media_type": portolan.COPC_MEDIA_TYPE,
+                "file": {"size": 669411},
+            },
+            {"filename": "thumbnail.png", "role": "thumbnail"},
+        ],
+        kind="copc",
+    )
+    serve(bucket)
+
+    [section] = api.get("/api/s3/catalogue").json()
+
+    [entry] = section["entries"]
+    # Its COPC is its own visual: Map Explorer streams it with maplibre-gl-lidar.
+    assert (entry["key"], entry["format"]) == ("lidar/autzen/autzen.copc.laz", "copc")
+    assert entry["size"] == 669411
+    assert entry["thumbnailKey"] == "lidar/autzen/thumbnail.png"
+
+
+@pytest.mark.django_db
+def test_catalogue_scan_finds_point_clouds(api, serve, connection):
+    bucket = ListingBucket()
+    bucket.objects["lidar/autzen.copc.laz"] = b"x" * 3
+    bucket.objects["lidar/raw.laz"] = b"x" * 3  # not cloud-optimized: not drawable
+    serve(bucket)
+
+    [section] = api.get("/api/s3/catalogue").json()
+
+    assert [(e["name"], e["key"], e["format"]) for e in section["entries"]] == [
+        ("autzen", "lidar/autzen.copc.laz", "copc")
+    ]

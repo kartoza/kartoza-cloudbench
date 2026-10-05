@@ -13,7 +13,8 @@ from apps.s3.cng_lite import (
     resume_interrupted_conversions,
     update_job,
 )
-from apps.s3.models import CngLiteJob, CngLiteJobStatus, JobCancelled
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, JobCancelled, S3Connection
+from tests.unit.fake_s3 import FakeS3
 from tests.unit.test_s3_cng_processing_client import run
 
 Status = CngLiteJobStatus
@@ -24,12 +25,16 @@ def job(settings, tmp_path, django_user_model):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_ON_DEMAND = False
     owner = django_user_model.objects.create_user(username="7")
+    connection = S3Connection.objects.create(
+        owner=owner, name="MinIO", endpoint="minio:9000", bucket="bucket"
+    )
 
     def make(**fields):
         return CngLiteJob.objects.create(
             **{
                 "kind": "pmtiles",
                 "owner": owner,
+                "connection": connection,
                 "bucket": "bucket",
                 "source_name": "roads.zip",
                 "source_key": "folder/sources/job/roads.zip",
@@ -42,6 +47,11 @@ def job(settings, tmp_path, django_user_model):
         )
 
     return make
+
+
+def cng_lite(respond):
+    """An httpx client for a CloudNativeGIS answering with `respond`."""
+    return httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
 
 
 @pytest.mark.django_db
@@ -108,7 +118,7 @@ def test_failing_while_cancelling_ends_cancelled(job):
 @pytest.mark.django_db
 def test_a_job_cancelled_before_it_ran_just_ends(job):
     cancelling = job(status=Status.CANCELLING)
-    requests, _, _ = run(cancelling, lambda _request: httpx.Response(500))
+    requests, _, _ = run(cancelling, cng_lite(lambda _request: httpx.Response(500)))
     assert requests == []
     assert cancelling.status == Status.CANCELLED
     assert cancelling.message == "Conversion cancelled"
@@ -118,16 +128,38 @@ def test_a_job_cancelled_before_it_ran_just_ends(job):
 def test_polling_stops_once_cancelled(job):
     polling = job(status=Status.POLLING)
 
-    def cng_lite(request):
+    s3 = FakeS3()
+    # CloudNativeGIS had uploaded one of the results already.
+    s3.put_object("folder/roads/roads.parquet", b"PAR1")
+
+    def still_converting(_request):
         # Cancelled while CloudNativeGIS is still at it.
         CngLiteJob.objects.filter(pk=polling.pk).update(status=Status.CANCELLING)
         return httpx.Response(200, json={"status": "processing"})
 
-    requests, s3_client, _ = run(polling, cng_lite)
+    requests, _, finalize_layer = run(polling, cng_lite(still_converting), s3)
 
     assert requests == [("GET", "/api/v1/jobs/cng-job-1")]
     assert polling.status == Status.CANCELLED
-    s3_client.client.upload_fileobj.assert_not_called()
+    finalize_layer.assert_not_called()
+    # A new layer's partial upload doesn't stay behind.
+    assert not any(key.startswith("folder/roads/") for key in s3.objects)
+
+
+@pytest.mark.django_db
+def test_a_replaced_layers_folder_is_left_as_it_is(job):
+    polling = job(status=Status.POLLING, replace_existing=True)
+    s3 = FakeS3()
+    s3.put_object("folder/roads/roads.parquet", b"PAR1")
+
+    def still_converting(_request):
+        CngLiteJob.objects.filter(pk=polling.pk).update(status=Status.CANCELLING)
+        return httpx.Response(200, json={"status": "processing"})
+
+    run(polling, cng_lite(still_converting), s3)
+
+    assert polling.status == Status.CANCELLED
+    assert "folder/roads/roads.parquet" in s3.objects
 
 
 @pytest.mark.django_db

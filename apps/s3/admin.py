@@ -2,16 +2,9 @@
 
 from django.contrib import admin
 
+from apps.core.admin import mask_secret
+
 from .models import CngLiteJob, CngLiteJobLog, S3Connection
-
-
-def _mask(value: str) -> str:
-    """Shows just enough of a secret to recognize it, not enough to use it."""
-    if not value:
-        return ""
-    if len(value) <= 8:
-        return "*" * len(value)
-    return f"{value[:4]}...{value[-4:]}"
 
 
 @admin.register(S3Connection)
@@ -38,11 +31,11 @@ class S3ConnectionAdmin(admin.ModelAdmin):
 
     @admin.display(description="Access key")
     def masked_access_key(self, obj: S3Connection) -> str:
-        return _mask(obj.access_key)
+        return mask_secret(obj.access_key)
 
     @admin.display(description="Secret key")
     def masked_secret_key(self, obj: S3Connection) -> str:
-        return _mask(obj.secret_key)
+        return mask_secret(obj.secret_key)
 
 
 class CngLiteJobLogInline(admin.TabularInline):
@@ -120,4 +113,4 @@ class CngLiteJobAdmin(admin.ModelAdmin):
 
     @admin.display(description="CloudNativeGIS API token")
     def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
-        return _mask(obj.cloudnativegis_api_token)
+        return mask_secret(obj.cloudnativegis_api_token)

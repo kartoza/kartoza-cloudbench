@@ -21,59 +21,25 @@ CONTENT_TYPE = portolan.COG_MEDIA_TYPE
 TIFF_MAGIC = (b"II*\x00", b"MM\x00*")
 
 
-def group_results(job, results):
-    """Groups cng-lite's COG output into one logical layer per raster.
+def assets_for(layer_id):
+    """A raster's files: its COG (data), EPSG:3857 COG (visual), and thumbnail.
 
-    Every raster produces two files — the original-CRS COG and its
-    "_3857" EPSG:3857 companion (see tiff_to_cog.py) — that belong to the
-    same layer. A GeoPackage's per-table files each keep their own name;
-    a plain TIFF's (generically-named) pair instead takes its title from
-    the original upload.
+    Map Explorer renders only Web Mercator COGs, hence the "_3857" one.
     """
-    is_multi = is_geopackage(job.source_name)
-    groups = {}
-    order = []
-    for item in results:
-        if portolan.is_thumbnail_result(item["name"]):
-            # "<stem>_cog_thumbnail.png" belongs to "<stem>_cog.tif"'s layer.
-            base = portolan.thumbnail_stem(item["name"]).removesuffix("_cog")
-            groups.setdefault(base, {})["thumbnail"] = item
-            if base not in order:
-                order.append(base)
-            continue
-        stem = PurePosixPath(item["name"]).stem
-        is_3857 = stem.endswith("_3857")
-        base = stem[: -len("_3857")] if is_3857 else stem
-        if base.endswith("_cog"):
-            base = base[: -len("_cog")]
-        if base not in groups:
-            groups[base] = {}
-            order.append(base)
-        groups[base]["visual" if is_3857 else "data"] = item
+    return [
+        {"role": "data", "filename": f"{layer_id}.tif", "media_type": CONTENT_TYPE},
+        {"role": "visual", "filename": f"{layer_id}_3857.tif", "media_type": CONTENT_TYPE},
+        {
+            "role": "thumbnail",
+            "filename": portolan.THUMBNAIL_FILENAME,
+            "media_type": portolan.THUMBNAIL_MEDIA_TYPE,
+        },
+    ]
 
-    layers = []
-    taken = set()
-    for base in order:
-        title_stem = base if is_multi else PurePosixPath(job.source_name).stem
-        title = portolan.prettify(title_stem)
-        layer_id = portolan.unique_layer_id(portolan.sanitize_layer_id(title_stem), taken)
-        assets = []
-        if "data" in groups[base]:
-            assets.append(
-                {"item": groups[base]["data"], "filename": f"{layer_id}.tif", "role": "data"}
-            )
-        if "visual" in groups[base]:
-            assets.append(
-                {
-                    "item": groups[base]["visual"],
-                    "filename": f"{layer_id}_3857.tif",
-                    "role": "visual",
-                }
-            )
-        if "thumbnail" in groups[base]:
-            assets.append(portolan.thumbnail_asset(groups[base]["thumbnail"]))
-        layers.append({"layer_id": layer_id, "title": title, "assets": assets})
-    return layers
+
+def pick_layers(inspection):
+    """A GeoPackage's raster tables, from CloudNativeGIS's inspection of it."""
+    return [table["name"] for table in inspection.get("rasterTables", [])]
 
 
 def output_key(key):
@@ -160,13 +126,6 @@ def start_conversion(
     return job
 
 
-def validate_cog(output, name=""):
-    """A COG, or the thumbnail rendered alongside it."""
-    if portolan.is_thumbnail_result(name):
-        return output.read(8) == b"\x89PNG\r\n\x1a\n"
-    return output.read(4) in TIFF_MAGIC
-
-
 def start_geopackage_conversion(job_id, user, tables):
     """Confirm a raster GeoPackage's tables and start its COG conversion.
 
@@ -200,13 +159,11 @@ def start_geopackage_conversion(job_id, user, tables):
 
 CONVERTER = Converter(
     endpoint=ENDPOINT,
-    content_type=CONTENT_TYPE,
-    validate=validate_cog,
-    invalid_message="CloudNativeGIS did not return a valid COG file.",
-    group_results=group_results,
-    # Only set when confirmed via start_geopackage_conversion (a direct
-    # GeoPackage upload with targetFormat=cog converts every raster table,
-    # same as before).
+    assets_for=assets_for,
+    pick_layers=pick_layers,
+    # The tables picked (start_geopackage_conversion), or - for a GeoPackage
+    # uploaded straight to convert - all of them, listed before converting
+    # (see CNGProcessingClient._layer_names).
     payload=lambda job: {
         "thumbnail": True,
         **({"tables": job.layers} if job.layers else {}),

@@ -23,7 +23,6 @@ import shutil
 import subprocess
 import threading
 import time
-from functools import partial
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -31,7 +30,7 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
-from . import portolan, portolan_mosaic
+from . import direct_upload, portolan, portolan_mosaic
 from .client import get_s3_client
 from .cng_lite import (
     _provider_name,
@@ -44,15 +43,13 @@ from .cng_lite import (
     update_job,
     wait_for_job,
 )
-from .cog import TIFF_MAGIC, prepare_tiff
+from .cog import prepare_tiff
 from .models import CngLiteJob, CngLiteJobStatus, JobCancelled
 
 logger = logging.getLogger(__name__)
 
 KIND = "mosaic"
 MOSAIC_ENDPOINT = "api/v1/mosaic"
-# How long presigned URLs outlast the conversion timeout (seconds).
-URL_MARGIN = 300
 MIN_TILES = 2
 GDAL_TIMEOUT = 300
 
@@ -211,7 +208,7 @@ def job_timeout(input_size: int) -> int:
     The conversion timeout, plus settings.MOSAIC_TIMEOUT_PER_GB for every
     GB uploaded, capped at settings.MOSAIC_MAX_TIMEOUT (never below the
     conversion timeout). CloudBench waits this long, and the presigned
-    URLs it hands out last only a little longer (see URL_MARGIN): a small
+    URLs it hands out last only a little longer (see direct_upload.URL_MARGIN): a small
     mosaic's URLs stay short-lived, a big one's last as long as it needs.
     """
     base = settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT
@@ -231,70 +228,6 @@ def _upload(s3_client, bucket, path: Path, key: str, content_type: str) -> None:
     with path.open("rb") as source:
         s3_client.client.upload_fileobj(
             source, bucket, key, ExtraArgs={"ContentType": content_type}
-        )
-
-
-def _file_fields(output: dict) -> dict:
-    """CloudNativeGIS's {'size', 'sha256'} for an uploaded file, as asset `file`."""
-    return {
-        "size": output["size"],
-        "checksum": portolan.sha256_multihash(bytes.fromhex(output["sha256"])),
-    }
-
-
-def _verify_outputs(s3_client, folder: str, outputs: list[tuple[str, dict]]) -> None:
-    """Check CloudNativeGIS's outputs are in the bucket as it reported them.
-
-    It uploads them itself, so CloudBench doesn't take its word for it:
-    each must exist, with the size CloudNativeGIS reported (recorded as the
-    asset's file:size) and the content type expected of it, and each COG
-    must start as a TIFF does. Only object metadata and four bytes per COG
-    are read. Raises ValueError, failing the job, on any mismatch.
-    """
-    expected_types = {
-        ".tif": portolan.COG_MEDIA_TYPE,
-        ".vrt": portolan_mosaic.VRT_MEDIA_TYPE,
-        ".png": portolan.THUMBNAIL_MEDIA_TYPE,
-    }
-    for relative, asset in outputs:
-        key = f"{folder}/{relative}"
-        try:
-            info = s3_client.get_object_info(key)
-        except Exception as exc:
-            raise ValueError(
-                f"CloudNativeGIS reported {relative} uploaded, but it isn't there."
-            ) from exc
-        size = asset["file"]["size"]
-        if info["contentLength"] != size:
-            raise ValueError(
-                f"{relative} is {info['contentLength']} bytes in the bucket, "
-                f"but CloudNativeGIS reported {size}."
-            )
-        content_type = expected_types[PurePosixPath(relative).suffix]
-        if info["contentType"] != content_type:
-            raise ValueError(
-                f"{relative} was stored as {info['contentType']!r}, not {content_type!r}."
-            )
-        if relative.endswith(".tif"):
-            head = s3_client.client.get_object(Bucket=s3_client.bucket, Key=key, Range="bytes=0-3")
-            if head["Body"].read() not in TIFF_MAGIC:
-                raise ValueError(f"{relative} in the bucket isn't a TIFF.")
-
-
-def _delete_leftovers(s3_client, folder: str, keep: set[str]) -> None:
-    """After a confirmed replace: drop the old mosaic's files this one didn't rewrite."""
-    stale, token = [], None
-    while True:
-        page = s3_client.list_objects(
-            prefix=f"{folder}/", delimiter="", max_keys=1000, continuation_token=token
-        )
-        stale += [{"Key": o["key"]} for o in page["objects"] if o["key"] not in keep]
-        if not page.get("isTruncated"):
-            break
-        token = page.get("nextContinuationToken")
-    for i in range(0, len(stale), 1000):
-        s3_client.client.delete_objects(
-            Bucket=s3_client.bucket, Delete={"Objects": stale[i : i + 1000]}
         )
 
 
@@ -361,17 +294,13 @@ def run_mosaic(job_id):
         # needn't outlive it: past that they'd only be a risk. (S3 checks a
         # URL's expiry as a request starts, so an upload under way finishes.)
         timeout = job_timeout(job.input_size)
-        expiry = timeout + URL_MARGIN
+        expiry = timeout + direct_upload.URL_MARGIN
 
         def put(relative: str, content_type: str = portolan.COG_MEDIA_TYPE) -> str:
             # Signed with the only content type the upload may carry.
-            url: str = s3_client.generate_presigned_url(
-                f"{folder}/{relative}",
-                expiration=expiry,
-                method="put_object",
-                content_type=content_type,
+            return direct_upload.presign_put(
+                s3_client, f"{folder}/{relative}", expiry, content_type
             )
-            return url
 
         vrt_name = f"{mosaic_id}.vrt"
         merged_name = f"{mosaic_id}_3857.tif"
@@ -419,44 +348,60 @@ def run_mosaic(job_id):
         output_keys = []
         for tile, output in zip(tiles, outputs["tiles"], strict=True):
             tile["bbox"] = portolan.wgs84_bbox(output.get("bbox"))
-            tile["data"] = {"filename": f"{tile['id']}.tif", "file": _file_fields(output["data"])}
+            tile["data"] = {
+                "filename": f"{tile['id']}.tif",
+                "file": direct_upload.file_fields(output["data"]),
+            }
             output_keys.append(f"{tile['id']}/{tile['data']['filename']}")
             if "web" in output:
                 tile["visual"] = {
                     "filename": f"{tile['id']}_3857.tif",
-                    "file": _file_fields(output["web"]),
+                    "file": direct_upload.file_fields(output["web"]),
                 }
                 output_keys.append(f"{tile['id']}/{tile['visual']['filename']}")
-        vrt = {"filename": vrt_name, "file": _file_fields(outputs["vrt"])}
+        vrt = {"filename": vrt_name, "file": direct_upload.file_fields(outputs["vrt"])}
         visual = (
-            {"filename": merged_name, "file": _file_fields(outputs["merged"])}
+            {"filename": merged_name, "file": direct_upload.file_fields(outputs["merged"])}
             if "merged" in outputs
             else None
         )
         thumbnail = (
-            {"filename": portolan.THUMBNAIL_FILENAME, "file": _file_fields(outputs["thumbnail"])}
+            {
+                "filename": portolan.THUMBNAIL_FILENAME,
+                "file": direct_upload.file_fields(outputs["thumbnail"]),
+            }
             if "thumbnail" in outputs
             else None
         )
         output_keys += [a["filename"] for a in (vrt, visual, thumbnail) if a]
-        verify = partial(
-            _verify_outputs,
-            s3_client,
-            folder,
-            [
-                *((f"{t['id']}/{t['data']['filename']}", t["data"]) for t in tiles),
-                *(
-                    (f"{t['id']}/{t['visual']['filename']}", t["visual"])
-                    for t in tiles
-                    if t.get("visual")
-                ),
-                (vrt_name, vrt),
-                *([(merged_name, visual)] if visual else []),
-                *([(portolan.THUMBNAIL_FILENAME, thumbnail)] if thumbnail else []),
-            ],
-        )
+        outputs_written = [
+            *((f"{t['id']}/{t['data']['filename']}", t["data"]) for t in tiles),
+            *(
+                (f"{t['id']}/{t['visual']['filename']}", t["visual"])
+                for t in tiles
+                if t.get("visual")
+            ),
+            (vrt_name, vrt),
+            *([(merged_name, visual)] if visual else []),
+            *([(portolan.THUMBNAIL_FILENAME, thumbnail)] if thumbnail else []),
+        ]
+        types = {
+            ".tif": portolan.COG_MEDIA_TYPE,
+            ".vrt": portolan_mosaic.VRT_MEDIA_TYPE,
+            ".png": portolan.THUMBNAIL_MEDIA_TYPE,
+        }
         try:
-            verify()
+            direct_upload.verify_uploads(
+                s3_client,
+                [
+                    (
+                        f"{folder}/{relative}",
+                        asset["file"]["size"],
+                        types[PurePosixPath(relative).suffix],
+                    )
+                    for relative, asset in outputs_written
+                ],
+            )
         except ValueError:
             # A new mosaic's folder was empty before: don't leave orphaned
             # files there. A replaced one's is left as it is, to look into.
@@ -484,7 +429,7 @@ def run_mosaic(job_id):
         if job.replace_existing:
             written = {f"{folder}/{key}" for key in output_keys}
             written |= {f"{folder}/{t['id']}/{t['id']}.json" for t in tiles}
-            _delete_leftovers(s3_client, folder, written)
+            direct_upload.delete_leftovers(s3_client, folder, written)
         _publish_metadata(
             s3_client,
             job=job,
@@ -565,6 +510,8 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
     title = portolan.prettify(job.source_name)
     license_id = portolan.normalize_license(job.license)
     license_url = job.license_url if license_id == "other" else ""
+    style_target = visual["filename"] if visual else f"{tiles[0]['id']}/{tiles[0]['id']}.tif"
+    style = portolan_mosaic.dumps(portolan.default_style_for_cog(style_target))
     collection = portolan_mosaic.build_collection_json(
         folder=folder,
         title=title,
@@ -581,6 +528,7 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
         visual=visual,
         thumbnail=thumbnail,
         mirror=mirror,
+        style_file=portolan.file_of(style),
     )
     readme = portolan_mosaic.build_readme(
         title=title,
@@ -600,16 +548,11 @@ def _publish_metadata(s3_client, *, job, owner, folder, tiles, vrt, visual, thum
         tile_count=len(tiles),
         mirror_filename=mirror["filename"] if mirror else None,
     )
-    style_target = visual["filename"] if visual else f"{tiles[0]['id']}/{tiles[0]['id']}.tif"
     files = [
         ("collection.json", portolan_mosaic.dumps(collection), "application/json"),
         ("README.md", readme.encode("utf-8"), "text/markdown"),
         ("AGENTS.md", agents.encode("utf-8"), "text/markdown"),
-        (
-            "styles/default.json",
-            portolan_mosaic.dumps(portolan.default_style_for_cog(style_target)),
-            "application/vnd.mapbox.style+json",
-        ),
+        (portolan.STYLE_KEY, style, portolan.STYLE_MEDIA_TYPE),
     ]
     if license_id == "other" and not license_url:
         files.append(

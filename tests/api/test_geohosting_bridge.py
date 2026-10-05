@@ -64,7 +64,7 @@ class TestGeoHostingInstanceView:
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_post_adds_geoserver_connection(self, api_client: APIClient) -> None:
-        """A GeoServer instance is added to config.connections."""
+        """A GeoServer instance is added to the user's GeoServer connections."""
         response = api_client.post(
             "/api/geohosting/instances/",
             {
@@ -82,14 +82,13 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = _config_for("102").config
-        conn = next(c for c in config.connections if c.id == "geohosting_1")
+        conn = _config_for("102").get_connection("geohosting_1")
         assert conn.url == "https://my-geoserver.example.com/geoserver"
         assert conn.password == "secret"
         assert conn.is_active is True
 
     def test_post_adds_geonode_connection(self, api_client: APIClient) -> None:
-        """A GeoNode instance is added to config.geonode_connections."""
+        """A GeoNode instance is added to the user's GeoNode connections."""
         response = api_client.post(
             "/api/geohosting/instances/",
             {
@@ -107,12 +106,11 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = _config_for("103").config
-        conn = next(c for c in config.geonode_connections if c.id == "geohosting_2")
+        conn = _config_for("103").get_geonode_connection("geohosting_2")
         assert conn.url == "https://my-geonode.example.com"
 
     def test_post_adds_postgis_connection(self, api_client: APIClient) -> None:
-        """A PostGIS instance is added to config.pg_services."""
+        """A PostGIS instance is added to the user's PostgreSQL services."""
         response = api_client.post(
             "/api/geohosting/instances/",
             {
@@ -130,8 +128,7 @@ class TestGeoHostingInstanceView:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        config = _config_for("104").config
-        svc = next(s for s in config.pg_services if s.id == "geohosting_3")
+        svc = next(s for s in _config_for("104").list_pg_services() if s.id == "geohosting_3")
         assert svc.host == "my-postgis.example.com"
         assert svc.dbname == "gis"
 
@@ -152,8 +149,7 @@ class TestGeoHostingInstanceView:
         payload["password"] = "second-secret"
         api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
-        config = _config_for("105").config
-        conn = next(c for c in config.connections if c.id == "geohosting_4")
+        conn = _config_for("105").get_connection("geohosting_4")
         assert conn.password == "first-secret"
 
     def test_post_fills_blank_password(self, api_client: APIClient) -> None:
@@ -173,8 +169,7 @@ class TestGeoHostingInstanceView:
         payload["password"] = "filled-in"
         api_client.post("/api/geohosting/instances/", payload, format="json", **_auth_headers())
 
-        config = _config_for("106").config
-        conn = next(c for c in config.connections if c.id == "geohosting_5")
+        conn = _config_for("106").get_connection("geohosting_5")
         assert conn.password == "filled-in"
 
     def test_post_missing_fields(self, api_client: APIClient) -> None:
@@ -218,14 +213,14 @@ class TestGeoHostingInstanceView:
             format="json",
             **_auth_headers(),
         )
-        assert any(c.id == "geohosting_7" for c in _config_for("109").config.connections)
+        assert any(c.id == "geohosting_7" for c in _config_for("109").list_connections())
 
         response = api_client.delete(
             "/api/geohosting/instances/7/?owner_username=109",
             **_auth_headers(),
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert not any(c.id == "geohosting_7" for c in _config_for("109").config.connections)
+        assert not any(c.id == "geohosting_7" for c in _config_for("109").list_connections())
 
     def test_delete_requires_owner_username(self, api_client: APIClient) -> None:
         """DELETE without owner_username is a 400, not a silent no-op."""

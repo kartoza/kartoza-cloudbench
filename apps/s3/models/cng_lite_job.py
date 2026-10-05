@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 CONVERSION_FORMATS = {
     "pmtiles": {"sourceFormat": "shapefile", "targetFormat": "pmtiles"},
     "cog": {"sourceFormat": "tiff", "targetFormat": "cog"},
+    "copc": {"sourceFormat": "las", "targetFormat": "copc"},
     "mosaic": {"sourceFormat": "tiff", "targetFormat": "mosaic"},
 }
 
@@ -48,10 +49,13 @@ class CngLiteJobStatus(models.TextChoices):
     PUSHING = "pushing", "Pushing"
     # Submitted (`cng_job_id` set): polling CloudNativeGIS until it's converted.
     POLLING = "polling", "Polling"
-    # Downloading CloudNativeGIS' result files.
-    DOWNLOADING = "downloading", "Downloading"
-    # Uploading the results to S3 and writing their Portolan catalog entries.
+    # Checking the results CloudNativeGIS uploaded straight to the bucket.
+    VERIFYING = "verifying", "Verifying"
+    # Writing the results' Portolan catalog entries.
     PUBLISHING = "publishing", "Publishing"
+    # No longer set (CloudNativeGIS uploads the results itself, so there's
+    # nothing to download); a job saved at it is converted again on resume.
+    DOWNLOADING = "downloading", "Downloading"
     # No longer set (split into PUSHING..PUBLISHING); kept for jobs saved
     # before, which still count as active until they finish or stall.
     RUNNING = "running", "Running"
@@ -74,8 +78,9 @@ ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.PROVISIONING,
     CngLiteJobStatus.PUSHING,
     CngLiteJobStatus.POLLING,
-    CngLiteJobStatus.DOWNLOADING,
+    CngLiteJobStatus.VERIFYING,
     CngLiteJobStatus.PUBLISHING,
+    CngLiteJobStatus.DOWNLOADING,
     CngLiteJobStatus.RUNNING,
     CngLiteJobStatus.DEPROVISIONING,
     CngLiteJobStatus.CANCELLING,
@@ -131,7 +136,7 @@ class CngLiteJob(models.Model):
     # rel=license link (blank: a generated LICENSE.md says they're unknown).
     license_url = models.URLField(max_length=2000, blank=True, default="")
     # The upload was confirmed to replace an existing layer (or GeoPackage
-    # layer group) folder: it's cleared before the new files are published.
+    # layer group) folder: once the new files are up, whatever else it held goes.
     replace_existing = models.BooleanField(default=False)
     # A job that only runs once this one has finished - a GeoPackage's raster
     # tables after its vector layers, from wherever publishing those moved the
@@ -153,13 +158,13 @@ class CngLiteJob(models.Model):
     # them when asked for the job's server.
     hetzner_server_specification = models.JSONField(null=True, blank=True)
     # The job's id on the CloudNativeGIS side, set once it has been submitted
-    # there (see apps.s3.cng_lite.CNGProcessingClient.push) - what its status is polled
-    # and its results downloaded by.
+    # there (see apps.s3.cng_lite.CNGProcessingClient.push) - what its status
+    # is polled by.
     cng_job_id = models.CharField(max_length=64, blank=True, default="")
-    # CloudNativeGIS' result files once it's done - [{name, result_url, info?}]
-    # - each completed with {file, size, checksum} once downloaded to the job's
-    # directory (see apps.s3.cng_lite.CNGProcessingClient.download), and the
-    # layers/tables it skipped - [{name, error}].
+    # What CloudNativeGIS uploaded to the bucket once it's done, per layer -
+    # [{layer?, files: {role: {size, sha256, info}}}] (see
+    # apps.s3.cng_lite.CNGProcessingClient.poll) - and the layers/tables it
+    # skipped - [{name, error}].
     cng_results = models.JSONField(null=True, blank=True)
     cng_errors = models.JSONField(null=True, blank=True)
     # Set when a job produces more than one output file (every GeoPackage

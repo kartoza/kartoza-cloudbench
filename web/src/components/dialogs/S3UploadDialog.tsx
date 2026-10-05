@@ -81,6 +81,8 @@ interface GpkgItem {
 
 // Helper to detect recommended conversion
 const TIFF_PATTERN = /\.(tif|tiff)$/i
+// Single-file vector sources CloudNativeGIS converts as one layer each.
+const VECTOR_FILE_PATTERN = /\.(geojson|fgb|kml|kmz)$/i
 
 // A mosaic's default name: what its tiles' names have in common
 // ("dem_n01.tif", "dem_n02.tif" -> "dem"), else the first tile's.
@@ -105,7 +107,7 @@ function detectRecommendedConversion(filename: string): string | null {
     return 'cog'
   }
   // Point cloud formats -> COPC
-  if (['las', 'laz', 'e57', 'ply', 'xyz'].includes(ext)) {
+  if (['las', 'laz'].includes(ext)) {
     return 'copc'
   }
   // Vector formats -> GeoParquet
@@ -219,6 +221,7 @@ export default function S3UploadDialog() {
   // A GeoPackage can hold vector layers (-> PMTiles) or raster tiles (-> COG);
   // CloudNativeGIS Lite figures out which, so offer both.
   const isGpkgFile = !!selectedFile && /\.gpkg$/i.test(selectedFile.name)
+  const isVectorFile = !!selectedFile && VECTOR_FILE_PATTERN.test(selectedFile.name)
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
   // Once the GeoPackage has been inspected, the layer picker (and later
@@ -243,8 +246,11 @@ export default function S3UploadDialog() {
   const pickedServerId = inStockServers.some((server) => server.id === hetznerServerId)
     ? hetznerServerId
     : inStockServers[0]?.id
-  const showPMTiles = (isShapefile || isGpkgFile) && cngLiteConnected
+  const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
+  // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
+  const isPointCloud = !!selectedFile && /\.(las|laz)$/i.test(selectedFile.name)
+  const showCOPC = isPointCloud && cngLiteConnected
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -278,12 +284,19 @@ export default function S3UploadDialog() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
+  // The job whose finish was last handled. Resetting the form changes this
+  // effect's dependencies (conversionJobIds becomes a new []), so without it
+  // the same finished job was handled again on every render, forever.
+  const handledJobRef = useRef<string | null>(null)
+
   // When the followed job finishes: move on to the next one if a GeoPackage
   // confirm started several (its raster tables after its vector layers),
   // keeping this one's outcome; once the last one completes, reset the form.
   useEffect(() => {
     if (!conversionJob || !conversionJobId) return
     if (!['completed', 'failed', 'cancelled'].includes(conversionJob.status)) return
+    if (handledJobRef.current === conversionJobId) return
+    handledJobRef.current = conversionJobId
     if (conversionJob.status === 'completed') {
       queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId] })
     }
@@ -615,7 +628,7 @@ export default function S3UploadDialog() {
       case 'cog':
         return showCOG
       case 'copc':
-        return toolStatus.pdal?.available || false
+        return showCOPC
       case 'geoparquet':
         return toolStatus.ogr2ogr?.available || false
       case 'pmtiles':
@@ -783,7 +796,8 @@ export default function S3UploadDialog() {
                           Drop file or click to browse
                         </Text>
                         <Text fontSize="sm" color="gray.500">
-                          GeoTIFF, Shapefile, LAS, GeoPackage... or several GeoTIFFs for one mosaic
+                          GeoTIFF, Shapefile, GeoPackage, GeoJSON, FlatGeobuf, KML/KMZ, LAS...
+                          or several GeoTIFFs for one mosaic
                         </Text>
                       </VStack>
                     )}
@@ -818,10 +832,14 @@ export default function S3UploadDialog() {
                           : 'Cloudbench will ZIP them automatically.'}
                       </Text>
                     </Box>
-                  ) : isShapefile && (
+                  ) : isShapefile ? (
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Select .shp, .shx and .dbf together (plus .prj if available).
                       Cloudbench will ZIP them automatically.
+                    </Text>
+                  ) : selectedFile && /\.(kml|kmz)$/i.test(selectedFile.name) && showPMTiles && (
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      A KML's folders become one layer, each feature's folder kept in a "folder" column.
                     </Text>
                   )}
                 </FormControl>
