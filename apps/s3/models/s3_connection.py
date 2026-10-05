@@ -17,8 +17,7 @@ class S3Connection(models.Model):
     connection to reach a different bucket.
 
     access_key/secret_key are encrypted at rest (see apps.core.fields.
-    EncryptedCharField) — this replaces the old plaintext-JSON-file storage
-    that used to live in apps.core.config.ConfigManager.
+    EncryptedCharField).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
