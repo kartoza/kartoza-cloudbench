@@ -586,9 +586,6 @@ export type ConversionJobStatus =
   | 'polling'
   | 'verifying'
   | 'publishing'
-  // No longer sent for new jobs; older ones may still have them.
-  | 'downloading'
-  | 'running'
   // Finished; its on-demand server is being deleted before it's completed/failed.
   | 'deprovisioning'
   // Asked to stop; ends 'cancelled' once it has.

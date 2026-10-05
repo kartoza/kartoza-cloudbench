@@ -42,7 +42,7 @@ Two modes, chosen by `CLOUDNATIVEGIS_ON_DEMAND`:
    ▼
 [PUSHING]       POST to cng-lite, with a presigned URL to the source
 [POLLING]       GET /api/v1/jobs/<id>
-[DOWNLOADING]   result files
+[VERIFYING]     check the results CloudNativeGIS uploaded straight to the bucket
 [PUBLISHING]    upload to S3 + Portolan catalog
    ▼
 finish_job(outcome)   ◄── an error at any step (outcome = completed / failed)
@@ -57,7 +57,7 @@ finish_job(outcome)   ◄── an error at any step (outcome = completed / fail
 ```
 
 Cancelling (`DELETE /api/s3/conversion/jobs/<id>`, `cng_lite.cancel_job`):
-allowed while pending … downloading (not once publishing). The job goes
+allowed while pending … polling (not once verifying/publishing). The job goes
 `CANCELLING`; whatever runs it stops at its next `update_job`/poll
 (`JobCancelled`), then `finish_job(CANCELLED)` — deprovisioning on demand.
 Jobs depending on it (a GeoPackage's raster job) are cancelled with it; a
@@ -102,7 +102,7 @@ CloudBench side:
 
 | # | Work | Status |
 |---|---|---|
-| C1 | `CngLiteJobLog` model + read-only admin inline; logs push (always), poll (done/failed/404/error), download (failures) | done |
+| C1 | `CngLiteJobLog` model + read-only admin inline; logs push (always), poll (done/failed/404/error) | done |
 | C2 | `GeoHostingClient.create_server` / `get_server` / `delete_server`, logged as target `geohosting` | done |
 | C3 | On-demand `CngLiteJob.provision()` (no CloudBench-side deadline) | done |
 | C4 | `DEPROVISIONING` status, `outcome` field, `CngLiteJob.deprovision()`, `finish_job()`; mosaic uses it; frontend treats `deprovisioning` as active | done |

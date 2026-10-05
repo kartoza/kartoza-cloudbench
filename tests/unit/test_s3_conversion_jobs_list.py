@@ -14,7 +14,7 @@ def user(username="7"):
     return get_user_model().objects.get_or_create(username=username)[0]
 
 
-def job(owner="7", status="running", source_name="roads.zip", **fields):
+def job(owner="7", status="polling", source_name="roads.zip", **fields):
     return CngLiteJob.objects.create(
         kind=fields.pop("kind", "pmtiles"),
         owner=user(owner),
@@ -40,8 +40,8 @@ def test_lists_running_and_recently_finished_jobs_newest_first():
     now = timezone.now()
     finished = job(status="completed", completed_at=now - timedelta(hours=2), source_name="a.zip")
     job(status="completed", completed_at=now - timedelta(days=2), source_name="old.zip")
-    job(status="running", source_name="b.zip")
-    job(owner="someone-else", status="running", source_name="theirs.zip")
+    job(status="polling", source_name="b.zip")
+    job(owner="someone-else", status="polling", source_name="theirs.zip")
     CngLiteJob.objects.filter(pk=finished.pk).update(created_at=now - timedelta(hours=3))
 
     names = [item["sourcePath"] for item in listed()]
@@ -66,7 +66,7 @@ def test_hides_geopackages_awaiting_layer_selection_but_not_queued_raster_halves
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "active_status", ["provisioning", "pushing", "polling", "downloading", "publishing"]
+    "active_status", ["provisioning", "pushing", "polling", "verifying", "publishing"]
 )
 def test_lists_job_in_any_active_step_as_in_progress(active_status):
     job(status=active_status, source_name="busy.zip")
@@ -79,7 +79,7 @@ def test_lists_job_in_any_active_step_as_in_progress(active_status):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "active_status",
-    ["provisioning", "pushing", "polling", "downloading", "publishing", "running"],
+    ["provisioning", "pushing", "polling", "verifying", "publishing"],
 )
 def test_stalled_active_job_is_listed_as_failed(settings, active_status):
     settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 1

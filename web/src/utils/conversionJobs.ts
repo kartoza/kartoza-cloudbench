@@ -34,8 +34,6 @@ const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'polling',
   'verifying',
   'publishing',
-  'downloading',
-  'running',
   'deprovisioning',
   'cancelling',
 ]
@@ -47,8 +45,6 @@ const CANCELLABLE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'provisioning',
   'pushing',
   'polling',
-  'downloading',
-  'running',
 ]
 
 export function isCancellableJob(job: ConversionJob): boolean {

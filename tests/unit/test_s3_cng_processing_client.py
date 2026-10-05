@@ -144,31 +144,6 @@ def test_resumed_publish_fails_when_an_upload_is_gone(job):
 
 
 @pytest.mark.django_db
-def test_legacy_downloading_job_converts_again(job):
-    # Saved mid-download by a CloudBench from before direct uploads.
-    downloading = job(status=CngLiteJobStatus.DOWNLOADING)
-    s3 = FakeS3()
-    client, submitted = converting_cng(s3, "pmtiles", RESULTS)
-
-    requests, _, _ = run(downloading, client, s3)
-
-    assert requests == [("POST", "/api/v1/pmtiles"), ("GET", "/api/v1/jobs/cng-1")]
-    assert downloading.status == CngLiteJobStatus.COMPLETED, downloading.error
-    assert s3.objects["folder/roads/roads.pmtiles"] == PMTILES
-
-
-@pytest.mark.django_db
-def test_legacy_running_job_cannot_be_resumed(job):
-    legacy = job(status=CngLiteJobStatus.RUNNING)
-
-    requests, _, _ = run(legacy, done([]))
-
-    assert requests == []
-    assert legacy.status == CngLiteJobStatus.FAILED
-    assert "running" in legacy.error
-
-
-@pytest.mark.django_db
 def test_failure_keeps_nothing_on_disk(job):
     polling = job(status=CngLiteJobStatus.POLLING)
     directory = job_directory(polling.kind, polling.id)

@@ -53,12 +53,6 @@ class CngLiteJobStatus(models.TextChoices):
     VERIFYING = "verifying", "Verifying"
     # Writing the results' Portolan catalog entries.
     PUBLISHING = "publishing", "Publishing"
-    # No longer set (CloudNativeGIS uploads the results itself, so there's
-    # nothing to download); a job saved at it is converted again on resume.
-    DOWNLOADING = "downloading", "Downloading"
-    # No longer set (split into PUSHING..PUBLISHING); kept for jobs saved
-    # before, which still count as active until they finish or stall.
-    RUNNING = "running", "Running"
     # Finished (`outcome` says how): having GeoHosting delete the job's
     # on-demand server before it's marked completed/failed.
     DEPROVISIONING = "deprovisioning", "Deprovisioning"
@@ -80,8 +74,6 @@ ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.POLLING,
     CngLiteJobStatus.VERIFYING,
     CngLiteJobStatus.PUBLISHING,
-    CngLiteJobStatus.DOWNLOADING,
-    CngLiteJobStatus.RUNNING,
     CngLiteJobStatus.DEPROVISIONING,
     CngLiteJobStatus.CANCELLING,
 )
@@ -93,8 +85,6 @@ CANCELLABLE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.PROVISIONING,
     CngLiteJobStatus.PUSHING,
     CngLiteJobStatus.POLLING,
-    CngLiteJobStatus.DOWNLOADING,
-    CngLiteJobStatus.RUNNING,
 )
 
 

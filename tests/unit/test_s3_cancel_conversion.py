@@ -97,7 +97,7 @@ def test_the_jobs_waiting_on_it_are_cancelled_too(job):
 def test_updates_stop_a_cancelled_job(job):
     cancelling = job(status=Status.CANCELLING, message="Cancelling the conversion")
     with pytest.raises(JobCancelled):
-        update_job(cancelling.id, status=Status.DOWNLOADING, message="Downloading")
+        update_job(cancelling.id, status=Status.VERIFYING, message="Checking the uploaded files")
     cancelling.refresh_from_db()
     assert (cancelling.status, cancelling.message) == (
         Status.CANCELLING,

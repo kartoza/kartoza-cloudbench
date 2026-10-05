@@ -52,13 +52,13 @@ describe('JobsIndicator', () => {
   afterEach(() => client.clear())
 
   it('shows how many conversions are running', async () => {
-    getConversionJobs.mockResolvedValue([job('a', 'running'), job('b', 'pending'), job('c', 'completed')])
+    getConversionJobs.mockResolvedValue([job('a', 'polling'), job('b', 'pending'), job('c', 'completed')])
     renderIndicator(client)
     expect(await screen.findByText('2')).toBeInTheDocument()
   })
 
   it('announces a job it saw running once it finishes', async () => {
-    getConversionJobs.mockResolvedValue([job('a', 'running')])
+    getConversionJobs.mockResolvedValue([job('a', 'polling')])
     renderIndicator(client)
     await screen.findByText('1')
 

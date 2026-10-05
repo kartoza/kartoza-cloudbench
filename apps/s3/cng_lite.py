@@ -466,10 +466,6 @@ class CNGProcessingClient:
             CngLiteJobStatus.VERIFYING: 3,
             # Re-checks the uploaded files.
             CngLiteJobStatus.PUBLISHING: 3,
-            # Saved mid-download before results were uploaded straight to the
-            # bucket: there's nothing to check, so convert it again (its
-            # source is still in S3).
-            CngLiteJobStatus.DOWNLOADING: 1,
         }
         if self.job.status in (CngLiteJobStatus.DEPROVISIONING, CngLiteJobStatus.CANCELLING):
             # Interrupted once finished, or cancelled before it got to run
