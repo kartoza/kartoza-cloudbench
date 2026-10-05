@@ -475,13 +475,12 @@ class CNGProcessingClient:
             # Interrupted once finished, or cancelled before it got to run
             # (e.g. waiting for the job it depends on): only its server's
             # left to delete.
-            outcome = (
-                CngLiteJobStatus.CANCELLED
-                if self.job.status == CngLiteJobStatus.CANCELLING
-                else self.job.outcome or CngLiteJobStatus.FAILED
-            )
+            if self.job.status == CngLiteJobStatus.CANCELLING:
+                outcome, values = CngLiteJobStatus.CANCELLED, {"message": "Conversion cancelled"}
+            else:
+                outcome, values = self.job.outcome or CngLiteJobStatus.FAILED, {}
             try:
-                self.finish(outcome)
+                self.finish(outcome, **values)
             finally:
                 close_old_connections()
             return

@@ -6,7 +6,7 @@ import httpx
 import pytest
 from rest_framework.test import APIClient
 
-from apps.core.geohosting import GeoHostingError
+from apps.core.geohosting import GeoHostingClient, GeoHostingError
 from apps.s3.cog import start_conversion as start_cog_conversion
 from apps.s3.models import CngLiteJob, CngLiteJobStatus
 from apps.s3.pmtiles import inspect_geopackage
@@ -78,9 +78,14 @@ def geohosting(on_demand):
 
 def test_health_on_demand_without_geohosting_is_false(on_demand):
     on_demand.GEOHOSTING_URL = ""
-    with patch("apps.s3.models.cng_lite_job.GeoHostingClient") as client:
+    # Only its calls are patched: is_configured() itself must say it isn't.
+    with (
+        patch.object(GeoHostingClient, "cloudnative_gis_processing_health") as health,
+        patch.object(GeoHostingClient, "cloudnative_gis_processing_server_types") as types,
+    ):
         assert CngLiteJob.health() is False
-    client.assert_not_called()
+    health.assert_not_called()
+    types.assert_not_called()
 
 
 CX23 = {
