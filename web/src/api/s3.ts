@@ -2,7 +2,7 @@
  * S3 Storage API
  */
 
-import { API_BASE, handleResponse } from './common'
+import { API_BASE, handleResponse, setAuthHeader } from './common'
 import type {
   S3Connection,
   S3ConnectionCreate,
@@ -258,8 +258,7 @@ function postWithProgress(
     })
 
     xhr.open('POST', url)
-    const token = localStorage.getItem('token')
-    if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }

@@ -25,7 +25,7 @@
  * - GeoNode API
  */
 
-import { API_BASE, handleResponse } from './common'
+import { API_BASE, handleResponse, setAuthHeader } from './common'
 import type {
   ConversionJob,
   ConversionToolStatus,
@@ -110,6 +110,7 @@ export async function uploadFile(
     })
 
     xhr.open('POST', `${API_BASE}/upload?connId=${encodeURIComponent(connId)}&workspace=${encodeURIComponent(workspace)}`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }
@@ -759,6 +760,7 @@ export async function uploadFileForImport(
     })
 
     xhr.open('POST', `${API_BASE}/pg/import/upload`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }
@@ -988,6 +990,7 @@ export async function uploadQGISProject(
     })
 
     xhr.open('POST', `${API_BASE}/qgis/projects`)
+    setAuthHeader(xhr)
 
     const formData = new FormData()
     formData.append('file', file)

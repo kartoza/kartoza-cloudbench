@@ -1,4 +1,4 @@
-import { API_BASE } from './common'
+import { API_BASE, setAuthHeader } from './common'
 import type { UploadResult } from '../types'
 
 declare global {
@@ -53,6 +53,7 @@ export async function uploadChunk(
 
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${API_BASE}/upload/chunk`)
+    setAuthHeader(xhr)
     xhr.setRequestHeader('X-CSRFToken', getCSRFToken())
     xhr.withCredentials = true
 

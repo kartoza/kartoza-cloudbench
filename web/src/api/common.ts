@@ -19,6 +19,14 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   return _originalFetch(input, init)
 }
 
+// XMLHttpRequest (used where upload progress is needed) bypasses the fetch
+// patch above, so it must add the token itself - without it, inside the
+// GeoHosting iframe (where the session cookie isn't sent) the request is 401.
+export function setAuthHeader(xhr: XMLHttpRequest): void {
+  const token = localStorage.getItem('token')
+  if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
+}
+
 export async function handleResponse<T>(response: Response): Promise<T> {
   // Only a stale token is worth reloading for: dropping it lands on the login
   // screen. With no token there is nothing to drop, and reloading would just
