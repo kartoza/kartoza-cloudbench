@@ -82,15 +82,20 @@ class GeoHostingClient:
             )
         return self._json(response)
 
-    def cloudnative_gis_processing_server_types(self):
+    def cloudnative_gis_processing_server_types(self, username=None):
         """The server types GeoHosting may start servers as - the enabled ones.
 
         [{id, type, location, specifications, currency, price, available}],
         the cheapest first; [] if none is enabled. `available`: whether
-        Hetzner has it in stock right now. Raises GeoHostingError if
-        GeoHosting couldn't be asked (or couldn't ask Hetzner).
+        Hetzner has it in stock right now. With `username` (a GeoHosting
+        user's), only those that user can be billed for (priced in their
+        currency). Raises GeoHostingError if GeoHosting couldn't be asked
+        (or couldn't ask Hetzner), or doesn't know `username` (400).
         """
-        response = self.request("GET", "api/v1/cloudnative-gis-processing/server-types/")
+        params = {"username": username} if username else None
+        response = self.request(
+            "GET", "api/v1/cloudnative-gis-processing/server-types/", params=params
+        )
         if response.status_code != 200:
             raise self._refused(response, "list its server types")
         return self._json(response)
