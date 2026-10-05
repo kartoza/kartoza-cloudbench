@@ -108,8 +108,11 @@ def api_client_json(api_client: APIClient) -> APIClient:
 
 
 @pytest.fixture
-def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
-    """Get a fresh per-user ConfigManager backed by an isolated data folder."""
+def config_manager(tmp_path: Any, db: Any) -> Generator[Any, None, None]:
+    """Get a fresh per-user ConfigManager backed by an isolated data folder.
+
+    Saved connections live in the database, so this also needs ``db``.
+    """
     from unittest.mock import patch
 
     from django.contrib.auth import get_user_model
@@ -130,8 +133,7 @@ def config_manager(tmp_path: Any) -> Generator[Any, None, None]:
         clear=False,  # Don't clear other env vars
     ):
         # ConfigManager isn't a singleton (it's per user) - construct fresh.
-        # Only the username is read, so an unsaved user is enough.
-        manager = ConfigManager(get_user_model()(username="default"))
+        manager = ConfigManager(get_user_model().objects.create(username="default"))
 
         # Force a fresh config (in case it loaded from wrong path)
         manager._config = Config()

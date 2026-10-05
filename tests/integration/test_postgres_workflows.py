@@ -174,13 +174,13 @@ class TestPostgresServiceWorkflow:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        assert mock_pg_service.reload().pg_services[0].host == "newhost"
+        assert mock_pg_service.list_pg_services()[0].host == "newhost"
 
     def test_delete_pg_service(self, api_client: APIClient, mock_pg_service) -> None:
         """Test deleting a service."""
         response = api_client.delete("/api/pg/services/test_service")
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert [s.name for s in mock_pg_service.reload().pg_services] == ["another_service"]
+        assert [s.name for s in mock_pg_service.list_pg_services()] == ["another_service"]
 
     def test_pg_service_connection_test(
         self, api_client: APIClient, mock_pg_service, mock_pg_schema

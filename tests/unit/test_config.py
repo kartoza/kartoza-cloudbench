@@ -1,13 +1,14 @@
 """Unit tests for configuration management.
 
-Tests the ConfigManager singleton and all connection types.
+Tests the per-user ConfigManager and all connection types.
 """
 
-import json
 import os
 
 from django.contrib.auth.models import User
+from django.db import connection
 
+from apps.connections.models import GeoServerConnection
 from apps.core.config import (
     Config,
     ConfigManager,
@@ -181,23 +182,19 @@ class TestConfig:
     def test_config_default_values(self) -> None:
         """Test Config model default values."""
         config = Config()
-        assert config.connections == []
-        assert config.geonode_connections == []
         assert config.active_connection == ""
         assert config.theme == "default"
         assert config.ping_interval_secs == 60
 
-    def test_config_with_connections(self) -> None:
-        """Test Config model with connections."""
-        conn = Connection(
-            name="Test",
-            url="http://localhost:8080/geoserver",
-            username="admin",
-            password="pass",
-        )
-        config = Config(connections=[conn])
-        assert len(config.connections) == 1
-        assert config.connections[0].name == "Test"
+    def test_config_keeps_legacy_connections(self) -> None:
+        """Connection lists in an old config.json survive a load/save round trip.
+
+        They're no longer Config fields (connections live in the database),
+        but must not be dropped before `migrate_connections` imports them.
+        """
+        legacy = {"connections": [{"id": "c1", "name": "Old"}], "theme": "dark"}
+        config = Config.model_validate(legacy)
+        assert config.model_dump()["connections"] == legacy["connections"]
 
 
 class TestConfigManager:
@@ -209,7 +206,7 @@ class TestConfigManager:
         """Different users must not see each other's connections."""
         config_manager.add_connection(sample_connection)
 
-        other_manager = ConfigManager(User(username="other-user"))
+        other_manager = ConfigManager(User.objects.create(username="other-user"))
         assert other_manager.list_connections() == []
 
     def test_add_connection(
@@ -262,17 +259,43 @@ class TestConfigManager:
         config_manager.set_active_connection(sample_connection.id)
         assert config_manager.config.active_connection == sample_connection.id
 
-    def test_config_persistence(
+    def test_connection_persisted_encrypted(
         self, config_manager: ConfigManager, sample_connection: Connection
     ) -> None:
-        """Test that config is persisted to disk."""
+        """Connections go to the database, with the password encrypted at rest."""
         config_manager.add_connection(sample_connection)
-        config_path = config_manager._config_path()
-        assert os.path.exists(config_path)
+        assert not os.path.exists(config_manager._config_path())
 
-        with open(config_path) as f:
-            data = json.load(f)
-        assert len(data["connections"]) == 1
+        row = GeoServerConnection.objects.get(connection_id=sample_connection.id)
+        assert row.password == sample_connection.password
+        # Raw SQL bypasses the field's decryption: this is what's actually stored.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT password FROM {GeoServerConnection._meta.db_table} "
+                "WHERE connection_id = %s",
+                [sample_connection.id],
+            )
+            stored = cursor.fetchone()[0]
+        assert stored and stored != sample_connection.password
+
+    def test_remove_active_connection_clears_active(
+        self, config_manager: ConfigManager, sample_connection: Connection
+    ) -> None:
+        """Removing the active connection also clears active_connection."""
+        config_manager.add_connection(sample_connection)
+        config_manager.set_active_connection(sample_connection.id)
+        config_manager.remove_connection(sample_connection.id)
+        assert config_manager.reload().active_connection == ""
+
+    def test_same_connection_id_for_different_users(
+        self, config_manager: ConfigManager, sample_connection: Connection
+    ) -> None:
+        """Connection ids are only unique per user, not globally."""
+        config_manager.add_connection(sample_connection)
+        other_manager = ConfigManager(User.objects.create(username="other-user"))
+        other_manager.add_connection(sample_connection.model_copy(update={"name": "Mine"}))
+        assert config_manager.get_connection(sample_connection.id).name == sample_connection.name
+        assert other_manager.get_connection(sample_connection.id).name == "Mine"
 
     def test_config_reload(
         self, config_manager: ConfigManager, sample_connection: Connection
@@ -280,8 +303,6 @@ class TestConfigManager:
         """Test reloading config from disk."""
         config_manager.add_connection(sample_connection)
 
-        # Reset and reload
-        ConfigManager._instance = None
         new_manager = ConfigManager(config_manager._user)
         assert len(new_manager.list_connections()) == 1
 
