@@ -2,7 +2,7 @@
  * S3 Storage API
  */
 
-import { API_BASE, handleResponse } from './common'
+import { API_BASE, handleResponse, setAuthHeader } from './common'
 import type {
   S3Connection,
   S3ConnectionCreate,
@@ -190,7 +190,10 @@ export async function uploadToS3(
   licenseUrl?: string,
   // Confirmed replacing the layer (or GeoPackage layer group) folder the
   // conversion publishes into; without it an existing folder is a 409.
-  replace?: boolean
+  replace?: boolean,
+  // On-demand CloudNativeGIS: the server type (tools' cloudnativegis.servers
+  // id) the conversion's server is started as. Required there.
+  hetznerServerId?: number
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -218,6 +221,9 @@ export async function uploadToS3(
   }
   if (replace) {
     formData.append('replace', 'true')
+  }
+  if (hetznerServerId !== undefined) {
+    formData.append('hetznerServerId', String(hetznerServerId))
   }
 
   return postWithProgress(`${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}`, formData, onProgress)
@@ -252,8 +258,7 @@ function postWithProgress(
     })
 
     xhr.open('POST', url)
-    const token = localStorage.getItem('token')
-    if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }
@@ -270,7 +275,8 @@ export async function uploadMosaic(
   onProgress?: (progress: number) => void,
   license?: string,
   licenseUrl?: string,
-  replace?: boolean
+  replace?: boolean,
+  hetznerServerId?: number
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   files.forEach((file) => formData.append('files', file))
@@ -279,6 +285,7 @@ export async function uploadMosaic(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
+  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
   return postWithProgress(`${API_BASE}/s3/mosaic/${encodeURIComponent(connectionId)}`, formData, onProgress)
 }
 
@@ -301,7 +308,8 @@ export async function inspectGeoPackage(
   key?: string,
   license?: string,
   licenseUrl?: string,
-  replace?: boolean
+  replace?: boolean,
+  hetznerServerId?: number
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
@@ -309,6 +317,7 @@ export async function inspectGeoPackage(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
+  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }

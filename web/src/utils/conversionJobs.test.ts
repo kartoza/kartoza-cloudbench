@@ -9,7 +9,7 @@ function job(extra: Partial<ConversionJob>): ConversionJob {
     outputPath: null,
     sourceFormat: 'tiff',
     targetFormat: 'cog',
-    status: 'running',
+    status: 'polling',
     progress: 20,
     message: '',
     error: '',

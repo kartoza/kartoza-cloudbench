@@ -34,9 +34,22 @@ const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'polling',
   'verifying',
   'publishing',
-  'downloading',
-  'running',
+  'deprovisioning',
+  'cancelling',
 ]
+
+// What can still be cancelled - matches CANCELLABLE_CNG_LITE_JOB_STATUSES:
+// not once it's publishing (the catalog would be half-written) or finishing.
+const CANCELLABLE_JOB_STATUSES: readonly ConversionJobStatus[] = [
+  'pending',
+  'provisioning',
+  'pushing',
+  'polling',
+]
+
+export function isCancellableJob(job: ConversionJob): boolean {
+  return CANCELLABLE_JOB_STATUSES.includes(job.status)
+}
 
 export function isActiveStatus(status: ConversionJobStatus | undefined): boolean {
   return !!status && ACTIVE_JOB_STATUSES.includes(status)

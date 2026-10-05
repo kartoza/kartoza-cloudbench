@@ -144,31 +144,6 @@ def test_resumed_publish_fails_when_an_upload_is_gone(job):
 
 
 @pytest.mark.django_db
-def test_legacy_downloading_job_converts_again(job):
-    # Saved mid-download by a CloudBench from before direct uploads.
-    downloading = job(status=CngLiteJobStatus.DOWNLOADING)
-    s3 = FakeS3()
-    client, submitted = converting_cng(s3, "pmtiles", RESULTS)
-
-    requests, _, _ = run(downloading, client, s3)
-
-    assert requests == [("POST", "/api/v1/pmtiles"), ("GET", "/api/v1/jobs/cng-1")]
-    assert downloading.status == CngLiteJobStatus.COMPLETED, downloading.error
-    assert s3.objects["folder/roads/roads.pmtiles"] == PMTILES
-
-
-@pytest.mark.django_db
-def test_legacy_running_job_cannot_be_resumed(job):
-    legacy = job(status=CngLiteJobStatus.RUNNING)
-
-    requests, _, _ = run(legacy, done([]))
-
-    assert requests == []
-    assert legacy.status == CngLiteJobStatus.FAILED
-    assert "running" in legacy.error
-
-
-@pytest.mark.django_db
 def test_failure_keeps_nothing_on_disk(job):
     polling = job(status=CngLiteJobStatus.POLLING)
     directory = job_directory(polling.kind, polling.id)
@@ -270,3 +245,114 @@ def test_resumes_interrupted_jobs_oldest_first(job):
         # After the vector job, from where it moved the source to.
         (raster.id, "folder/both/source/both.gpkg"),
     ]
+
+
+# -- CngLiteJobLog: the job's requests to its CloudNativeGIS -------------------
+
+
+def logged(job):
+    return [
+        (log.step, log.method, log.url, log.status_code, bool(log.error)) for log in job.logs.all()
+    ]
+
+
+def signed(s3):
+    """Make `s3`'s presigned URLs carry credentials, as real ones do."""
+    presign = s3.generate_presigned_url
+    s3.generate_presigned_url = lambda *args, **kwargs: (
+        f"{presign(*args, **kwargs)}&X-Amz-Credential=key&X-Amz-Signature=abc"
+    )
+    return s3
+
+
+@pytest.mark.django_db
+def test_the_submission_and_its_outcome_are_logged(job):
+    pushing = job(status=CngLiteJobStatus.PUSHING)
+    s3 = signed(FakeS3())
+    client, _ = converting_cng(s3, "pmtiles", RESULTS)
+
+    run(pushing, client, s3)
+
+    assert pushing.status == CngLiteJobStatus.COMPLETED, pushing.error
+    assert logged(pushing) == [
+        ("pushing", "POST", "http://cloudnativegis/api/v1/pmtiles", 202, False),
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-1", 200, False),
+    ]
+    push, poll = pushing.logs.all()
+    # The presigned URLs' credentials never reach the log - the source's, nor
+    # any of the results' upload URLs.
+    assert push.request_payload["source"] == (
+        "http://minio:9000/bucket/folder/sources/job/roads.zip?***"
+    )
+    upload_urls = [
+        target["url"]
+        for spec in push.request_payload["uploads"]
+        for target in spec["files"].values()
+    ]
+    assert upload_urls
+    assert all(url.endswith("?***") for url in upload_urls)
+    assert push.response_payload == {"job_id": "cng-1", "status": "processing"}
+    assert poll.response_payload["status"] == "done"
+
+
+@pytest.mark.django_db
+def test_still_converting_polls_are_not_logged(job):
+    pushing = job(status=CngLiteJobStatus.PUSHING)
+    s3 = FakeS3()
+    client, _ = converting_cng(s3, "pmtiles", RESULTS, detail={"detail": "Tiling"})
+
+    run(pushing, client, s3)
+
+    # The submission, and the "done" - not the "still tiling" before it.
+    assert [log.method for log in pushing.logs.all()] == ["POST", "GET"]
+    assert pushing.logs.last().response_payload["status"] == "done"
+
+
+@pytest.mark.django_db
+def test_a_lost_job_and_its_resubmission_are_logged(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+    s3 = FakeS3()
+    client, _ = converting_cng(s3, "pmtiles", RESULTS, lost={"/api/v1/jobs/cng-job-1"})
+
+    run(polling, client, s3)
+
+    assert logged(polling) == [
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-job-1", 404, True),
+        ("pushing", "POST", "http://cloudnativegis/api/v1/pmtiles", 202, False),
+        ("polling", "GET", "http://cloudnativegis/api/v1/jobs/cng-1", 200, False),
+    ]
+
+
+@pytest.mark.django_db
+def test_a_failed_conversion_is_logged(job):
+    polling = job(status=CngLiteJobStatus.POLLING)
+
+    def failed(_request):
+        return httpx.Response(200, json={"status": "failed", "detail": "tippecanoe failed"})
+
+    run(
+        polling,
+        httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(failed)),
+    )
+
+    [log] = polling.logs.all()
+    assert (log.step, log.status_code) == ("polling", 200)
+    assert log.response_payload["detail"] == "tippecanoe failed"
+
+
+@pytest.mark.django_db
+def test_an_unreachable_cloudnativegis_is_logged(job):
+    pushing = job(status=CngLiteJobStatus.PUSHING)
+
+    def unreachable(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    run(
+        pushing,
+        httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(unreachable)),
+    )
+
+    [log] = pushing.logs.all()
+    assert (log.step, log.method, log.status_code) == ("pushing", "POST", None)
+    assert "refused" in log.error
+    assert pushing.status == CngLiteJobStatus.FAILED

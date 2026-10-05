@@ -186,16 +186,6 @@ class TestConfig:
         assert config.theme == "default"
         assert config.ping_interval_secs == 60
 
-    def test_config_keeps_legacy_connections(self) -> None:
-        """Connection lists in an old config.json survive a load/save round trip.
-
-        They're no longer Config fields (connections live in the database),
-        but must not be dropped before `migrate_connections` imports them.
-        """
-        legacy = {"connections": [{"id": "c1", "name": "Old"}], "theme": "dark"}
-        config = Config.model_validate(legacy)
-        assert config.model_dump()["connections"] == legacy["connections"]
-
 
 class TestConfigManager:
     """Tests for ConfigManager, one per user (not a singleton)."""

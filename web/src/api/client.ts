@@ -25,7 +25,7 @@
  * - GeoNode API
  */
 
-import { API_BASE, handleResponse } from './common'
+import { API_BASE, handleResponse, setAuthHeader } from './common'
 import type {
   ConversionJob,
   ConversionToolStatus,
@@ -110,6 +110,7 @@ export async function uploadFile(
     })
 
     xhr.open('POST', `${API_BASE}/upload?connId=${encodeURIComponent(connId)}&workspace=${encodeURIComponent(workspace)}`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }
@@ -759,6 +760,7 @@ export async function uploadFileForImport(
     })
 
     xhr.open('POST', `${API_BASE}/pg/import/upload`)
+    setAuthHeader(xhr)
     xhr.send(formData)
   })
 }
@@ -926,14 +928,14 @@ export async function getConversionJob(jobId: string): Promise<ConversionJob> {
   return handleResponse<ConversionJob>(response)
 }
 
-export async function cancelConversionJob(jobId: string): Promise<{
-  success: boolean;
-  message: string
-}> {
+// Ask a conversion to stop: it comes back 'cancelling', and ends 'cancelled'
+// once it has stopped (and its on-demand server is deleted). Refused (409)
+// once it's publishing or finished.
+export async function cancelConversionJob(jobId: string): Promise<ConversionJob> {
   const response = await fetch(`${API_BASE}/s3/conversion/jobs/${jobId}`, {
     method: 'DELETE',
   })
-  return handleResponse<{ success: boolean; message: string }>(response)
+  return handleResponse<ConversionJob>(response)
 }
 
 // ============================================================================
@@ -988,6 +990,7 @@ export async function uploadQGISProject(
     })
 
     xhr.open('POST', `${API_BASE}/qgis/projects`)
+    setAuthHeader(xhr)
 
     const formData = new FormData()
     formData.append('file', file)

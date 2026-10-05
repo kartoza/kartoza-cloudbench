@@ -106,6 +106,21 @@ Settings in `.env`:
   service will download (default `524288000`, 500MB).
 - `CLOUDNATIVEGIS_CONVERSION_TIMEOUT` / `CLOUDNATIVEGIS_POLL_INTERVAL` — how
   long to wait for a conversion and how often to poll it.
+- `CLOUDNATIVEGIS_ON_DEMAND` — run conversions on servers GeoHosting starts on
+  demand instead of `CLOUDNATIVEGIS_URL` (default `false`). Conversions are
+  offered once GeoHosting (below) is configured and reports itself healthy;
+  each one asks GeoHosting for its own server and waits until GeoHosting says
+  it's ready, or that starting it failed.
+- `GEOHOSTING_URL` / `GEOHOSTING_CLIENT_ID` / `GEOHOSTING_CLIENT_SECRET` —
+  GeoHosting's URL, and the client id/secret of an OAuth "Client credentials"
+  Application there. Set the same client id as GeoHosting's
+  `CLOUDBENCH_OAUTH_CLIENT_ID`: the only Application it gives the `cloudbench`
+  scope, which is all its API needs (no staff user behind it). Used only with
+  `CLOUDNATIVEGIS_ON_DEMAND`.
+
+Conversions run in the web server's threads, so a restart cuts short any in
+progress. The container's entrypoint carries them on in the background
+(`python manage.py resume_conversions`) before starting the server.
 
 To check it's reachable from Django:
 

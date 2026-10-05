@@ -4,7 +4,7 @@ from django.contrib import admin
 
 from apps.core.admin import mask_secret
 
-from .models import CngLiteJob, S3Connection
+from .models import CngLiteJob, CngLiteJobLog, S3Connection
 
 
 @admin.register(S3Connection)
@@ -38,9 +38,33 @@ class S3ConnectionAdmin(admin.ModelAdmin):
         return mask_secret(obj.secret_key)
 
 
+class CngLiteJobLogInline(admin.TabularInline):
+    """The job's requests to GeoHosting / CloudNativeGIS (read-only)."""
+
+    model = CngLiteJobLog
+    extra = 0
+    can_delete = False
+    fields = readonly_fields = (
+        "created_at",
+        "step",
+        "target",
+        "method",
+        "url",
+        "status_code",
+        "duration_ms",
+        "error",
+        "request_payload",
+        "response_payload",
+    )
+
+    def has_add_permission(self, _request, _obj=None):
+        return False
+
+
 @admin.register(CngLiteJob)
 class CngLiteJobAdmin(admin.ModelAdmin):
     verbose_name = "CloudNativeGIS Lite Job"
+    inlines = [CngLiteJobLogInline]
     list_display = [
         "id",
         "kind",
@@ -73,10 +97,13 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "output_size",
         "cloudnativegis_url",
         "masked_cloudnativegis_api_token",
+        "hetzner_server_id",
+        "hetzner_server_specification",
         "cng_job_id",
         "cng_results",
         "cng_errors",
         "depends_on",
+        "outcome",
         "created_at",
         "updated_at",
         "completed_at",
@@ -86,4 +113,4 @@ class CngLiteJobAdmin(admin.ModelAdmin):
 
     @admin.display(description="CloudNativeGIS API token")
     def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
-        return _mask(obj.cloudnativegis_api_token)
+        return mask_secret(obj.cloudnativegis_api_token)

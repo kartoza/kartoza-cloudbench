@@ -35,6 +35,7 @@ from .client import get_s3_client
 from .cng_lite import (
     _provider_name,
     check_target,
+    finish_job,
     host_contact_email,
     job_directory,
     request_json,
@@ -43,7 +44,7 @@ from .cng_lite import (
     wait_for_job,
 )
 from .cog import prepare_tiff
-from .models import CngLiteJob, CngLiteJobStatus
+from .models import CngLiteJob, CngLiteJobStatus, JobCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ def start_mosaic(
     license_id=portolan.DEFAULT_LICENSE,
     license_url="",
     replace=False,
+    hetzner_server_id=None,
 ):
     """Check and stage an upload of several TIFFs, and start converting them as one mosaic.
 
@@ -179,6 +181,7 @@ def start_mosaic(
         license=license_id,
         license_url=license_url,
         replace_existing=replace,
+        hetzner_server_id=hetzner_server_id,
         message=f"Waiting to convert {len(names)} tiles",
     )
     job.source_key = sources_directory_key(output_key, job.id)
@@ -240,6 +243,7 @@ def run_mosaic(job_id):
     """
     close_old_connections()
     directory = job_directory(KIND, job_id)
+    job = None
     try:
         job = CngLiteJob.objects.get(pk=job_id)
         owner = job.owner
@@ -437,17 +441,26 @@ def run_mosaic(job_id):
             visual=visual,
             thumbnail=thumbnail,
         )
-        update_job(
-            job.id,
-            status=CngLiteJobStatus.COMPLETED,
+        finish_job(
+            job,
+            CngLiteJobStatus.COMPLETED,
             progress=100,
             output_size=total_size,
             output_keys=[
                 {"name": PurePosixPath(key).name, "key": f"{folder}/{key}"} for key in output_keys
             ],
             message=f"Published a mosaic of {len(tiles)} tiles to the catalog",
-            completed_at=timezone.now(),
         )
+    except JobCancelled:
+        logger.info("Mosaic %s cancelled", job_id)
+        # CloudNativeGIS may have written some of a new mosaic's outputs to
+        # its (empty before) folder already; a replaced one's is left as is.
+        if not job.replace_existing and job.connection_id is not None:
+            try:
+                get_s3_client(job.connection_id, job.owner).delete_prefix(f"{job.output_key}/")
+            except Exception:  # noqa: BLE001 - it's cancelled either way
+                logger.exception("Mosaic %s: couldn't remove its partial outputs", job_id)
+        finish_job(job, CngLiteJobStatus.CANCELLED, message="Mosaic cancelled")
     except Exception as exc:
         logger.exception("Mosaic %s failed", job_id)
         error = str(exc)
@@ -455,13 +468,13 @@ def run_mosaic(job_id):
             error = f"CloudNativeGIS returned HTTP {exc.response.status_code}. Check its logs."
         elif isinstance(exc, httpx.RequestError):
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
-        update_job(
-            job_id,
-            status=CngLiteJobStatus.FAILED,
-            message="Mosaic conversion failed",
-            error=error,
-            completed_at=timezone.now(),
-        )
+        values = {"message": "Mosaic conversion failed", "error": error}
+        if job is None:
+            update_job(
+                job_id, status=CngLiteJobStatus.FAILED, completed_at=timezone.now(), **values
+            )
+        else:
+            finish_job(job, CngLiteJobStatus.FAILED, **values)
     finally:
         shutil.rmtree(directory, ignore_errors=True)
         close_old_connections()

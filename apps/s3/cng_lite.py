@@ -30,8 +30,11 @@ from .geopackage import is_geopackage
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
+    CANCELLABLE_CNG_LITE_JOB_STATUSES,
     CngLiteJob,
+    CngLiteJobLog,
     CngLiteJobStatus,
+    JobCancelled,
     S3Connection,
 )
 
@@ -194,7 +197,84 @@ def conversion_timeout(input_size):
 
 
 def update_job(job_id, **values):
-    CngLiteJob.objects.filter(pk=job_id).update(updated_at=timezone.now(), **values)
+    """Save `values` on job `job_id` - unless it's being cancelled.
+
+    Raises JobCancelled instead if the user has asked to stop it
+    (CANCELLING): whatever runs it stops at its next update, rather than
+    carrying on (or overwriting CANCELLING). finish_job is what ends it.
+    """
+    updated = (
+        CngLiteJob.objects.filter(pk=job_id)
+        .exclude(status=CngLiteJobStatus.CANCELLING)
+        .update(updated_at=timezone.now(), **values)
+    )
+    if not updated:
+        raise_if_cancelling(job_id)
+
+
+def raise_if_cancelling(job_id):
+    """Raise JobCancelled if the user has asked to stop job `job_id`."""
+    if CngLiteJob.objects.filter(pk=job_id, status=CngLiteJobStatus.CANCELLING).exists():
+        raise JobCancelled(f"Conversion {job_id} was cancelled.")
+
+
+def finish_job(job, outcome, **values):
+    """End `job` as `outcome` (completed/failed/cancelled), saving `values` with it.
+
+    With CLOUDNATIVEGIS_ON_DEMAND it's DEPROVISIONING first - `outcome` and
+    `values` saved, so a restart can carry on with just this - while
+    GeoHosting deletes its server. A failure to delete it is only logged:
+    the job's outcome stands either way. A job failing while it was being
+    cancelled ends cancelled. Saved even while CANCELLING (unlike
+    update_job): this is what ends it.
+    """
+
+    def save(**fields):
+        CngLiteJob.objects.filter(pk=job.id).update(updated_at=timezone.now(), **fields)
+        for field, value in fields.items():
+            setattr(job, field, value)
+
+    if outcome == CngLiteJobStatus.FAILED and (
+        CngLiteJob.objects.filter(pk=job.id, status=CngLiteJobStatus.CANCELLING).exists()
+    ):
+        outcome = CngLiteJobStatus.CANCELLED
+        values = {**values, "message": "Conversion cancelled", "error": ""}
+
+    if settings.CLOUDNATIVEGIS_ON_DEMAND:
+        save(status=CngLiteJobStatus.DEPROVISIONING, outcome=outcome, **values)
+        try:
+            job.deprovision()
+        except Exception:
+            logger.exception("Job %s: couldn't delete its CloudNativeGIS server", job.id)
+        values = {}
+    save(status=outcome, completed_at=timezone.now(), **values)
+
+
+def cancel_job(job):
+    """Ask `job` to stop: CANCELLING, until whatever runs it stops.
+
+    That's at its next update or poll (JobCancelled), when it's deprovisioned
+    and ends CANCELLED (see finish_job). The jobs waiting on it (a
+    GeoPackage's raster job, after its vector one) are cancelled with it.
+    Only while it's CANCELLABLE: raises ValueError otherwise (e.g. already
+    publishing, or finished). A GeoPackage still waiting for its layers to
+    be picked has nothing running: see pmtiles.cancel_geopackage_inspection.
+    """
+    cancelling = {
+        "status": CngLiteJobStatus.CANCELLING,
+        "message": "Cancelling the conversion",
+        "updated_at": timezone.now(),
+    }
+    cancelled = (
+        CngLiteJob.objects.filter(pk=job.pk, status__in=CANCELLABLE_CNG_LITE_JOB_STATUSES)
+        .exclude(AWAITING_LAYER_SELECTION)
+        .update(**cancelling)
+    )
+    if not cancelled:
+        job.refresh_from_db()
+        raise ValueError(f"A {job.get_status_display().lower()} conversion can't be cancelled.")
+    CngLiteJob.objects.filter(depends_on=job, status=CngLiteJobStatus.PENDING).update(**cancelling)
+    job.refresh_from_db()
 
 
 def expire_stalled_job(job):
@@ -217,6 +297,11 @@ def expire_stalled_job(job):
 def request_json(client, method, path, **kwargs):
     response = client.request(method, path, **kwargs)
     response.raise_for_status()
+    return parse_json(response, method, path)
+
+
+def parse_json(response, method, path):
+    """A CloudNativeGIS response's JSON body; ValueError if it isn't JSON."""
     try:
         return response.json()
     except ValueError as exc:
@@ -225,6 +310,17 @@ def request_json(client, method, path, **kwargs):
             f"(HTTP {response.status_code}): {response.text[:200]!r}. "
             "Check that CLOUDNATIVEGIS_URL points at CloudNativeGIS Lite."
         ) from exc
+
+
+def _response_body(response):
+    """What to log of a response's body: its JSON, else (some of) its text."""
+    try:
+        return response.json()
+    except Exception:  # noqa: BLE001 - not JSON, or a stream never read
+        try:
+            return {"text": response.text[:2000]}
+        except Exception:  # noqa: BLE001
+            return None
 
 
 def wait_for_job(client, job_id, cng_job_id, deadline):
@@ -246,6 +342,7 @@ def wait_for_job(client, job_id, cng_job_id, deadline):
             )
         if body.get("status") == "done":
             return body
+        raise_if_cancelling(job_id)
         detail = body.get("detail")
         if detail:
             fraction = body.get("detailProgress")
@@ -323,8 +420,14 @@ class CNGProcessingClient:
         push       pushing              -> polling (cng_job_id)
         poll       polling              -> verifying (cng_results/cng_errors)
         verify     verifying            -> publishing
-        publish    publishing           -> completed
-        fail       any                  -> failed
+        publish    publishing           -> (deprovisioning ->) completed
+        fail       any                  -> (deprovisioning ->) failed
+        cancel     cancelling           -> (deprovisioning ->) cancelled
+
+    Deprovisioning - only with CLOUDNATIVEGIS_ON_DEMAND - deletes the job's
+    server, whether it completed, failed or was cancelled (see finish_job).
+    A job the user cancels (see cancel_job) stops at its next update or
+    poll (JobCancelled).
 
     Each step reads what it needs from the job and writes its outcome back to
     it, so run() carries on from whichever step the job's status says it's at
@@ -363,11 +466,20 @@ class CNGProcessingClient:
             CngLiteJobStatus.VERIFYING: 3,
             # Re-checks the uploaded files.
             CngLiteJobStatus.PUBLISHING: 3,
-            # Saved mid-download before results were uploaded straight to the
-            # bucket: there's nothing to check, so convert it again (its
-            # source is still in S3).
-            CngLiteJobStatus.DOWNLOADING: 1,
         }
+        if self.job.status in (CngLiteJobStatus.DEPROVISIONING, CngLiteJobStatus.CANCELLING):
+            # Interrupted once finished, or cancelled before it got to run
+            # (e.g. waiting for the job it depends on): only its server's
+            # left to delete.
+            if self.job.status == CngLiteJobStatus.CANCELLING:
+                outcome, values = CngLiteJobStatus.CANCELLED, {"message": "Conversion cancelled"}
+            else:
+                outcome, values = self.job.outcome or CngLiteJobStatus.FAILED, {}
+            try:
+                self.finish(outcome, **values)
+            finally:
+                close_old_connections()
+            return
         try:
             if self.job.status not in start:
                 raise ValueError(f"Can't run a conversion that is {self.job.status}.")
@@ -393,6 +505,10 @@ class CNGProcessingClient:
                     index = steps.index(self.push)
                     continue
                 index += 1
+        except JobCancelled:
+            logger.info("CloudNativeGIS conversion %s cancelled", self.job.id)
+            self._discard_uploads()
+            self.finish(CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
         except Exception as exc:
             logger.exception("CloudNativeGIS conversion %s failed", self.job.id)
             self.fail(exc)
@@ -448,7 +564,17 @@ class CNGProcessingClient:
             for layer in self.layers(names=self._layer_names())
         ]
         payload = {"source": source_url, **self.converter.payload(self.job), "uploads": uploads}
-        submission = request_json(self.http, "POST", self.converter.endpoint, json=payload)
+        endpoint = self.converter.endpoint
+        started = time.monotonic()
+        try:
+            response = self.http.request("POST", endpoint, json=payload)
+        except httpx.HTTPError as exc:
+            self._log("POST", endpoint, started, request_payload=payload, error=exc)
+            raise
+        # The presigned URLs' credentials are redacted (see CngLiteJobLog.redact).
+        self._log("POST", endpoint, started, request_payload=payload, response=response)
+        response.raise_for_status()
+        submission = parse_json(response, "POST", endpoint)
         self._verified = False
         self.update(
             status=CngLiteJobStatus.POLLING,
@@ -472,6 +598,7 @@ class CNGProcessingClient:
         while time.monotonic() < deadline:
             if self.poll():
                 return
+            raise_if_cancelling(self.job.id)
             time.sleep(
                 min(settings.CLOUDNATIVEGIS_POLL_INTERVAL, max(0, deadline - time.monotonic()))
             )
@@ -488,10 +615,25 @@ class CNGProcessingClient:
         "Converting layer 2/5: dashboard", 40% through) into the job's
         message/progress, so a multi-layer GeoPackage shows real movement.
         """
-        response = self.http.get(f"api/v1/jobs/{self.job.cng_job_id}")
+        path = f"api/v1/jobs/{self.job.cng_job_id}"
+        started = time.monotonic()
+        try:
+            response = self.http.get(path)
+        except httpx.HTTPError as exc:
+            self._log("GET", path, started, error=exc)
+            raise
         if response.status_code == 404:
-            raise CngJobNotFound(f"CloudNativeGIS has no job {self.job.cng_job_id}.")
-        body = response.json()
+            error = f"CloudNativeGIS has no job {self.job.cng_job_id}."
+            self._log("GET", path, started, response=response, error=error)
+            raise CngJobNotFound(error)
+        try:
+            body = parse_json(response, "GET", path)
+        except ValueError as exc:
+            self._log("GET", path, started, response=response, error=exc)
+            raise
+        # Only what changes something is logged - not every "still at it".
+        if body.get("status") in ("done", "failed"):
+            self._log("GET", path, started, response=response)
         if body.get("status") == "failed":
             raise ValueError(
                 f"CloudNativeGIS conversion failed: {body.get('detail') or 'Unknown error'}"
@@ -658,16 +800,14 @@ class CNGProcessingClient:
         message = f"Published {len(layers)} layer{'s' if len(layers) != 1 else ''} to the catalog"
         if layer_errors:
             message += f" ({len(layer_errors)} skipped)"
-        self.update(
-            status=CngLiteJobStatus.COMPLETED,
+        self.finish(
+            CngLiteJobStatus.COMPLETED,
             progress=100,
             output_size=output_size,
             output_keys=output_keys,
             error="; ".join(f"{e['name']}: {e['error']}" for e in layer_errors),
             message=message,
-            completed_at=timezone.now(),
         )
-        self._clean_up()
 
     def fail(self, exc):
         """Mark the job failed with a readable version of `exc`."""
@@ -676,13 +816,17 @@ class CNGProcessingClient:
             error = f"CloudNativeGIS returned HTTP {exc.response.status_code}. Check its logs."
         elif isinstance(exc, httpx.RequestError):
             error = "Could not contact CloudNativeGIS. Check the service URL and connectivity."
-        self.update(
-            status=CngLiteJobStatus.FAILED,
+        self.finish(
+            CngLiteJobStatus.FAILED,
             message="CloudNativeGIS conversion failed",
             error=error,
-            completed_at=timezone.now(),
         )
+
+    def finish(self, outcome, **values):
+        """End the job as `outcome`, deleting its server first (see finish_job)."""
+        # Its files aren't needed any more, whatever happens to its server.
         self._clean_up()
+        finish_job(self.job, outcome, **values)
 
     # -- Shared resources ------------------------------------------------------
 
@@ -711,6 +855,20 @@ class CNGProcessingClient:
     @property
     def directory(self):
         return job_directory(self.job.kind, self.job.id)
+
+    def _log(self, method, path, started, *, request_payload=None, response=None, error=None):
+        """Log a request to the job's CloudNativeGIS (see CngLiteJobLog)."""
+        CngLiteJobLog.record(
+            self.job,
+            target=CngLiteJobLog.Target.CLOUDNATIVEGIS,
+            method=method,
+            url=f"{self.job.cloudnativegis_url}/{path.lstrip('/')}",
+            request_payload=request_payload,
+            status_code=response.status_code if response is not None else None,
+            response_payload=_response_body(response) if response is not None else None,
+            error=str(error) if error else "",
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
 
     def update(self, **values):
         """Save `values` on the job, in the database and on self.job."""
@@ -783,6 +941,21 @@ class CNGProcessingClient:
             raise ValueError("The GeoPackage has nothing of this kind to convert.")
         return list(self.job.layers)
 
+    def _discard_uploads(self):
+        """Remove what CloudNativeGIS may have uploaded already, for a cancelled job.
+
+        Only once it was submitted (it uploads straight to each layer's
+        folder), and only a new layer's folder - empty before, as verify
+        leaves it on a mismatch; a replaced one's is left as it is.
+        """
+        if not self.job.cng_job_id or self.job.replace_existing:
+            return
+        try:
+            for layer in self.layers():
+                self.s3_client.delete_prefix(f"{layer['folder']}/")
+        except Exception:  # noqa: BLE001 - it's cancelled either way
+            logger.exception("Job %s: couldn't remove its partial uploads", self.job.id)
+
     def _clean_up(self):
         # Only once the job's finished: until then a resumed job still needs
         # what's in there (staged source, downloaded results).
@@ -818,7 +991,8 @@ def resume_interrupted_conversions():
     from the step its status says it got to. GeoPackages still waiting for
     their layers to be picked are left alone; a job that depends on another
     runs after it, from wherever that one moved their source to. A kind that
-    can't be resumed (a mosaic) is failed instead.
+    can't be resumed (a mosaic) is failed instead. A job left deprovisioning,
+    any kind, has its server deleted and ends as it was going to.
     """
     jobs = list(
         CngLiteJob.objects.filter(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
@@ -826,18 +1000,28 @@ def resume_interrupted_conversions():
         .order_by("created_at")
     )
     for job in jobs:
+        if job.status == CngLiteJobStatus.DEPROVISIONING:
+            # Finished - a mosaic too - but its server is still to be deleted.
+            logger.info("Resuming deleting the server of %s %s", job.kind, job.id)
+            finish_job(job, job.outcome or CngLiteJobStatus.FAILED)
+            continue
+        if job.status == CngLiteJobStatus.CANCELLING:
+            # Cancelled - a mosaic too - but not stopped before the restart.
+            logger.info("Finishing cancelling %s %s", job.kind, job.id)
+            shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
+            finish_job(job, CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
+            continue
         if not _is_resumable(job):
             # A mosaic runs in one go (see apps.s3.mosaic.run_mosaic): its
             # tiles were staged only locally, so it can't pick up again.
             logger.info("Can't resume %s %s; failing it", job.kind, job.id)
-            update_job(
-                job.id,
-                status=CngLiteJobStatus.FAILED,
+            shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
+            finish_job(
+                job,
+                CngLiteJobStatus.FAILED,
                 message="CloudNativeGIS conversion interrupted",
                 error="The conversion was interrupted by a restart. Please retry the upload.",
-                completed_at=timezone.now(),
             )
-            shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
             continue
         logger.info("Resuming CloudNativeGIS conversion %s (%s)", job.id, job.status)
         if job.depends_on_id and job.status == CngLiteJobStatus.PENDING:

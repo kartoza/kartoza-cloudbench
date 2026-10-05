@@ -586,9 +586,10 @@ export type ConversionJobStatus =
   | 'polling'
   | 'verifying'
   | 'publishing'
-  // No longer sent for new jobs; older ones may still have them.
-  | 'downloading'
-  | 'running'
+  // Finished; its on-demand server is being deleted before it's completed/failed.
+  | 'deprovisioning'
+  // Asked to stop; ends 'cancelled' once it has.
+  | 'cancelling'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -623,6 +624,24 @@ export interface ConversionToolInfo {
   tool: string
   formats?: string[]
   error?: string
+  // CloudNativeGIS only: whether each conversion gets its own server
+  // (started by GeoHosting), and the server types it may start as.
+  onDemand?: boolean
+  servers?: CloudNativeGISServerType[]
+}
+
+// A Hetzner server type GeoHosting may start an on-demand CloudNativeGIS server as.
+export interface CloudNativeGISServerType {
+  // GeoHosting's HetznerServer id: what a conversion's server is started as.
+  id: number
+  type: string
+  location: string
+  specifications: Record<string, unknown>
+  currency: string
+  // Per hour, excluding VAT, as a decimal string.
+  price: string
+  // Whether Hetzner has it in stock in its location right now.
+  available?: boolean | null
 }
 
 export interface ConversionToolStatus {
