@@ -100,8 +100,8 @@ CX23 = {
 GEOHOSTING = "apps.s3.models.cng_lite_job.GeoHostingClient"
 
 
-def on_demand_availability(health, server_types):
-    """CngLiteJob.availability() with GeoHosting answering `health` and `server_types`."""
+def on_demand_availability(health, server_types, user=None):
+    """CngLiteJob.availability(user) with GeoHosting answering `health` and `server_types`."""
     with (
         patch("apps.s3.models.cng_lite_job.httpx.get") as get,
         patch(f"{GEOHOSTING}.cloudnative_gis_processing_health", side_effect=[health]),
@@ -109,15 +109,30 @@ def on_demand_availability(health, server_types):
             f"{GEOHOSTING}.cloudnative_gis_processing_server_types", side_effect=[server_types]
         ) as types,
     ):
-        availability = CngLiteJob.availability()
+        availability = CngLiteJob.availability(user)
     get.assert_not_called()  # not the fixed CLOUDNATIVEGIS_URL
     return availability, types
 
 
 def test_on_demand_available_with_a_server_type_to_start(geohosting):
     """Not the fixed CLOUDNATIVEGIS_URL: GeoHosting, which starts the servers."""
-    availability, _ = on_demand_availability({"healthy": True, "snapshot": {"id": 1}}, [CX23])
+    availability, types = on_demand_availability({"healthy": True, "snapshot": {"id": 1}}, [CX23])
     assert availability == {"available": True, "onDemand": True, "servers": [CX23]}
+    types.assert_called_once_with(username=None)
+
+
+@pytest.mark.django_db
+def test_on_demand_server_types_are_the_users(geohosting, django_user_model):
+    # Only those the user can be billed for: GeoHosting picks them by username.
+    tim = django_user_model.objects.create(username="tim")
+    _, types = on_demand_availability({"healthy": True}, [CX23], user=tim)
+    types.assert_called_once_with(username="tim")
+
+
+def test_on_demand_unavailable_for_a_user_geohosting_doesnt_know(geohosting):
+    unknown = GeoHostingError("No GeoHosting user 'tim'.", status_code=400)
+    availability, _ = on_demand_availability({"healthy": True}, unknown, user=Mock())
+    assert availability == {"available": False, "onDemand": True, "servers": []}
 
 
 def test_on_demand_unavailable_without_an_enabled_server_type(geohosting):

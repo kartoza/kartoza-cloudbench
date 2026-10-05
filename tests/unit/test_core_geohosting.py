@@ -133,6 +133,29 @@ def test_server_types_are_the_enabled_ones(geohosting):
     ):
         assert GeoHostingClient().cloudnative_gis_processing_server_types() == answer
     assert request.call_args.args == ("GET", SERVER_TYPES)
+    assert request.call_args.kwargs["params"] is None
+
+
+def test_server_types_for_a_user(geohosting):
+    with (
+        patch("apps.core.geohosting.httpx.post", return_value=token_response()),
+        patch(
+            "apps.core.geohosting.httpx.request", return_value=httpx.Response(200, json=[])
+        ) as request,
+    ):
+        GeoHostingClient().cloudnative_gis_processing_server_types(username="tim")
+    assert request.call_args.kwargs["params"] == {"username": "tim"}
+
+
+def test_server_types_for_a_user_geohosting_doesnt_know(geohosting):
+    unknown = httpx.Response(400, json={"detail": "No GeoHosting user 'tim'."})
+    with (
+        patch("apps.core.geohosting.httpx.post", return_value=token_response()),
+        patch("apps.core.geohosting.httpx.request", return_value=unknown),
+        pytest.raises(GeoHostingError, match="No GeoHosting user") as raised,
+    ):
+        GeoHostingClient().cloudnative_gis_processing_server_types(username="tim")
+    assert raised.value.status_code == 400
 
 
 def test_server_types_refused(geohosting):

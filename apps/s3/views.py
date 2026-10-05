@@ -938,7 +938,7 @@ class ConversionJobManager:
 class S3ConversionToolsView(APIView):
     """Check available conversion tools."""
 
-    def get(self, _request):
+    def get(self, request):
         """Check which conversion tools are available."""
         tools = {}
 
@@ -989,7 +989,10 @@ class S3ConversionToolsView(APIView):
 
         # Configured (CLOUDNATIVEGIS_URL, or GeoHosting on demand) and healthy;
         # on demand, also the server types its servers can start as.
-        tools["cloudnativegis"] = {"tool": "CloudNativeGIS", **CngLiteJob.availability()}
+        tools["cloudnativegis"] = {
+            "tool": "CloudNativeGIS",
+            **CngLiteJob.availability(request.user),
+        }
 
         # COG conversion runs inside the CloudNativeGIS Lite container, not locally.
         tools["gdal"] = {

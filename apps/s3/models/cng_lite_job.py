@@ -195,8 +195,12 @@ class CngLiteJob(models.Model):
         return CngLiteJob.availability()["available"]
 
     @staticmethod
-    def availability():
+    def availability(user=None):
         """Whether CloudNativeGIS can take conversions, and on what.
+
+        On demand, for `user` (if given): only the server types they can be
+        billed for are listed - GeoHosting picks them by their username. One
+        GeoHosting doesn't know can't use on-demand servers: unavailable.
 
         {"available", "onDemand", "servers"}. Without
         CLOUDNATIVEGIS_ON_DEMAND: available if the service at
@@ -224,7 +228,9 @@ class CngLiteJob(models.Model):
                     "GeoHosting can't start CloudNativeGIS servers: %s", answer.get("detail")
                 )
                 return unavailable
-            servers = geohosting.cloudnative_gis_processing_server_types()
+            servers = geohosting.cloudnative_gis_processing_server_types(
+                username=user.get_username() if user is not None else None
+            )
         except GeoHostingError as exc:
             logger.warning("GeoHosting's CloudNativeGIS health check failed: %s", exc)
             return unavailable
