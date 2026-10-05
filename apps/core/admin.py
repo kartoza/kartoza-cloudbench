@@ -1,9 +1,8 @@
 """Shared admin helpers for saved connections."""
 
-from django.contrib import admin, messages
+from django.contrib import admin
 
-from .db import ConnectionModel, LegacyConnectionImport
-from .legacy_connections import delete_backups
+from .db import ConnectionModel
 
 
 def mask_secret(value: str) -> str:
@@ -40,36 +39,3 @@ class ConnectionAdmin(admin.ModelAdmin):
             for name in self.secret_fields
             if getattr(obj, name)
         )
-
-
-@admin.register(LegacyConnectionImport)
-class LegacyConnectionImportAdmin(admin.ModelAdmin):
-    """Read-only log of config.json imports, and cleanup of their backups."""
-
-    list_display = [
-        "owner",
-        "created_at",
-        "imported",
-        "already_present",
-        "invalid_count",
-        "backup_path",
-        "backup_deleted_at",
-    ]
-    list_filter = [("backup_deleted_at", admin.EmptyFieldListFilter)]
-    search_fields = ["owner__username", "backup_path"]
-    actions = ["delete_backup_files"]
-
-    def get_readonly_fields(self, _request, _obj=None):
-        return [field.name for field in self.model._meta.fields]
-
-    def has_add_permission(self, _request):
-        return False
-
-    @admin.display(description="Invalid")
-    def invalid_count(self, obj: LegacyConnectionImport) -> int:
-        return len(obj.invalid_entries)
-
-    @admin.action(description="Delete backup files (they hold plaintext secrets)")
-    def delete_backup_files(self, request, queryset):
-        deleted = delete_backups(queryset, log=lambda _message: None)
-        self.message_user(request, f"Deleted {deleted} backup files.", messages.SUCCESS)

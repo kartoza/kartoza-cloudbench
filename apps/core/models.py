@@ -195,10 +195,7 @@ class Config(BaseModel):
     class Config:
         """Pydantic configuration."""
 
-        # Allow extra fields for forward compatibility. This also keeps the
-        # legacy connection lists (e.g. "connections", "pg_services") intact
-        # in an old config.json until `manage.py migrate_connections` has
-        # imported them into the database.
+        # Allow extra fields for forward compatibility.
         extra = "allow"
 
 
@@ -224,8 +221,3 @@ class ProvidersConfig(BaseModel):
         """Pydantic configuration."""
 
         extra = "allow"
-
-
-# Django discovers an app's models through its `models` module; this one is
-# otherwise Pydantic schemas, so the core Django model lives in db.py.
-from .db import LegacyConnectionImport  # noqa: E402, F401

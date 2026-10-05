@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("cloudbench_s3", "0014_cnglitejob_owner_connection_fk"),
+        ("cloudbench_s3", "0015_cnglitejob_verifying_status"),
     ]
 
     operations = [

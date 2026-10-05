@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("cloudbench_s3", "0015_cnglitejob_outcome_alter_cnglitejob_status_and_more"),
+        ("cloudbench_s3", "0016_cnglitejob_outcome_alter_cnglitejob_status_and_more"),
     ]
 
     operations = [

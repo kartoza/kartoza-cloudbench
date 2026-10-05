@@ -69,32 +69,3 @@ class ConnectionModel(models.Model):
         self.connection_id = obj.id
         for name in self._schema_fields():
             setattr(self, name, getattr(obj, name))
-
-
-class LegacyConnectionImport(models.Model):
-    """One import of a user's connections out of their old config.json.
-
-    Imported entries are moved from config.json into a backup file next to
-    it (`backup_path`) — see apps.core.legacy_connections. That file still
-    holds plaintext secrets; this record is how it's tracked from the Django
-    admin, which can also delete it (setting `backup_deleted_at`).
-    """
-
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="legacy_connection_imports"
-    )
-    backup_path = models.CharField(max_length=1000, blank=True, default="")
-    imported = models.PositiveIntegerField(default=0)
-    already_present = models.PositiveIntegerField(default=0)
-    # Entries that failed validation and were left in config.json, as
-    # [{"key", "id", "name", "errors"}] — never the entry's values/secrets.
-    invalid_entries = models.JSONField(default=list, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    backup_deleted_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        verbose_name = "legacy connection import"
-
-    def __str__(self):
-        return f"{self.owner} @ {self.created_at:%Y-%m-%d %H:%M}"

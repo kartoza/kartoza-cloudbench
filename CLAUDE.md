@@ -135,7 +135,10 @@ Decisions:
 Still to do:
 
 - Run the tests on both sides (migrations are made: CloudBench `s3` up to
-  `0016`, GeoHosting `geohosting_controller` `0002`).
+  `0017` - main's `0015_cnglitejob_verifying_status`, then this branch's
+  `0016` outcome/deprovisioning and `0017` hetzner_server_id; the
+  cancelling/cancelled statuses still need one - GeoHosting
+  `geohosting_controller` `0002`, plus `action_id`).
 - Rebuild the frontend bundle (`make build-frontend`): the one in `static/`
   predates the per-step statuses and the server picker.
 - G5 reaper (its max server age is undecided, e.g. 7 hours).

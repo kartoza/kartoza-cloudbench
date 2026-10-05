@@ -5,10 +5,6 @@ Iceberg) are stored in the database, one table per type with secrets
 encrypted at rest — see apps.core.db.ConnectionModel. Everything else
 (settings, sync configs, saved queries, QGIS projects) is still a per-user
 JSON file, located via the XDG Base Directory specification.
-
-Connections still in an old config.json are imported automatically on
-deploy by the `cloudbench_core.0001_import_legacy_connections` data
-migration (re-runnable with `python manage.py migrate_connections`).
 """
 
 import json
