@@ -7,7 +7,8 @@ import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import type { S3ObjectNodeProps } from '../types'
 import { isMapExplorerFormat, isMapPreviewable, isQueryable } from '../../../utils/s3ObjectFormat'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 function isReadme(key: string): boolean {
   return /^readme\.md$/i.test(key.split('/').filter(Boolean).pop() || '')
@@ -176,9 +177,9 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
         count={object.isFolder && children ? children.length : undefined}
       />
       {object.isFolder && isExpanded && children && (
-        <>
+        <TreeChildren>
           {children.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1} ml={treeIndent(level + 1)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1}>
               <Text fontSize="xs" color="gray.400">
                 Empty folder
               </Text>
@@ -194,7 +195,7 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
               />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

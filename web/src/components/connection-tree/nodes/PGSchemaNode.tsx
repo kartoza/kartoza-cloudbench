@@ -4,6 +4,7 @@ import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { PGTableNode } from './PGTableNode'
 import type { PGSchemaNodeProps } from '../types'
 
@@ -57,14 +58,18 @@ export function PGSchemaNode({ serviceName, schema }: PGSchemaNodeProps) {
         level={3}
         count={schema.tables.length}
       />
-      {isExpanded && schema.tables.map((table) => (
-        <PGTableNode
-          key={table.name}
-          serviceName={serviceName}
-          schemaName={schema.name}
-          table={table}
-        />
-      ))}
+      {isExpanded && (
+        <TreeChildren>
+          {schema.tables.map((table) => (
+            <PGTableNode
+              key={table.name}
+              serviceName={serviceName}
+              schemaName={schema.name}
+              table={table}
+            />
+          ))}
+        </TreeChildren>
+      )}
     </Box>
   )
 }

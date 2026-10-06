@@ -13,7 +13,7 @@ import {
   FiEye,
   FiPlus,
 } from 'react-icons/fi'
-import { getNodeIconComponent, getNodeColor, treeIndent, TREE_BORDER_PX, TREE_PLACEHOLDER_PL } from './utils'
+import { getNodeIconComponent, getNodeColor, TREE_BORDER_PX, TREE_PLACEHOLDER_PL } from './utils'
 import type { DatasetRowProps } from './types'
 
 export function DatasetRow({
@@ -25,7 +25,6 @@ export function DatasetRow({
   onToggleSelect,
   onPublish,
   onPreview,
-  level = 6,
 }: DatasetRowProps) {
   const hoverBg = useColorModeValue('gray.100', 'whiteAlpha.100')
   const separatorColor = useColorModeValue('gray.100', 'whiteAlpha.100')
@@ -41,7 +40,6 @@ export function DatasetRow({
       px={2}
       // Icon lines up with sibling rows' icons (past their chevron column).
       pl={TREE_PLACEHOLDER_PL}
-      ml={treeIndent(level)}
       bg={bg}
       borderLeft={`${TREE_BORDER_PX}px solid`}
       borderLeftColor={guideColor}

@@ -35,7 +35,6 @@ import {
 import {
   getNodeIconComponent,
   getNodeColor,
-  treeIndent,
   TREE_BORDER_PX,
   TREE_SELECTED_BORDER_PX,
 } from './utils'
@@ -93,7 +92,6 @@ export function TreeNodeRow({
       pr={2}
       // 8px from the row's edge to the chevron, whatever the border width.
       pl={`${8 - borderPx}px`}
-      ml={treeIndent(level)}
       cursor={isEnabled ? 'pointer' : 'not-allowed'}
       opacity={isEnabled ? 1 : 0.4}
       bg={bgColor}

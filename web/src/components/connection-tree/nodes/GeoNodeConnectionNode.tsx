@@ -5,6 +5,7 @@ import { useUIStore } from '../../../stores/uiStore'
 import type { GeoNodeConnection, TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { GeoNodeResourceCategoryNode } from './GeoNodeResourceCategoryNode'
 import { GeoNodeRemoteServicesNode } from './GeoNodeRemoteServicesNode'
 import { API_BASE } from "../../../api";
@@ -132,7 +133,7 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
         level={2}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {/* Datasets */}
           <GeoNodeResourceCategoryNode
             connectionId={connection.id}
@@ -194,7 +195,7 @@ export function GeoNodeConnectionNode({ connection }: GeoNodeConnectionNodeProps
             services={remoteServicesData?.services || []}
             isLoading={remoteServicesLoading}
           />
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

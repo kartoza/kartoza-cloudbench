@@ -6,7 +6,8 @@ import type { TreeNode, MerginMapsConnection } from '../../../types'
 import * as api from '../../../api/client'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { MerginMapsProjectNode } from './MerginMapsProjectNode'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 interface MerginMapsConnectionNodeProps {
   connection: MerginMapsConnection
@@ -83,9 +84,9 @@ export function MerginMapsConnectionNode({ connection }: MerginMapsConnectionNod
         count={projects.length}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {projects.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(3)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text fontSize="xs" color="gray.400">
                 No projects found.
               </Text>
@@ -99,7 +100,7 @@ export function MerginMapsConnectionNode({ connection }: MerginMapsConnectionNod
               />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )
