@@ -201,20 +201,68 @@ class TestGeoNodeClient:
 
     def test_upload_dataset_zip(self, http_mock):
         http_mock.add("POST", "/uploads/upload", json={"success": True})
-        result = self.make().upload_dataset(b"zip", "a.zip", title="T", abstract="A")
+        result = self.make().upload_dataset([b"z", b"ip"], "a.zip", 3, 60, title="T", abstract="A")
         assert result == {"success": True}
+        request = http_mock.calls[0]
+        body = request.content
+        # Sent as Content-Length (computed before the file arrives), never chunked.
+        assert request.headers["Content-Length"] == str(len(body))
+        assert "Transfer-Encoding" not in request.headers
+        # GeoNode 4.x unzips zip_file only: the zip goes once, there, and
+        # base_file (required, never read) is a 1-byte stand-in before it.
+        assert (
+            b'name="base_file"; filename="a.zip"\r\nContent-Type: application/zip\r\n\r\n\0\r\n'
+            in body
+        )
+        assert body.index(b'name="base_file"') < body.index(b'name="zip_file"')
+        assert b'name="zip_file"; filename="a.zip"' in body and b"\r\n\r\nzip\r\n--" in body
+        assert body.count(b"zip\r\n--") == 1
+        assert b"store_spatial_files" in body and b"dataset_title" in body
+
+    def test_upload_dataset_tif_goes_as_base_file(self, http_mock):
+        http_mock.add("POST", "/uploads/upload", json={})
+        self.make().upload_dataset([b"II*"], "dem.tif", 3, 60)
         body = http_mock.calls[0].content
-        assert b"zip_file" in body and b"store_spatial_files" in body and b"dataset_title" in body
+        assert b'name="base_file"; filename="dem.tif"' in body and b"zip_file" not in body
 
     def test_upload_dataset_other_extension(self, http_mock):
         http_mock.add("POST", "/uploads/upload", json={})
-        self.make().upload_dataset(b"x", "a.unknown")
+        self.make().upload_dataset([b"x"], "a.unknown", 1, 60)
         assert b"application/octet-stream" in http_mock.calls[0].content
 
     def test_upload_document(self, http_mock):
         http_mock.add("POST", "/documents/", json={"ok": 1})
-        assert self.make().upload_document(b"pdf", "a.pdf", title="T", abstract="A") == {"ok": 1}
+        result = self.make().upload_document([b"pdf"], "a.pdf", 3, 60, title="T", abstract="A")
+        assert result == {"ok": 1}
+        assert b'name="doc_file"; filename="a.pdf"' in http_mock.calls[0].content
         assert b"application/pdf" in http_mock.calls[0].content
+
+    def test_upload_refused_carries_geonodes_reason(self, http_mock):
+        http_mock.add(
+            "POST", "/uploads/upload", status=400, json={"errors": ["Total upload size exceeds"]}
+        )
+        with pytest.raises(geonode.GeoNodeUploadError, match="Total upload size exceeds") as raised:
+            self.make().upload_dataset([b"x"], "a.tif", 1, 60)
+        assert raised.value.status_code == 400
+
+    def test_upload_size_limit(self, http_mock):
+        http_mock.add(
+            "GET",
+            "/upload-size-limits/",
+            json={
+                "upload-size-limits": [
+                    {"slug": "dataset_upload_size", "max_size": 104857600},
+                    {"slug": "file_upload_handler", "max_size": 1048576000},
+                ]
+            },
+        )
+        client = self.make()
+        assert client.get_upload_size_limit("dataset_upload_size") == 104857600
+        assert client.get_upload_size_limit("document_upload_size") is None
+
+    def test_upload_size_limit_unknown_on_older_geonodes(self, http_mock):
+        http_mock.add("GET", "/upload-size-limits/", status=404)
+        assert self.make().get_upload_size_limit("dataset_upload_size") is None
 
     def test_get_resource(self, http_mock):
         http_mock.add(

@@ -24,17 +24,11 @@ import {
   AlertIcon,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiPause, FiPlay, FiLayers, FiFileText } from 'react-icons/fi'
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiLayers, FiFileText } from 'react-icons/fi'
 import { TbWorld } from 'react-icons/tb'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
-import {
-  initUploadSession,
-  uploadChunk,
-  cancelUpload,
-  completeGeoNodeUpload,
-  CHUNK_SIZE,
-} from '../../api/chunkedUpload'
+import { cancelRelayUpload, relayUpload } from '../../api/relayUpload'
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -85,6 +79,12 @@ function getSupportedFileInfo(filename: string): { supported: boolean; type: str
 
 type UploadPhase = 'idle' | 'chunking' | 'finalizing' | 'done' | 'error' | 'cancelled'
 
+// Shown while a failed chunk waits to be sent again.
+interface RetryNotice {
+  attempt: number
+  delaySeconds: number
+}
+
 export default function GeoNodeUploadDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
   const dialogData = useUIStore((state) => state.dialogData)
@@ -104,7 +104,7 @@ export default function GeoNodeUploadDialog() {
   const [fileInfo, setFileInfo] = useState<ReturnType<typeof getSupportedFileInfo> | null>(null)
 
   const [phase, setPhase] = useState<UploadPhase>('idle')
-  const [isPaused, setIsPaused] = useState(false)
+  const [retry, setRetry] = useState<RetryNotice | null>(null)
   const [chunksUploaded, setChunksUploaded] = useState(0)
   const [chunksTotal, setChunksTotal] = useState(0)
   const [chunkProgress, setChunkProgress] = useState(0)
@@ -113,7 +113,6 @@ export default function GeoNodeUploadDialog() {
   const [errorMsg, setErrorMsg] = useState('')
 
   const sessionIdRef = useRef<string | null>(null)
-  const isPausedRef = useRef(false)
   const isCancelledRef = useRef(false)
 
   const isOpen = activeDialog === 'geonodeupload'
@@ -127,7 +126,7 @@ export default function GeoNodeUploadDialog() {
     setAbstract('')
     setFileInfo(null)
     setPhase('idle')
-    setIsPaused(false)
+    setRetry(null)
     setChunksUploaded(0)
     setChunksTotal(0)
     setChunkProgress(0)
@@ -135,7 +134,6 @@ export default function GeoNodeUploadDialog() {
     setEtaSeconds(0)
     setErrorMsg('')
     sessionIdRef.current = null
-    isPausedRef.current = false
     isCancelledRef.current = false
   }, [initialUploadType])
 
@@ -157,22 +155,13 @@ export default function GeoNodeUploadDialog() {
     if (file) handleFileSelect(file)
   }, [handleFileSelect])
 
-  const waitIfPaused = (): Promise<void> =>
-    new Promise((resolve) => {
-      const check = () => {
-        if (!isPausedRef.current || isCancelledRef.current) resolve()
-        else setTimeout(check, 200)
-      }
-      check()
-    })
-
   const handleUpload = async () => {
     if (!selectedFile || !connectionId) return
 
     isCancelledRef.current = false
-    isPausedRef.current = false
 
     setPhase('chunking')
+    setRetry(null)
     setChunksUploaded(0)
     setChunkProgress(0)
     setSpeedBps(0)
@@ -180,49 +169,42 @@ export default function GeoNodeUploadDialog() {
 
     const totalBytes = selectedFile.size
     const startTime = Date.now()
-    let bytesUploaded = 0
 
     try {
-      const { sessionId, totalChunks } = await initUploadSession(
-        '',
-        '',
-        selectedFile.name,
-        totalBytes,
-        CHUNK_SIZE,
+      // Straight to GeoNode as it's sent: nothing is stored on CloudBench.
+      const status = await relayUpload(
+        selectedFile,
+        {
+          target: 'geonode',
+          connectionId,
+          uploadType,
+          title: title || undefined,
+          abstract: abstract || undefined,
+        },
+        {
+          onStarted: ({ sessionId, totalChunks }) => {
+            sessionIdRef.current = sessionId
+            setChunksTotal(totalChunks)
+          },
+          onChunkProgress: (pct) => setChunkProgress(pct),
+          onChunkSent: (sentChunks, sentBytes) => {
+            const elapsedSec = (Date.now() - startTime) / 1000
+            const speed = elapsedSec > 0 ? sentBytes / elapsedSec : 0
+            setRetry(null)
+            setChunksUploaded(sentChunks)
+            setChunkProgress(100)
+            setSpeedBps(speed)
+            setEtaSeconds(speed > 0 ? (totalBytes - sentBytes) / speed : 0)
+            if (sentBytes >= totalBytes) setPhase('finalizing')
+          },
+          onRetry: (attempt, delaySeconds) => setRetry({ attempt, delaySeconds }),
+          isCancelled: () => isCancelledRef.current,
+        },
       )
-      sessionIdRef.current = sessionId
-      setChunksTotal(totalChunks)
-
-      for (let i = 0; i < totalChunks; i++) {
-        if (isCancelledRef.current) break
-        await waitIfPaused()
-        if (isCancelledRef.current) break
-
-        const start = i * CHUNK_SIZE
-        const end = Math.min(start + CHUNK_SIZE, totalBytes)
-        const chunk = selectedFile.slice(start, end)
-        const chunkBytes = end - start
-
-        await uploadChunk(sessionId, i, chunk, (pct) => setChunkProgress(pct))
-
-        bytesUploaded += chunkBytes
-        const elapsedSec = (Date.now() - startTime) / 1000
-        const speed = elapsedSec > 0 ? bytesUploaded / elapsedSec : 0
-        const eta = speed > 0 ? (totalBytes - bytesUploaded) / speed : 0
-
-        setChunksUploaded(i + 1)
-        setChunkProgress(100)
-        setSpeedBps(speed)
-        setEtaSeconds(eta)
-      }
-
-      if (isCancelledRef.current) {
+      if (!status || status.state === 'cancelled') {
         setPhase('cancelled')
         return
       }
-
-      setPhase('finalizing')
-      await completeGeoNodeUpload(sessionId, connectionId, title || undefined, abstract || undefined, uploadType)
 
       setPhase('done')
       if (uploadType === 'document') {
@@ -244,20 +226,15 @@ export default function GeoNodeUploadDialog() {
         setPhase('error')
         toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
+    } finally {
+      setRetry(null)
     }
   }
 
-  const handlePause = () => { isPausedRef.current = true; setIsPaused(true) }
-  const handleResume = () => { isPausedRef.current = false; setIsPaused(false) }
-
   const handleCancel = async () => {
     isCancelledRef.current = true
-    isPausedRef.current = false
-    setIsPaused(false)
     const sessId = sessionIdRef.current
-    if (sessId) {
-      try { await cancelUpload(sessId) } catch { /* best effort */ }
-    }
+    if (sessId) await cancelRelayUpload(sessId)
     setPhase('cancelled')
   }
 
@@ -436,10 +413,10 @@ export default function GeoNodeUploadDialog() {
                         <Progress
                           value={overallPct}
                           size="sm"
-                          colorScheme={isPaused ? 'yellow' : 'teal'}
+                          colorScheme={retry ? 'yellow' : 'teal'}
                           borderRadius="sm"
-                          hasStripe={!isPaused}
-                          isAnimated={!isPaused}
+                          hasStripe
+                          isAnimated
                         />
                       </Box>
 
@@ -458,16 +435,13 @@ export default function GeoNodeUploadDialog() {
                         </Box>
                       )}
 
+                      {retry && (
+                        <Text fontSize="xs" color="orange.500">
+                          Connection lost — retrying in {retry.delaySeconds}s (attempt {retry.attempt})
+                        </Text>
+                      )}
+
                       <HStack spacing={2} justify="flex-end">
-                        {!isPaused ? (
-                          <Button size="xs" variant="outline" colorScheme="yellow" onClick={handlePause} leftIcon={<FiPause />}>
-                            Pause
-                          </Button>
-                        ) : (
-                          <Button size="xs" variant="outline" colorScheme="green" onClick={handleResume} leftIcon={<FiPlay />}>
-                            Resume
-                          </Button>
-                        )}
                         <Button size="xs" variant="ghost" colorScheme="red" onClick={handleCancel}>
                           Cancel
                         </Button>
@@ -479,7 +453,7 @@ export default function GeoNodeUploadDialog() {
                   {phase === 'finalizing' && (
                     <Box>
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>
-                        Sending to GeoNode…
+                        Waiting for GeoNode…
                       </Text>
                       <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>

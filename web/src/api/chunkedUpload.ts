@@ -1,5 +1,4 @@
 import { API_BASE, setAuthHeader } from './common'
-import type { UploadResult } from '../types'
 
 declare global {
   interface Window {
@@ -87,46 +86,6 @@ export async function uploadChunk(
   })
 }
 
-export async function completeUpload(sessionId: string): Promise<UploadResult> {
-  const res = await fetch(`${API_BASE}/upload/complete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCSRFToken(),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ sessionId }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(err.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
-export async function completeGeoNodeUpload(
-  sessionId: string,
-  connectionId: string,
-  title?: string,
-  abstract?: string,
-  uploadType: 'dataset' | 'document' = 'dataset',
-): Promise<{ published: boolean; filename: string; fileSize: number; [key: string]: unknown }> {
-  const res = await fetch(`${API_BASE}/geonode/upload/complete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCSRFToken(),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ sessionId, connectionId, title, abstract, uploadType }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(err.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
 export async function completePGUpload(
   sessionId: string,
 ): Promise<{ path: string; filename: string; fileSize: number; sessionId: string }> {
@@ -146,28 +105,6 @@ export async function completePGUpload(
   return res.json()
 }
 
-export async function completeGeoServerUpload(
-  sessionId: string,
-  connId: string,
-  workspace: string,
-  storeName?: string,
-): Promise<{ path: string; filename: string; fileSize: number; sessionId: string; storeName: string }> {
-  const res = await fetch(`${API_BASE}/upload/complete/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCSRFToken(),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ sessionId, storeName }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(err.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
 export async function cancelUpload(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/upload/session/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
@@ -176,16 +113,4 @@ export async function cancelUpload(sessionId: string): Promise<void> {
     },
     credentials: 'include',
   })
-}
-
-export interface GeoServerProgress {
-  sent: number
-  total: number
-  done: boolean
-}
-
-export async function getGeoServerProgress(sessionId: string): Promise<GeoServerProgress> {
-  const res = await fetch(`${API_BASE}/upload/session/${encodeURIComponent(sessionId)}/progress`)
-  if (!res.ok) return { sent: 0, total: 0, done: true }
-  return res.json()
 }
