@@ -229,14 +229,10 @@ export function getNodeColor(type: NodeType | 'featuretype' | 'coverage'): strin
   }
 }
 
-// Indentation for a tree row at `level` (1 = a top-level section), in Chakra
-// space units (3 = 12px per level) — the one scale shared by node rows, their
-// loading/empty/error placeholders and dataset rows, so every level lines up.
+// Indentation of a node's children relative to the node, in Chakra space
+// units (3 = 12px). Applied once per nesting level by TreeChildren, so every
+// row, placeholder and dataset row at the same depth lines up.
 export const TREE_INDENT = 3
-
-export function treeIndent(level: number): number {
-  return Math.max(0, level - 1) * TREE_INDENT
-}
 
 // A child row's left border: the same thin line at every depth (the selected
 // row's accent is a little wider, with its padding reduced to match).

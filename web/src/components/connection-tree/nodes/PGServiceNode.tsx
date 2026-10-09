@@ -5,6 +5,7 @@ import { generateNodeId, useTreeStore } from '../../../stores/treeStore'
 import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { PGSchemaNode } from './PGSchemaNode'
 import type { PGServiceNodeProps } from '../types'
 import { useOnlineStatus } from "../../../hooks/useOnlineStatus.ts";
@@ -102,13 +103,17 @@ export function PGServiceNode({ service, ableToEdit = true, ableToDelete = true 
         ableToEdit={ableToEdit}
         ableToDelete={ableToDelete}
       />
-      {isExpanded && schemaData?.schemas && schemaData.schemas.map((schema) => (
-        <PGSchemaNode
-          key={schema.name}
-          serviceName={service.name}
-          schema={schema}
-        />
-      ))}
+      {isExpanded && schemaData?.schemas && (
+        <TreeChildren>
+          {schemaData.schemas.map((schema) => (
+            <PGSchemaNode
+              key={schema.name}
+              serviceName={service.name}
+              schema={schema}
+            />
+          ))}
+        </TreeChildren>
+      )}
     </Box>
   )
 }
