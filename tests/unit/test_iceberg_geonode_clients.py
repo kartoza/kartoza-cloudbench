@@ -219,6 +219,39 @@ class TestGeoNodeClient:
         assert body.count(b"zip\r\n--") == 1
         assert b"store_spatial_files" in body and b"dataset_title" in body
 
+    def test_upload_dataset_zip_as_base_file_on_newer_geonodes(self, http_mock):
+        http_mock.add("POST", "/uploads/upload", json={})
+        self.make().upload_dataset([b"zip"], "a.zip", 3, 60, zip_field=geonode.BASE_FILE)
+        body = http_mock.calls[0].content
+        assert b'name="base_file"; filename="a.zip"' in body and b"\r\n\r\nzip\r\n--" in body
+        assert b"zip_file" not in body
+
+    @pytest.mark.parametrize(
+        "answer, field",
+        [
+            # GeoNode 4.x looks for a handler by extension first.
+            (
+                {"status": 500, "json": {"errors": ["No handlers found for this dataset type"]}},
+                geonode.ZIP_FILE,
+            ),
+            # Newer GeoNodes check a zip first.
+            (
+                {"status": 400, "json": {"base_file": ["Invalid or unsafe ZIP archive."]}},
+                geonode.BASE_FILE,
+            ),
+            # Can't tell: 4.x.
+            ({"status": 401, "json": {"detail": "Authentication required"}}, geonode.ZIP_FILE),
+            ({"exc": httpx.ConnectError("down")}, geonode.ZIP_FILE),
+        ],
+    )
+    def test_zip_upload_field_asks_the_geonode(self, http_mock, answer, field):
+        http_mock.add("POST", "/uploads/upload", **answer)
+        assert self.make().zip_upload_field() == field
+        body = http_mock.calls[0].content
+        # A 1-byte "zip" as base_file: refused either way, nothing created.
+        assert b'name="base_file"; filename="cloudbench-probe.zip"' in body
+        assert b"zip_file" not in body
+
     def test_upload_dataset_tif_goes_as_base_file(self, http_mock):
         http_mock.add("POST", "/uploads/upload", json={})
         self.make().upload_dataset([b"II*"], "dem.tif", 3, 60)

@@ -20,6 +20,10 @@ from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
+# Where a GeoNode takes a zipped dataset (GeoNodeClient.zip_upload_field).
+ZIP_FILE = "zip_file"  # GeoNode 4.x
+BASE_FILE = "base_file"  # newer GeoNodes
+
 DATASET_MIME_TYPES = {
     "zip": "application/zip",
     "shp": "application/octet-stream",
@@ -291,6 +295,7 @@ class GeoNodeClient:
         charset: str = "UTF-8",
         title: str | None = None,
         abstract: str | None = None,
+        zip_field: str = ZIP_FILE,
     ) -> dict[str, Any]:
         """Upload a dataset file, streamed as it comes (never held whole).
 
@@ -302,6 +307,7 @@ class GeoNodeClient:
             charset: Character encoding of the dataset
             title: Optional dataset title
             abstract: Optional dataset abstract/description
+            zip_field: Where this GeoNode takes a zip (zip_upload_field)
 
         Returns:
             Upload response dict with execution_id and redirect_to
@@ -313,7 +319,7 @@ class GeoNodeClient:
         if abstract:
             fields["abstract"] = abstract
         mime = DATASET_MIME_TYPES.get(ext, "application/octet-stream")
-        if ext != "zip":
+        if ext != "zip" or zip_field == BASE_FILE:
             return self._post_file(
                 "/uploads/upload",
                 fields,
@@ -325,8 +331,7 @@ class GeoNodeClient:
         # GeoNode 4.x only unzips a zip sent as zip_file, then puts the .shp
         # it finds in place of base_file - which must still be there and
         # not empty, but isn't read. The zip can't be sent twice in one
-        # pass, so base_file is a 1-byte stand-in. (Checked on GeoHosting's
-        # GeoNode 4.x; newer GeoNodes that dropped zip_file aren't covered.)
+        # pass, so base_file is a 1-byte stand-in.
         fields["store_spatial_files"] = "true"
         return self._post_file(
             "/uploads/upload",
@@ -337,6 +342,31 @@ class GeoNodeClient:
             response_timeout,
             small_files={("base_file", filename, mime): b"\0"},
         )
+
+    def zip_upload_field(self) -> str:
+        """Where this GeoNode takes a zipped dataset: ZIP_FILE or BASE_FILE.
+
+        GeoNode 4.x unzips only a zip sent as zip_file; newer GeoNodes dropped
+        zip_file and take the zip as base_file. GeoNode publishes no version,
+        so ask it: a 1-byte "zip" as base_file is refused by 4.x as "No
+        handlers found" (it looks for a handler by extension first), and by a
+        newer GeoNode as an invalid zip (it checks zips first). Either way
+        nothing is created. When it can't tell, 4.x is assumed.
+        """
+        try:
+            response = self.client.post(
+                "/uploads/upload",
+                files={"base_file": ("cloudbench-probe.zip", b"\0", "application/zip")},
+            )
+        except httpx.HTTPError:
+            return ZIP_FILE
+        if response.status_code < 400:
+            return ZIP_FILE  # not expected: a refusal is what tells
+        if "no handlers found" in response.text.lower():
+            return ZIP_FILE
+        if response.status_code in (400, 422) and "zip" in response.text.lower():
+            return BASE_FILE
+        return ZIP_FILE
 
     def upload_document(
         self,

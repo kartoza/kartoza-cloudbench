@@ -236,10 +236,19 @@ upload endpoints don't.
 - **GeoNode:** the multipart body (form fields, file part, closing boundary) is built by hand
   so its exact `Content-Length` is known before the file arrives. The file is streamed
   inside the file part. Dataset and document uploads both work this way.
-- **GeoNode zipped shapefiles:** GeoNode 4.x only unzips a zip sent as `zip_file`, then puts
-  the `.shp` it finds in place of `base_file`. `base_file` must still be present and not
-  empty, but its content isn't read. A stream can send the zip only once, so the zip goes
-  as `zip_file` and `base_file` is a 1-byte stand-in. (The old code sent the zip twice.)
+- **GeoNode zipped shapefiles:** GeoNodes differ in where they take a zip, and a stream can
+  send it only once:
+  - GeoNode 4.x unzips only a zip sent as `zip_file`, then puts the `.shp` it finds in place
+    of `base_file`, which must still be present and not empty, but isn't read. So the zip goes
+    as `zip_file` with a 1-byte stand-in `base_file`. (The old code sent the zip twice.)
+  - Newer GeoNodes (`master`) dropped `zip_file` and take the zip as `base_file`.
+
+  GeoNode publishes no version, so before a zipped dataset upload CloudBench asks the GeoNode
+  itself (`GeoNodeClient.zip_upload_field`). It sends a 1-byte "zip" as `base_file`. GeoNode
+  4.x refuses it with "No handlers found", because it looks for a handler by extension first.
+  A newer GeoNode refuses it as an invalid zip, because it checks zips first. Either way
+  nothing is created. When the answer is neither, 4.x is assumed. It's asked on every zip
+  upload, since GeoNodes differ and one can be upgraded.
 - **GeoNode size limit:** before anything is sent, CloudBench reads
   `GET /api/v2/upload-size-limits/` (`dataset_upload_size` / `document_upload_size`,
   `file_upload_handler`). A file over the limit is refused with `413` and a message saying
@@ -321,8 +330,9 @@ The PostgreSQL upload (`pg/upload/complete`) keeps the current disk-based flow
   - GeoServer: a 12.8 MB GeoTIFF (3 chunks) became a coverage store with the full
     2000×1600 grid; a zipped shapefile became a data store. Both published as layers.
   - GeoNode: the GeoTIFF dataset imported (`GeoTiffFileHandler`, finished); the zipped
-    shapefile imported with both points (via `zip_file` + stand-in `base_file`); a `.txt`
-    document was created.
+    shapefile imported with both points (via `zip_file` + stand-in `base_file`, the way
+    detected by asking the GeoNode); a `.txt` document was created. The probe alone created
+    nothing.
   - Everything created was deleted afterwards.
 
 ## Known limits
@@ -335,13 +345,8 @@ The PostgreSQL upload (`pg/upload/complete`) keeps the current disk-based flow
   Several replicas would need sticky sessions per upload (or Redis, see A2).
 - **Deploys and restarts** cut off running uploads, as they do for conversions.
 - **GeoNode's own upload limit** still applies (100 MB by default, 5 GB on GeoHosting).
-- **Newer GeoNodes** (`master`) dropped `zip_file` and take a zip as `base_file`; zipped
-  shapefiles to those aren't covered (the stand-in `base_file` would be read). GeoNode
-  publishes no version to choose by.
+- **Zip detection on newer GeoNodes** follows their source (`validate_base_file` refuses an
+  invalid zip before any handler runs) but hasn't been run against one: there's no newer
+  GeoNode to test on.
 - **Document types** are GeoNode's: e.g. `.geojson` is refused as a document by
   GeoHosting's GeoNode ("not in the supported extensions list").
-
-## Open questions
-
-1. Zipped shapefiles to newer GeoNodes (no `zip_file`): needed? If so, a per-connection
-   setting could choose how zips are sent.

@@ -28,7 +28,7 @@ from rest_framework.views import APIView
 
 from apps.core.config import get_cache_dir
 from apps.core.exceptions import GeoServerError, UploadError
-from apps.geonode.client import get_geonode_client
+from apps.geonode.client import ZIP_FILE, get_geonode_client
 from apps.geoserver.client import get_geoserver_client, upload_store_type
 
 from . import relay
@@ -334,11 +334,25 @@ def _geonode_sender(request, data: dict, filename: str, size: int, response_time
         )
     title = data.get("title") or None
     abstract = data.get("abstract") or None
+    zipped_dataset = upload_type == "dataset" and filename.lower().endswith(".zip")
+    # Asked each time: GeoNodes differ, and one can be upgraded.
+    zip_field = client.zip_upload_field() if zipped_dataset else ZIP_FILE
 
     def send(content):
-        upload = client.upload_document if upload_type == "document" else client.upload_dataset
         try:
-            return upload(content, filename, size, response_timeout, title=title, abstract=abstract)
+            if upload_type == "document":
+                return client.upload_document(
+                    content, filename, size, response_timeout, title=title, abstract=abstract
+                )
+            return client.upload_dataset(
+                content,
+                filename,
+                size,
+                response_timeout,
+                title=title,
+                abstract=abstract,
+                zip_field=zip_field,
+            )
         except httpx.TransportError as e:
             raise UploadError(f"Lost the connection to GeoNode: {e}") from e
 
