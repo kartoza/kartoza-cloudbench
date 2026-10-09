@@ -12,6 +12,7 @@ Uploads to GeoServer/GeoNode don't use these: they're relayed straight to the
 target, never stored (RelayUploadView and below, apps/upload/relay.py).
 """
 
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -35,6 +36,7 @@ from . import relay
 from .models import UploadSession
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 STORE_NAME = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
@@ -337,6 +339,8 @@ def _geonode_sender(request, data: dict, filename: str, size: int, response_time
     zipped_dataset = upload_type == "dataset" and filename.lower().endswith(".zip")
     # Asked each time: GeoNodes differ, and one can be upgraded.
     zip_field = client.zip_upload_field() if zipped_dataset else ZIP_FILE
+    if zipped_dataset:
+        logger.info("GeoNode %s takes a zipped dataset as %s", client.url, zip_field)
 
     def send(content):
         try:
