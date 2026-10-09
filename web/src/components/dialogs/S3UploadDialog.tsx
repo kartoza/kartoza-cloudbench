@@ -55,11 +55,14 @@ const LICENSE_CHOICES = [
 ]
 
 // Helper to format file size
-// e.g. "cx23 · fsn1 · 2 vCPU / 4 GB · 0.0060 EUR/h"
+// e.g. "cx23 · fsn1 · 2 vCPU / 4 GB · 40 GB disk · 0.0060 EUR/h"
 function serverLabel(server: CloudNativeGISServerType): string {
-  const { cores, memory } = server.specifications as { cores?: number; memory?: number }
+  const { cores, memory, disk } = server.specifications as {
+    cores?: number; memory?: number; disk?: number
+  }
   const spec = cores && memory ? ` · ${cores} vCPU / ${memory} GB` : ''
-  return `${server.type} · ${server.location}${spec} · ${server.price} ${server.currency}/h`
+  const storage = disk ? ` · ${disk} GB disk` : ''
+  return `${server.type} · ${server.location}${spec}${storage} · ${server.price} ${server.currency}/h`
 }
 
 function formatFileSize(bytes: number): string {
@@ -1389,7 +1392,8 @@ export default function S3UploadDialog() {
                 isDisabled={
                   !selectedFile ||
                   shapefileBlocked ||
-                  (convertToCloudNative && !!targetFormat && !canConvert(targetFormat))
+                  (convertToCloudNative && !!targetFormat && !canConvert(targetFormat)) ||
+                  (!!toolStatus?.cloudnativegis?.onDemand && !pickedServerId)
                 }
                 borderRadius="lg"
                 px={6}
