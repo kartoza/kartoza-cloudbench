@@ -327,6 +327,9 @@ CLOUDBENCH_FRAME_ANCESTORS = [
     origin for origin in os.environ.get("CLOUDBENCH_FRAME_ANCESTORS", "").split(",") if origin
 ]
 
+# DuckDB queries on S3 data (apps/s3/duckdb.py): the most memory one query may use.
+DUCKDB_MEMORY_LIMIT = os.environ.get("DUCKDB_MEMORY_LIMIT", "1GB")
+
 # Celery
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
