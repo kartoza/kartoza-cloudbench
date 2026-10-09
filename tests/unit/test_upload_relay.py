@@ -281,6 +281,7 @@ def geoserver():
 @pytest.fixture
 def geonode():
     client = MagicMock(spec=GeoNodeClient)
+    client.url = "http://geonode"
     client.get_upload_size_limit.return_value = None
     target = Target(result={"execution_id": "e1"})
     client.upload_dataset.side_effect = lambda content, *_args, **_kwargs: target.send(content)
