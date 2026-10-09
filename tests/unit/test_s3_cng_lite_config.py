@@ -140,11 +140,11 @@ def test_on_demand_unavailable_without_an_enabled_server_type(geohosting):
     assert availability == {"available": False, "onDemand": True, "servers": []}
 
 
-def test_on_demand_unavailable_when_none_is_in_stock(geohosting):
+def test_on_demand_available_when_none_is_in_stock(geohosting):
     out_of_stock = {**CX23, "available": False}
     availability, _ = on_demand_availability({"healthy": True}, [out_of_stock])
-    # Still listed, to show it's out of stock.
-    assert availability == {"available": False, "onDemand": True, "servers": [out_of_stock]}
+    # Listed, to show it's out of stock.
+    assert availability == {"available": True, "onDemand": True, "servers": [out_of_stock]}
 
 
 def test_on_demand_available_when_one_is_in_stock(geohosting):

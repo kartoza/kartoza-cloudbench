@@ -109,4 +109,52 @@ describe('S3UploadDialog', () => {
     expect(convert).toBe(true)
     expect(targetFormat).toBe('copc')
   })
+
+  describe('on demand', () => {
+    const cx23 = {
+      id: 72, type: 'cx23', location: 'hel1', specifications: { cores: 2, memory: 4, disk: 40 },
+      currency: 'EUR', price: '0.0106',
+    }
+
+    async function uploadButton(servers: object[]) {
+      api.getConversionToolStatus.mockResolvedValue({
+        cloudnativegis: { available: true, onDemand: true, servers },
+      })
+      useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
+      render(
+        <ChakraProvider>
+          <QueryClientProvider client={new QueryClient()}>
+            <S3UploadDialog />
+          </QueryClientProvider>
+        </ChakraProvider>
+      )
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, {
+        target: { files: [new File(['II*\u0000'], 'relief.tif', { type: 'image/tiff' })] },
+      })
+      await screen.findByText('Conversion server')
+      return screen.findByRole('button', { name: 'Upload' })
+    }
+
+    it('disables Upload without a conversion server to pick', async () => {
+      const upload = await uploadButton([{ ...cx23, available: false }])
+      expect(upload).toBeDisabled()
+    })
+
+    it('lists each server with its disk', async () => {
+      await uploadButton([{ ...cx23, available: true }])
+      expect(
+        screen.getByRole('option', { name: 'cx23 · hel1 · 2 vCPU / 4 GB · 40 GB disk · 0.0106 EUR/h' })
+      ).toBeInTheDocument()
+    })
+
+    it('enables Upload with one in stock, and sends it', async () => {
+      const upload = await uploadButton([{ ...cx23, available: false }, { ...cx23, id: 8, available: true }])
+      await waitFor(() => expect(upload).toBeEnabled())
+      await userEvent.click(upload)
+
+      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(8)
+    })
+  })
 })

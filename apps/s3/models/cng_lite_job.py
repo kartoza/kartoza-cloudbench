@@ -207,9 +207,9 @@ class CngLiteJob(models.Model):
         CLOUDNATIVEGIS_URL answers its /health check; no servers. With it:
         available if GeoHosting, which starts the servers, can (it reaches
         the Hetzner Cloud API, and has a snapshot to start them from) and
-        has a server type enabled, and in stock at Hetzner, to start them as
-        - `servers`, the enabled types, cheapest first, each with whether
-        it's in stock (`available`).
+        has a server type enabled to start them as, even if none is in stock
+        at Hetzner - `servers`, the enabled types, cheapest first, each with
+        whether it's in stock (`available`).
         """
         if not settings.CLOUDNATIVEGIS_ON_DEMAND:
             return {
@@ -236,10 +236,9 @@ class CngLiteJob(models.Model):
             return unavailable
         if not servers:
             logger.warning("GeoHosting has no server type enabled for CloudNativeGIS servers.")
-        in_stock = any(server.get("available") for server in servers)
-        if servers and not in_stock:
+        if servers and not any(server.get("available") for server in servers):
             logger.warning("None of GeoHosting's CloudNativeGIS server types is in stock.")
-        return {"available": in_stock, "onDemand": True, "servers": servers}
+        return {"available": bool(servers), "onDemand": True, "servers": servers}
 
     # ---------------------------------
     # STEP 2
