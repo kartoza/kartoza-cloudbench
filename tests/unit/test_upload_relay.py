@@ -385,6 +385,31 @@ def test_upload_to_geonode(authenticated_api_client, geonode):
     assert geonode.upload_dataset.call_args.kwargs["title"] == "DEM"
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("field", ["zip_file", "base_file"])
+def test_a_zip_goes_where_the_geonode_takes_it(authenticated_api_client, geonode, field):
+    geonode.zip_upload_field.return_value = field
+    api = authenticated_api_client
+    session_id = api.post(
+        "/api/upload/relay",
+        {"target": "geonode", "connectionId": "g1", "filename": "roads.zip", "fileSize": 3},
+        format="json",
+    ).json()["sessionId"]
+    put_chunk(api, session_id, 0, b"zip")
+    poll(api, session_id, "completed")
+    assert geonode.upload_dataset.call_args.kwargs["zip_field"] == field
+
+
+@pytest.mark.django_db
+def test_only_a_zipped_dataset_asks(authenticated_api_client, geonode):
+    authenticated_api_client.post(
+        "/api/upload/relay",
+        {"target": "geonode", "connectionId": "g1", "filename": "dem.tif", "fileSize": 3},
+        format="json",
+    )
+    geonode.zip_upload_field.assert_not_called()
+
+
 @pytest.mark.django_db
 def test_too_big_for_geonode_is_refused_up_front(authenticated_api_client, geonode):
     geonode.get_upload_size_limit.side_effect = lambda slug: {
