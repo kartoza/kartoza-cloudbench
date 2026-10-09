@@ -21,12 +21,6 @@ urlpatterns = [
         views.GeoNodeConnectionDetailView.as_view(),
         name="geonode-connection-detail",
     ),
-    # Upload
-    path(
-        "geonode/upload/complete",
-        views.GeoNodeUploadCompleteView.as_view(),
-        name="geonode-upload-complete",
-    ),
     # Remote services
     path(
         "geonode/connections/<str:conn_id>/remote-services",

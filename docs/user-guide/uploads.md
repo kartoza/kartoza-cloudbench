@@ -23,21 +23,28 @@ CloudBench supports uploading geospatial data files directly to GeoServer.
 4. Monitor upload progress
 5. Layer is automatically published
 
-### Chunked Uploads
+### Large Files
 
-Large files are automatically uploaded in chunks:
+Files go up in 5 MB chunks and CloudBench passes each one straight on to
+GeoServer (or GeoNode): nothing is stored on CloudBench, so a file can be bigger
+than its disk.
 
-- Default chunk size: 5 MB
-- Progress tracking per chunk
-- Resume capability on failure
-- Files up to 10 GB supported
+- Files up to 10 GB.
+- If the connection drops, a chunk is sent again automatically for about
+  30 seconds ("Connection lost — retrying…"). After a longer break, or if the
+  page is reloaded, the upload has to start over: GeoServer and GeoNode can't
+  continue a partial upload.
+- Uploads can't be paused.
+- GeoNode accepts files up to its own upload size limit (100 MB unless its
+  administrator raised it, under **Upload size limits**). A bigger file is
+  refused before it's sent.
 
 ## Upload Process
 
-1. **Initialize**: Create upload session
-2. **Upload chunks**: Send file in pieces
-3. **Assemble**: Combine chunks on server
-4. **Publish**: Create store and layer in GeoServer
+1. **Start**: CloudBench checks the connection, workspace and size limit, and opens
+   the upload to GeoServer/GeoNode
+2. **Upload chunks**: each one is passed on as it arrives
+3. **Publish**: GeoServer creates the store and layer (GeoNode imports the dataset)
 
 ## Shapefile Requirements
 
@@ -105,9 +112,10 @@ GeoTIFF requirements:
 
 ### Upload Fails
 
-1. Check file size limits
+1. Check file size limits (GeoNode's own limit too)
 2. Verify file format is supported
-3. Check GeoServer logs for errors
+3. "No data came for 60 seconds": the connection was down too long; upload again
+4. Check GeoServer/GeoNode logs for errors
 
 ### Layer Not Visible
 

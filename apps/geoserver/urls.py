@@ -125,20 +125,4 @@ urlpatterns = [
         views.LayerGroupDetailView.as_view(),
         name="layergroup-detail",
     ),
-    # Chunked upload → background task flow
-    path(
-        "upload/complete/<str:conn_id>/<str:workspace>",
-        views.GeoServerUploadCompleteView.as_view(),
-        name="geoserver-upload-complete",
-    ),
-    path(
-        "upload/start/<str:conn_id>/<str:workspace>",
-        views.GeoServerUploadStartView.as_view(),
-        name="geoserver-upload-start",
-    ),
-    path(
-        "upload/status/<str:job_id>",
-        views.GeoServerUploadStatusView.as_view(),
-        name="geoserver-upload-status",
-    ),
 ]

@@ -17,53 +17,30 @@ import {
   useToast,
   useColorModeValue,
   Divider,
-  Spinner,
   Input,
   FormControl,
   FormLabel,
 } from '@chakra-ui/react'
-import {
-  FiFile,
-  FiCheck,
-  FiX,
-  FiUploadCloud,
-  FiLayers,
-  FiDatabase,
-  FiCheckCircle,
-  FiPause,
-  FiPlay,
-  FiUpload,
-} from 'react-icons/fi'
+import { FiFile, FiUploadCloud, FiLayers, FiCheckCircle, FiUpload } from 'react-icons/fi'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import { useTreeStore } from '../../stores/treeStore'
 import { useConnectionStore } from '../../stores/connectionStore'
-import * as api from '../../api'
-import {
-  initUploadSession,
-  uploadChunk,
-  cancelUpload,
-  completeGeoServerUpload,
-  CHUNK_SIZE,
-} from '../../api/chunkedUpload'
+import { cancelRelayUpload, relayUpload } from '../../api/relayUpload'
 
 interface GeoServerUploadResult {
   label: string
-  status: 'completed' | 'failed'
   storeName?: string
   storeType?: string
-  error?: string
 }
 
-type UploadPhase =
-  | 'idle'
-  | 'chunking'
-  | 'finalizing'
-  | 'ready'
-  | 'uploading_gs'
-  | 'done'
-  | 'error'
-  | 'cancelled'
+type UploadPhase = 'idle' | 'chunking' | 'finalizing' | 'done' | 'error' | 'cancelled'
+
+// Shown while a failed chunk waits to be sent again.
+interface RetryNotice {
+  attempt: number
+  delaySeconds: number
+}
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -109,18 +86,16 @@ export default function UploadDialog() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [storeName, setStoreName] = useState('')
   const [phase, setPhase] = useState<UploadPhase>('idle')
-  const [isPaused, setIsPaused] = useState(false)
+  const [retry, setRetry] = useState<RetryNotice | null>(null)
   const [chunksUploaded, setChunksUploaded] = useState(0)
   const [chunksTotal, setChunksTotal] = useState(0)
   const [chunkProgress, setChunkProgress] = useState(0)
   const [speedBps, setSpeedBps] = useState(0)
   const [etaSeconds, setEtaSeconds] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
-  const [assembledPath, setAssembledPath] = useState<string | null>(null)
   const [uploadResult, setUploadResult] = useState<GeoServerUploadResult | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
-  const isPausedRef = useRef(false)
   const isCancelledRef = useRef(false)
 
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
@@ -134,17 +109,15 @@ export default function UploadDialog() {
     setSelectedFile(null)
     setStoreName('')
     setPhase('idle')
-    setIsPaused(false)
+    setRetry(null)
     setChunksUploaded(0)
     setChunksTotal(0)
     setChunkProgress(0)
     setSpeedBps(0)
     setEtaSeconds(0)
     setErrorMsg('')
-    setAssembledPath(null)
     setUploadResult(null)
     sessionIdRef.current = null
-    isPausedRef.current = false
     isCancelledRef.current = false
   }, [])
 
@@ -156,7 +129,6 @@ export default function UploadDialog() {
     setSelectedFile(file)
     setPhase('idle')
     setErrorMsg('')
-    setAssembledPath(null)
     const base = file.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_')
     setStoreName(base)
   }, [])
@@ -170,21 +142,12 @@ export default function UploadDialog() {
     [handleFileSelect],
   )
 
-  const waitIfPaused = (): Promise<void> =>
-    new Promise((resolve) => {
-      const check = () => {
-        if (!isPausedRef.current || isCancelledRef.current) resolve()
-        else setTimeout(check, 200)
-      }
-      check()
-    })
-
   const handleUpload = async () => {
     if (!selectedFile || !connectionId || !workspace) return
 
     isCancelledRef.current = false
-    isPausedRef.current = false
     setPhase('chunking')
+    setRetry(null)
     setChunksUploaded(0)
     setChunkProgress(0)
     setSpeedBps(0)
@@ -192,52 +155,46 @@ export default function UploadDialog() {
 
     const totalBytes = selectedFile.size
     const startTime = Date.now()
-    let bytesUploaded = 0
 
     try {
-      const { sessionId, totalChunks } = await initUploadSession(
-        connectionId,
-        workspace,
-        selectedFile.name,
-        totalBytes,
-        CHUNK_SIZE,
+      // Straight to GeoServer as it's sent: nothing is stored on CloudBench.
+      const status = await relayUpload(
+        selectedFile,
+        { target: 'geoserver', connectionId, workspace, storeName },
+        {
+          onStarted: ({ sessionId, totalChunks }) => {
+            sessionIdRef.current = sessionId
+            setChunksTotal(totalChunks)
+          },
+          onChunkProgress: (pct) => setChunkProgress(pct),
+          onChunkSent: (sentChunks, sentBytes) => {
+            const elapsedSec = (Date.now() - startTime) / 1000
+            const speed = elapsedSec > 0 ? sentBytes / elapsedSec : 0
+            setRetry(null)
+            setChunksUploaded(sentChunks)
+            setChunkProgress(100)
+            setSpeedBps(speed)
+            setEtaSeconds(speed > 0 ? (totalBytes - sentBytes) / speed : 0)
+            if (sentBytes >= totalBytes) setPhase('finalizing')
+          },
+          onRetry: (attempt, delaySeconds) => setRetry({ attempt, delaySeconds }),
+          isCancelled: () => isCancelledRef.current,
+        },
       )
-      sessionIdRef.current = sessionId
-      setChunksTotal(totalChunks)
-
-      for (let i = 0; i < totalChunks; i++) {
-        if (isCancelledRef.current) break
-        await waitIfPaused()
-        if (isCancelledRef.current) break
-
-        const start = i * CHUNK_SIZE
-        const end = Math.min(start + CHUNK_SIZE, totalBytes)
-        const chunk = selectedFile.slice(start, end)
-        const chunkBytes = end - start
-
-        await uploadChunk(sessionId, i, chunk, (pct) => setChunkProgress(pct))
-
-        bytesUploaded += chunkBytes
-        const elapsedSec = (Date.now() - startTime) / 1000
-        const speed = elapsedSec > 0 ? bytesUploaded / elapsedSec : 0
-        const eta = speed > 0 ? (totalBytes - bytesUploaded) / speed : 0
-
-        setChunksUploaded(i + 1)
-        setChunkProgress(100)
-        setSpeedBps(speed)
-        setEtaSeconds(eta)
-      }
-
-      if (isCancelledRef.current) {
+      if (!status || status.state === 'cancelled') {
         setPhase('cancelled')
         return
       }
-
-      setPhase('finalizing')
-      const result = await completeGeoServerUpload(sessionId, connectionId, workspace, storeName)
-      setAssembledPath(result.path)
-      setStoreName(result.storeName)
-      setPhase('ready')
+      const result = status.result ?? {}
+      setUploadResult({
+        label: selectedFile.name,
+        storeName: result.storeName as string | undefined,
+        storeType: result.storeType as string | undefined,
+      })
+      setPhase('done')
+      queryClient.invalidateQueries({ queryKey: ['datastores', connectionId, workspace] })
+      queryClient.invalidateQueries({ queryKey: ['coveragestores', connectionId, workspace] })
+      queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
     } catch (err) {
       if (!isCancelledRef.current) {
         const msg = (err as Error).message
@@ -245,48 +202,16 @@ export default function UploadDialog() {
         setPhase('error')
         toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
+    } finally {
+      setRetry(null)
     }
-  }
-
-  const handlePause = () => {
-    isPausedRef.current = true
-    setIsPaused(true)
-  }
-  const handleResume = () => {
-    isPausedRef.current = false
-    setIsPaused(false)
   }
 
   const handleCancel = async () => {
     isCancelledRef.current = true
-    isPausedRef.current = false
-    setIsPaused(false)
     const sessId = sessionIdRef.current
-    if (sessId) {
-      try {
-        await cancelUpload(sessId)
-      } catch {
-        /* best effort */
-      }
-    }
+    if (sessId) await cancelRelayUpload(sessId)
     setPhase('cancelled')
-  }
-
-  const handleSendToGeoServer = async () => {
-    if (!connectionId || !workspace || !assembledPath || !storeName) return
-    setPhase('uploading_gs')
-
-    const label = selectedFile?.name ?? storeName
-    try {
-      const result = await api.startGeoServerUpload(connectionId, workspace, assembledPath, storeName)
-      setUploadResult({ label, status: 'completed', storeName: result.storeName, storeType: result.storeType })
-    } catch (err) {
-      setUploadResult({ label, status: 'failed', error: (err as Error).message })
-    }
-    setPhase('done')
-    queryClient.invalidateQueries({ queryKey: ['datastores', connectionId, workspace] })
-    queryClient.invalidateQueries({ queryKey: ['coveragestores', connectionId, workspace] })
-    queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
   }
 
   const handleClose = () => {
@@ -382,7 +307,7 @@ export default function UploadDialog() {
             )}
 
             {/* Store name input — shown once file selected */}
-            {selectedFile && (phase === 'idle' || phase === 'cancelled' || phase === 'error' || phase === 'ready') && (
+            {selectedFile && (phase === 'idle' || phase === 'cancelled' || phase === 'error') && (
               <FormControl>
                 <FormLabel fontSize="sm">Store Name</FormLabel>
                 <Input
@@ -390,13 +315,12 @@ export default function UploadDialog() {
                   value={storeName}
                   onChange={(e) => setStoreName(e.target.value)}
                   placeholder="e.g. my_store"
-                  isReadOnly={phase === 'ready'}
                 />
               </FormControl>
             )}
 
             {/* Upload progress */}
-            {(isUploading || phase === 'ready' || phase === 'uploading_gs') && selectedFile && (
+            {isUploading && selectedFile && (
               <Box
                 w="100%"
                 p={4}
@@ -439,10 +363,10 @@ export default function UploadDialog() {
                         <Progress
                           value={overallPct}
                           size="sm"
-                          colorScheme={isPaused ? 'yellow' : 'kartoza'}
+                          colorScheme={retry ? 'yellow' : 'kartoza'}
                           borderRadius="sm"
-                          hasStripe={!isPaused}
-                          isAnimated={!isPaused}
+                          hasStripe
+                          isAnimated
                         />
                       </Box>
                       {chunksTotal > 1 && (
@@ -459,28 +383,12 @@ export default function UploadDialog() {
                           />
                         </Box>
                       )}
+                      {retry && (
+                        <Text fontSize="xs" color="orange.500">
+                          Connection lost — retrying in {retry.delaySeconds}s (attempt {retry.attempt})
+                        </Text>
+                      )}
                       <HStack spacing={2} justify="flex-end">
-                        {!isPaused ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            colorScheme="yellow"
-                            onClick={handlePause}
-                            leftIcon={<FiPause />}
-                          >
-                            Pause
-                          </Button>
-                        ) : (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            colorScheme="green"
-                            onClick={handleResume}
-                            leftIcon={<FiPlay />}
-                          >
-                            Resume
-                          </Button>
-                        )}
                         <Button size="xs" variant="ghost" colorScheme="red" onClick={handleCancel}>
                           Cancel
                         </Button>
@@ -491,25 +399,12 @@ export default function UploadDialog() {
                   {phase === 'finalizing' && (
                     <Box>
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>
-                        Assembling file…
+                        Waiting for GeoServer to create the store…
                       </Text>
                       <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>
                   )}
 
-                  {phase === 'ready' && (
-                    <Text fontSize="sm" color="green.600" fontWeight="500">
-                      <Icon as={FiCheck} mr={1} />
-                      File ready — click "Send to GeoServer" to start import
-                    </Text>
-                  )}
-
-                  {phase === 'uploading_gs' && (
-                    <HStack spacing={2} color="blue.500">
-                      <Spinner size="sm" />
-                      <Text fontSize="sm">Uploading to GeoServer…</Text>
-                    </HStack>
-                  )}
                 </VStack>
               </Box>
             )}
@@ -537,25 +432,20 @@ export default function UploadDialog() {
                     bg={dropzoneBg}
                     borderRadius="md"
                     border="1px solid"
-                    borderColor={uploadResult.status === 'completed' ? 'green.200' : 'red.200'}
+                    borderColor="green.200"
                   >
                     <HStack justify="space-between">
                       <HStack spacing={2} flex="1" minW={0}>
-                        {uploadResult.status === 'completed'
-                          ? <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
-                          : <Icon as={FiX} color="red.500" flexShrink={0} />}
+                        <Icon as={FiCheckCircle} color="green.500" flexShrink={0} />
                         <Text fontSize="sm" fontWeight="500" noOfLines={1}>{uploadResult.label}</Text>
                         {uploadResult.storeType && (
                           <Badge colorScheme="blue" fontSize="xs">{uploadResult.storeType}</Badge>
                         )}
                       </HStack>
-                      <Badge colorScheme={uploadResult.status === 'completed' ? 'green' : 'red'} flexShrink={0}>
-                        {uploadResult.status}
+                      <Badge colorScheme="green" flexShrink={0}>
+                        completed
                       </Badge>
                     </HStack>
-                    {uploadResult.status === 'failed' && uploadResult.error && (
-                      <Text fontSize="xs" color="red.500" mt={1}>{uploadResult.error}</Text>
-                    )}
                   </Box>
                 </Box>
               </>
@@ -586,7 +476,7 @@ export default function UploadDialog() {
             <Button
               colorScheme="kartoza"
               isLoading
-              loadingText={phase === 'finalizing' ? 'Assembling…' : 'Uploading…'}
+              loadingText={phase === 'finalizing' ? 'Creating store…' : 'Uploading…'}
               borderRadius="lg"
               px={6}
             >
@@ -594,25 +484,6 @@ export default function UploadDialog() {
             </Button>
           )}
 
-          {/* Send to GeoServer button */}
-          {phase === 'ready' && (
-            <Button
-              colorScheme="green"
-              onClick={handleSendToGeoServer}
-              isDisabled={!storeName}
-              leftIcon={<FiDatabase />}
-              borderRadius="lg"
-              px={6}
-            >
-              Send to GeoServer
-            </Button>
-          )}
-
-          {phase === 'uploading_gs' && (
-            <Button colorScheme="green" isLoading loadingText="Uploading…" borderRadius="lg" px={6}>
-              Send to GeoServer
-            </Button>
-          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

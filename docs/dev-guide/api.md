@@ -123,22 +123,69 @@ GET /api/preview/{session_id}/api/metadata
 
 ## Upload
 
-### Initialize Upload
+### Upload to GeoServer or GeoNode
+
+The file goes up in chunks and is passed straight on to the target, never stored
+on CloudBench (see [Upload passthrough](upload-passthrough.md)).
+
+Start (checks the connection, workspace and GeoNode's size limit first):
+
+```http
+POST /api/upload/relay
+Content-Type: application/json
+
+{
+  "target": "geoserver",
+  "connectionId": "conn_123",
+  "workspace": "topp",
+  "storeName": "roads",
+  "filename": "roads.zip",
+  "fileSize": 31457280,
+  "chunkSize": 5242880
+}
+```
+
+For GeoNode, `"target": "geonode"` with `"uploadType": "dataset" | "document"`,
+and optionally `"title"` and `"abstract"`. Answers `201` with `sessionId`,
+`chunkSize` and `totalChunks`; `413` when GeoNode's upload limit is smaller
+than the file.
+
+Send each chunk in order, as the raw body:
+
+```http
+PUT /api/upload/relay/{sessionId}/chunks/{index}
+Content-Type: application/octet-stream
+
+<chunk bytes>
+```
+
+Answers `{"next": n}`. A chunk sent again (its answer was lost) is acknowledged
+and not sent twice. `409` when the upload failed or was cancelled, or the chunk
+is ahead of `next`; `410` when the upload is no longer running.
+
+Wait for the target's answer, or cancel:
+
+```http
+GET /api/upload/relay/{sessionId}
+DELETE /api/upload/relay/{sessionId}
+```
+
+`state` is `uploading`, `processing` (all sent, waiting for the target),
+`completed` (with `result`: GeoServer's store, or GeoNode's answer), `failed`
+(with `error`) or `cancelled`.
+
+### Chunked upload (PostgreSQL import)
 
 ```http
 POST /api/upload/init
 Content-Type: application/json
 
 {
-  "connectionId": "conn_123",
-  "workspace": "topp",
   "filename": "data.gpkg",
   "fileSize": 1048576,
   "chunkSize": 5242880
 }
 ```
-
-### Upload Chunk
 
 ```http
 POST /api/upload/chunk
@@ -149,16 +196,7 @@ chunkIndex: 0
 chunk: <binary data>
 ```
 
-### Complete Upload
-
-```http
-POST /api/upload/complete
-Content-Type: application/json
-
-{
-  "sessionId": "abc-123"
-}
-```
+Then `POST /api/pg/upload/complete` with `{"sessionId": "abc-123"}`.
 
 ## Error Responses
 
