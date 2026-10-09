@@ -26,6 +26,22 @@ afterEach(() => {
 // Close server after all tests
 afterAll(() => server.close())
 
+// user-event redefines HTMLElement.prototype.focus/blur as getter-only, and
+// happy-dom's prototype outlives a test file (vitest.config singleFork). In
+// the next file Chakra's focus-visible assigns HTMLElement.prototype.focus,
+// which then throws ("only a getter") and leaves React broken for every file
+// after it ("Should not already be working."). Make them assignable again.
+for (const name of ['focus', 'blur'] as const) {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+  if (descriptor?.get && !descriptor.set) {
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      writable: true,
+      value: descriptor.get.call(HTMLElement.prototype),
+    })
+  }
+}
+
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
