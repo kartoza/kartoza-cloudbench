@@ -2,6 +2,14 @@
 
 Provides functionality to query Parquet, GeoParquet, CSV, and JSON
 files stored in S3-compatible storage using DuckDB.
+
+Users send their own SQL, so every query runs on a fresh in-memory connection
+holding only that user's S3 credentials (a temporary secret), closed once the
+query is done: nothing it set, created or loaded reaches the next query. The
+connection can read s3:// and nothing else - no local files (CloudBench's
+database, its settings), no http(s) URLs (inside a cluster, those reach its
+internal services) - with a memory limit, and the query can't change any of
+it (lock_configuration).
 """
 
 import json
@@ -9,6 +17,7 @@ import threading
 from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
+from django.conf import settings
 from django.core.exceptions import ValidationError
 
 from .models import S3Connection
@@ -16,59 +25,83 @@ from .models import S3Connection
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
+EXTENSIONS = ("httpfs", "spatial")
+
+
+def _quote(value: str) -> str:
+    """A SQL string literal (CREATE SECRET takes no parameters)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
 
 class DuckDBQueryEngine:
     """Query engine for S3 data using DuckDB."""
 
     _instance: "DuckDBQueryEngine | None" = None
     _lock = threading.RLock()
-    _initialized: bool
+    _installed = False
 
     def __new__(cls) -> "DuckDBQueryEngine":
-        """Ensure singleton instance."""
+        """Ensure singleton instance (it holds no state but whether extensions are installed)."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self) -> None:
-        """Initialize DuckDB connection."""
-        if self._initialized:
+    def _install_extensions(self) -> None:
+        """Download the extensions once per process (connections only load them)."""
+        if DuckDBQueryEngine._installed:
             return
-
         with self._lock:
-            if self._initialized:
+            if DuckDBQueryEngine._installed:
                 return
+            conn = duckdb.connect(":memory:")
+            try:
+                for extension in EXTENSIONS:
+                    conn.execute(f"INSTALL {extension}")
+            finally:
+                conn.close()
+            DuckDBQueryEngine._installed = True
 
-            # Create in-memory DuckDB connection
-            self.conn = duckdb.connect(":memory:")
+    def connect(
+        self, connection_id: str | None = None, user: "User | None" = None
+    ) -> duckdb.DuckDBPyConnection:
+        """A connection for one query: S3 only, the user's credentials, locked."""
+        self._install_extensions()
+        conn = duckdb.connect(":memory:", config={"allow_persistent_secrets": False})
+        try:
+            for extension in EXTENSIONS:
+                conn.execute(f"LOAD {extension}")
+            if connection_id:
+                self.configure_s3(conn, connection_id, user)
+            conn.execute("SET allowed_directories=['s3://']")
+            conn.execute("SET enable_external_access=false")
+            conn.execute(f"SET memory_limit={_quote(settings.DUCKDB_MEMORY_LIMIT)}")
+            conn.execute("SET lock_configuration=true")
+        except Exception:
+            conn.close()
+            raise
+        return conn
 
-            # Install and load extensions
-            self.conn.execute("INSTALL httpfs")
-            self.conn.execute("LOAD httpfs")
-            self.conn.execute("INSTALL spatial")
-            self.conn.execute("LOAD spatial")
-
-            self._initialized = True
-
-    def configure_s3(self, connection_id: str, user: "User") -> None:
-        """Configure DuckDB for S3 access.
+    def configure_s3(
+        self, conn: duckdb.DuckDBPyConnection, connection_id: str, user: "User | None"
+    ) -> None:
+        """Give `conn` the S3 connection's credentials, as a temporary secret.
 
         Args:
+            conn: The query's DuckDB connection
             connection_id: S3 connection ID
             user: User the connection belongs to
         """
         try:
-            conn = S3Connection.objects.filter(owner=user, id=connection_id).first()
-        except (ValueError, ValidationError):
-            conn = None
-        if not conn:
+            s3 = S3Connection.objects.filter(owner=user, id=connection_id).first()
+        except (ValueError, ValidationError, TypeError):
+            s3 = None
+        if not s3:
             raise ValueError(f"S3 connection not found: {connection_id}")
 
         # Parse endpoint for DuckDB config
-        endpoint = conn.endpoint
+        endpoint = s3.endpoint
         if endpoint.startswith("http://"):
             endpoint = endpoint[7:]
             use_ssl = "false"
@@ -76,15 +109,18 @@ class DuckDBQueryEngine:
             endpoint = endpoint[8:]
             use_ssl = "true"
         else:
-            use_ssl = "true" if conn.use_ssl else "false"
+            use_ssl = "true" if s3.use_ssl else "false"
 
-        # Configure S3 settings
-        self.conn.execute(f"SET s3_region='{conn.region or 'us-east-1'}'")
-        self.conn.execute(f"SET s3_access_key_id='{conn.access_key}'")
-        self.conn.execute(f"SET s3_secret_access_key='{conn.secret_key}'")
-        self.conn.execute(f"SET s3_endpoint='{endpoint}'")
-        self.conn.execute(f"SET s3_use_ssl={use_ssl}")
-        self.conn.execute("SET s3_url_style='path'")
+        conn.execute(
+            "CREATE TEMPORARY SECRET s3 ("
+            "TYPE s3, "
+            f"KEY_ID {_quote(s3.access_key)}, "
+            f"SECRET {_quote(s3.secret_key)}, "
+            f"REGION {_quote(s3.region or 'us-east-1')}, "
+            f"ENDPOINT {_quote(endpoint)}, "
+            f"USE_SSL {use_ssl}, "
+            "URL_STYLE 'path')"
+        )
 
     def execute_query(
         self,
@@ -93,34 +129,36 @@ class DuckDBQueryEngine:
         limit: int = 1000,
         user: "User | None" = None,
     ) -> dict[str, Any]:
-        """Execute a DuckDB query.
+        """Execute a DuckDB query on a connection of its own.
 
         Args:
             query: SQL query
-            connection_id: Optional S3 connection ID to configure
+            connection_id: Optional S3 connection ID to read with
             user: User the connection belongs to
             limit: Maximum rows to return
 
         Returns:
             Dictionary with columns, rows, and metadata
         """
-        with self._lock:
-            if connection_id:
-                self.configure_s3(connection_id, user)
-
+        limit = int(limit)
+        conn = self.connect(connection_id, user)
+        try:
             # Add limit if not present in SELECT queries
             query_lower = query.lower().strip()
             if query_lower.startswith("select") and "limit" not in query_lower:
                 query = f"{query.rstrip(';')} LIMIT {limit}"
 
-            result = self.conn.execute(query)
+            result = conn.execute(query)
+            if result.description is None:  # a statement with no result set
+                return {"columns": [], "rows": [], "rowCount": 0}
 
             # Get column names
             columns = [desc[0] for desc in result.description]
 
-            # Fetch rows and convert to JSON-serializable format
+            # Fetch rows and convert to JSON-serializable format; never more
+            # than `limit`, whatever the query.
             rows = []
-            for row in result.fetchall():
+            for row in result.fetchmany(limit):
                 row_dict = {}
                 for i, col in enumerate(columns):
                     value = row[i]
@@ -139,6 +177,8 @@ class DuckDBQueryEngine:
                 "rows": rows,
                 "rowCount": len(rows),
             }
+        finally:
+            conn.close()
 
     def query_parquet(
         self,

@@ -129,14 +129,30 @@ class TestAIHelpers:
 
 @pytest.fixture
 def engine(monkeypatch):
-    """A DuckDB engine on a plain in-memory database (no extension downloads)."""
+    """A DuckDB engine whose queries run on plain connections (no extension downloads)."""
     ddb.DuckDBQueryEngine._instance = None
-    instance = ddb.DuckDBQueryEngine.__new__(ddb.DuckDBQueryEngine)
-    instance._initialized = True
-    instance.conn = duckdb.connect(":memory:")
-    ddb.DuckDBQueryEngine._instance = instance
+    instance = ddb.DuckDBQueryEngine()
+    opened = []
+
+    def plain(connection_id=None, user=None):
+        opened.append((connection_id, user))
+        return duckdb.connect(":memory:")
+
+    monkeypatch.setattr(instance, "connect", plain)
+    instance.opened = opened
     yield instance
     ddb.DuckDBQueryEngine._instance = None
+
+
+def sandboxed_engine():
+    """The real engine, if the DuckDB extensions are here (they download once)."""
+    ddb.DuckDBQueryEngine._instance = None
+    try:
+        engine = ddb.DuckDBQueryEngine()
+        engine.connect().close()
+    except duckdb.Error as e:
+        pytest.skip(f"DuckDB extensions unavailable: {e}")
+    return engine
 
 
 @pytest.mark.unit
@@ -157,11 +173,22 @@ class TestDuckDBEngine:
         result = engine.execute_query("SELECT * FROM range(50)", limit=3)
         assert result["rowCount"] == 3
 
-    def test_execute_query_configures_s3_when_connection_given(self, engine, monkeypatch):
-        seen = []
-        monkeypatch.setattr(engine, "configure_s3", lambda cid, user: seen.append((cid, user)))
+    def test_never_more_rows_than_the_limit(self, engine):
+        """A query that isn't a SELECT gets no LIMIT added, but is cut all the same."""
+        assert engine.execute_query("FROM range(50)", limit="4")["rowCount"] == 4
+
+    def test_a_statement_without_rows(self, engine):
+        assert engine.execute_query("SET threads=1")["rows"] == []
+
+    def test_each_query_has_its_own_connection(self, engine):
+        engine.execute_query("CREATE TABLE kept AS SELECT 1 AS i")
+        with pytest.raises(duckdb.CatalogException):
+            engine.execute_query("SELECT * FROM kept")
+        assert len(engine.opened) == 2
+
+    def test_execute_query_reads_with_the_connection_given(self, engine):
         engine.execute_query("SELECT 1", connection_id="c1", user=USER)
-        assert seen == [("c1", USER)]
+        assert engine.opened == [("c1", USER)]
 
     def test_query_builders(self, engine, monkeypatch):
         captured = []
@@ -214,55 +241,137 @@ class TestDuckDBEngine:
         assert result["features"][0]["geometry"] == {"type": "Point"}
 
     @pytest.mark.django_db
-    def test_configure_s3(self, engine, django_user_model):
-        engine.conn = MagicMock()
+    def test_configure_s3(self, django_user_model):
+        engine = ddb.DuckDBQueryEngine()
+        conn = MagicMock()
         owner = django_user_model.objects.create(username="alice")
 
-        def make(endpoint, region, use_ssl):
-            conn = S3Connection.objects.create(
+        def make(endpoint, region, use_ssl, secret="s"):
+            s3 = S3Connection.objects.create(
                 owner=owner,
                 name=endpoint,
                 endpoint=endpoint,
                 bucket="b",
                 access_key="k",
-                secret_key="s",
+                secret_key=secret,
                 region=region,
                 use_ssl=use_ssl,
             )
-            return str(conn.id)
+            return str(s3.id)
 
-        plain = make("http://minio:9000", "", True)
-        tls = make("https://s3.test", "eu", False)
-        bare = make("s3.test", "", False)
+        def secret_sql():
+            return conn.execute.call_args.args[0]
 
-        engine.configure_s3(plain, owner)
-        statements = [c.args[0] for c in engine.conn.execute.call_args_list]
-        assert "SET s3_endpoint='minio:9000'" in statements
-        assert "SET s3_use_ssl=false" in statements
-        assert "SET s3_region='us-east-1'" in statements
-        engine.conn.reset_mock()
-        engine.configure_s3(tls, owner)
-        assert "SET s3_use_ssl=true" in [c.args[0] for c in engine.conn.execute.call_args_list]
-        engine.configure_s3(bare, owner)
+        engine.configure_s3(conn, make("http://minio:9000", "", True), owner)
+        sql = secret_sql()
+        assert sql.startswith("CREATE TEMPORARY SECRET s3 (TYPE s3, ")
+        assert "ENDPOINT 'minio:9000'" in sql and "USE_SSL false" in sql
+        assert "REGION 'us-east-1'" in sql and "KEY_ID 'k'" in sql
+        engine.configure_s3(conn, make("https://s3.test", "eu", False), owner)
+        assert "USE_SSL true" in secret_sql() and "REGION 'eu'" in secret_sql()
+        # A quote in a credential can't end the string early.
+        engine.configure_s3(conn, make("s3.test", "", False, secret="a'b"), owner)
+        assert "SECRET 'a''b'" in secret_sql()
         with pytest.raises(ValueError, match="not found"):
-            engine.configure_s3("missing", owner)
+            engine.configure_s3(conn, "missing", owner)
         # Another user's connection is not visible.
         bob = django_user_model.objects.create(username="bob")
         with pytest.raises(ValueError, match="not found"):
-            engine.configure_s3(plain, bob)
+            engine.configure_s3(conn, make("s3.test", "", False), bob)
 
-    def test_init_loads_extensions(self, monkeypatch):
+    def test_connect_installs_once_then_loads_and_locks(self, monkeypatch, settings):
+        settings.DUCKDB_MEMORY_LIMIT = "512MB"
         ddb.DuckDBQueryEngine._instance = None
-        fake_conn = MagicMock()
-        monkeypatch.setattr(ddb.duckdb, "connect", lambda _p: fake_conn)
-        instance = ddb.DuckDBQueryEngine()
-        assert instance._initialized
-        assert [c.args[0] for c in fake_conn.execute.call_args_list] == [
+        monkeypatch.setattr(ddb.DuckDBQueryEngine, "_installed", False)
+        conns = []
+
+        def fake_connect(_path, config=None):
+            conns.append((MagicMock(), config))
+            return conns[-1][0]
+
+        monkeypatch.setattr(ddb.duckdb, "connect", fake_connect)
+        engine = ddb.DuckDBQueryEngine()
+        engine.connect()
+        engine.connect()
+        installer, (query, config), _ = conns[0][0], conns[1], conns[2]
+        assert [c.args[0] for c in installer.execute.call_args_list] == [
             "INSTALL httpfs",
-            "LOAD httpfs",
             "INSTALL spatial",
-            "LOAD spatial",
         ]
-        ddb.DuckDBQueryEngine()  # second init is a no-op
-        assert fake_conn.execute.call_count == 4
+        assert len(conns) == 3  # installed once, then one connection per query
+        assert config == {"allow_persistent_secrets": False}
+        assert [c.args[0] for c in query.execute.call_args_list] == [
+            "LOAD httpfs",
+            "LOAD spatial",
+            "SET allowed_directories=['s3://']",
+            "SET enable_external_access=false",
+            "SET memory_limit='512MB'",
+            "SET lock_configuration=true",
+        ]
         ddb.DuckDBQueryEngine._instance = None
+
+
+@pytest.mark.unit
+class TestDuckDBSandbox:
+    """What a user's own SQL can't do (real extensions; skipped without them)."""
+
+    @pytest.fixture
+    def sandbox(self):
+        engine = sandboxed_engine()
+        yield engine
+        ddb.DuckDBQueryEngine._instance = None
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "SELECT size FROM read_blob('/etc/hostname')",
+            "COPY (SELECT 1) TO '/tmp/cloudbench-duckdb-test.csv'",
+            "ATTACH '/tmp/cloudbench-duckdb-test.db'",
+            "SELECT * FROM read_csv('http://127.0.0.1:9/a.csv')",
+            "INSTALL postgres",
+        ],
+    )
+    def test_no_local_files_or_urls(self, sandbox, query):
+        with pytest.raises(duckdb.PermissionException):
+            sandbox.execute_query(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "SET enable_external_access=true",
+            "SET allowed_directories=['/']",
+            "SET memory_limit='100GB'",
+            "SET lock_configuration=false",
+        ],
+    )
+    def test_the_sandbox_cant_be_lifted(self, sandbox, query):
+        with pytest.raises(duckdb.InvalidInputException, match="locked"):
+            sandbox.execute_query(query)
+
+    @pytest.mark.django_db
+    def test_credentials_dont_reach_another_query(self, sandbox, django_user_model):
+        owner = django_user_model.objects.create(username="alice")
+        s3 = S3Connection.objects.create(
+            owner=owner,
+            name="minio",
+            endpoint="http://127.0.0.1:9",
+            bucket="b",
+            access_key="AKIA_ALICE",
+            secret_key="alices-secret",
+        )
+        # s3:// gets past the sandbox, with alice's credentials, to the network
+        # (nothing listens there).
+        with pytest.raises(duckdb.IOException, match="127.0.0.1:9"):
+            sandbox.execute_query(
+                "SELECT * FROM read_parquet('s3://b/a.parquet')", str(s3.id), user=owner
+            )
+        # Someone else's query, without a connection, sees none of it.
+        assert sandbox.execute_query("SELECT * FROM duckdb_secrets()")["rows"] == []
+        setting = sandbox.execute_query("SELECT current_setting('s3_secret_access_key') AS s")
+        assert setting["rows"] == [{"s": None}]
+        # Even alice's own query only sees her secret redacted.
+        [secret] = sandbox.execute_query(
+            "SELECT secret_string FROM duckdb_secrets()", str(s3.id), user=owner
+        )["rows"]
+        assert "alices-secret" not in secret["secret_string"]
+        assert "secret=redacted" in secret["secret_string"]
