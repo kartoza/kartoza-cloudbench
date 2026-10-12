@@ -32,6 +32,8 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.geohosting import GeoHostingClient, GeoHostingError
+
 from . import layer_groups, portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import (
@@ -53,6 +55,7 @@ from .geopackage_convert import start_geopackage_conversion as start_geopackage_
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
+    CngLiteInstanceServer,
     CngLiteJob,
     S3Connection,
 )
@@ -139,6 +142,43 @@ def _requested_hetzner_server_id(data):
     if hetzner_server_id <= 0:
         raise ValueError("Pick a server to run the conversion on.")
     return hetzner_server_id
+
+
+def _requested_server(data, user):
+    """The CngLiteJob fields for a conversion's on-demand server.
+
+    With `instanceServerId`, one of `user`'s running servers that isn't
+    auto_destroy (see S3ConversionServersView): the job runs on it, and
+    leaves it running. Otherwise a new one, started as `hetznerServerId`
+    (see _requested_hetzner_server_id), and deleted once it's done unless
+    `autoDestroy` is "false". Nothing without CLOUDNATIVEGIS_ON_DEMAND.
+    Raises ValueError for a server that can't be had.
+    """
+    if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+        return {}
+    instance_id = data.get("instanceServerId")
+    if instance_id:
+        try:
+            instance_id = uuid.UUID(str(instance_id))
+        except ValueError:
+            instance_id = None
+        server = (
+            CngLiteInstanceServer.objects.filter(
+                owner=user,
+                instance_id=instance_id,
+                status__in=CngLiteInstanceServer.RUNNING,
+                auto_destroy=False,
+            ).first()
+            if instance_id
+            else None
+        )
+        if server is None:
+            raise ValueError("That server can't run this conversion: pick another, or a new one.")
+        return {"instance_server": server, "hetzner_server_id": server.type_id, "auto_destroy": False}
+    return {
+        "hetzner_server_id": _requested_hetzner_server_id(data),
+        "auto_destroy": _requested_auto_destroy(data),
+    }
 
 
 def _clean_contact_email(value):
@@ -1011,6 +1051,25 @@ class S3ConversionToolsView(APIView):
         return Response({"tools": tools})
 
 
+class S3ConversionServersView(APIView):
+    """The user's running on-demand servers, to run a conversion on."""
+
+    def get(self, request):
+        """GET: {servers: [...]}, as GeoHosting has them now (see CngLiteInstanceServer.running_for).
+
+        The auto_destroy ones are listed too, but can't be picked (see
+        _requested_server). None without CLOUDNATIVEGIS_ON_DEMAND; 503 if
+        GeoHosting can't be asked.
+        """
+        if not settings.CLOUDNATIVEGIS_ON_DEMAND or not GeoHostingClient.is_configured():
+            return Response({"servers": []})
+        try:
+            servers = CngLiteInstanceServer.running_for(request.user)
+        except GeoHostingError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"servers": [server.to_dict() for server in servers]})
+
+
 # How long a finished conversion stays in the jobs list (the header's Jobs panel).
 RECENT_JOBS_WINDOW = timedelta(hours=24)
 RECENT_JOBS_LIMIT = 50
@@ -1027,6 +1086,7 @@ def _recent_conversion_jobs(user):
     """
     jobs = list(
         CngLiteJob.objects.filter(owner=user)
+        .select_related("instance_server")
         .filter(
             Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
             | Q(completed_at__gte=timezone.now() - RECENT_JOBS_WINDOW)
@@ -1191,8 +1251,7 @@ class S3UploadView(APIView):
                             license_id,
                             license_url,
                             replace=_wants_replace(request.data),
-                            hetzner_server_id=_requested_hetzner_server_id(request.data),
-                            auto_destroy=_requested_auto_destroy(request.data),
+                            **_requested_server(request.data, request.user),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -1217,8 +1276,7 @@ class S3UploadView(APIView):
                             license_id,
                             license_url,
                             replace=_wants_replace(request.data),
-                            hetzner_server_id=_requested_hetzner_server_id(request.data),
-                            auto_destroy=_requested_auto_destroy(request.data),
+                            **_requested_server(request.data, request.user),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                 except TargetExists as exc:
@@ -1314,8 +1372,7 @@ class S3MosaicUploadView(APIView):
                 license_id,
                 license_url,
                 replace=_wants_replace(request.data),
-                hetzner_server_id=_requested_hetzner_server_id(request.data),
-                auto_destroy=_requested_auto_destroy(request.data),
+                **_requested_server(request.data, request.user),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)
@@ -1356,8 +1413,7 @@ class S3GeoPackageInspectView(APIView):
                 license_id,
                 license_url,
                 replace=_wants_replace(request.data),
-                hetzner_server_id=_requested_hetzner_server_id(request.data),
-                auto_destroy=_requested_auto_destroy(request.data),
+                **_requested_server(request.data, request.user),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)

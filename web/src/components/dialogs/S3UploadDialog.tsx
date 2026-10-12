@@ -40,7 +40,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { CloudNativeGISServerType, ConversionJob } from '../../types'
-import { isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
+import { instanceServerLabel, isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
@@ -252,7 +252,25 @@ export default function S3UploadDialog() {
   // On demand: whether the conversion's server is deleted once it's done,
   // or kept running (and billed) after it.
   const [autoDestroy, setAutoDestroy] = useState(true)
-  const requestedAutoDestroy = onDemandServers.length > 0 ? autoDestroy : undefined
+  // On demand: the user's running servers. Picking one runs the conversion
+  // on it instead of starting a new one ("Create new server", the default);
+  // an auto destroy one is listed, but can't be picked.
+  const isOnDemand = !!toolStatus?.cloudnativegis?.onDemand
+  const { data: instanceServers = [] } = useQuery({
+    queryKey: ['conversionServers'],
+    queryFn: () => api.getConversionServers(),
+    enabled: isOpen && isOnDemand,
+  })
+  const [instanceServerId, setInstanceServerId] = useState('')
+  const pickedInstanceId = instanceServers.some(
+    (server) => server.instanceId === instanceServerId && !server.autoDestroy
+  )
+    ? instanceServerId
+    : ''
+  const isNewServer = !pickedInstanceId
+  const requestedHetznerServerId = isNewServer ? pickedServerId : undefined
+  const requestedAutoDestroy = isOnDemand && isNewServer ? autoDestroy : undefined
+  const requestedInstanceServerId = pickedInstanceId || undefined
   const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
   // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
@@ -459,7 +477,7 @@ export default function S3UploadDialog() {
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
           connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
-          pickedServerId, requestedAutoDestroy
+          requestedHetznerServerId, requestedAutoDestroy, requestedInstanceServerId
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -512,8 +530,9 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            pickedServerId,
-            requestedAutoDestroy
+            requestedHetznerServerId,
+            requestedAutoDestroy,
+            requestedInstanceServerId
           )
         : await api.uploadToS3(
             connectionId,
@@ -530,8 +549,9 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            convertToCloudNative ? pickedServerId : undefined,
-            convertToCloudNative ? requestedAutoDestroy : undefined
+            convertToCloudNative ? requestedHetznerServerId : undefined,
+            convertToCloudNative ? requestedAutoDestroy : undefined,
+            convertToCloudNative ? requestedInstanceServerId : undefined
           )
 
       setUploadResult({
@@ -926,11 +946,38 @@ export default function S3UploadDialog() {
                   </FormControl>
                 )}
 
-                {/* On-demand CloudNativeGIS: the server type the conversion runs on */}
-                {onDemandServers.length > 0 && (
+                {/* On-demand CloudNativeGIS: the server the conversion runs on - one
+                    already running, or a new one (its type, and whether it's
+                    deleted once the conversion is done) */}
+                {isOnDemand && (
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server</FormLabel>
+                    <Select
+                      value={pickedInstanceId}
+                      isDisabled={isUploading || isConverting || isInspecting}
+                      onChange={(e) => setInstanceServerId(e.target.value)}
+                      size="sm"
+                      borderRadius="lg"
+                    >
+                      <option value="">Create new server</option>
+                      {instanceServers.map((server) => (
+                        <option key={server.instanceId} value={server.instanceId} disabled={server.autoDestroy}>
+                          {instanceServerLabel(server)}
+                          {server.autoDestroy && ' — auto destroy'}
+                        </option>
+                      ))}
+                    </Select>
+                    {!isNewServer && (
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Runs on this server, and leaves it running.
+                      </Text>
+                    )}
+                  </FormControl>
+                )}
+                {isOnDemand && isNewServer && onDemandServers.length > 0 && (
                   <>
                   <FormControl>
-                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Conversion server</FormLabel>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server type</FormLabel>
                     <Select
                       value={pickedServerId}
                       isDisabled={isUploading || isConverting || isInspecting}
@@ -1421,7 +1468,7 @@ export default function S3UploadDialog() {
                   !selectedFile ||
                   shapefileBlocked ||
                   (convertToCloudNative && !!targetFormat && !canConvert(targetFormat)) ||
-                  (!!toolStatus?.cloudnativegis?.onDemand && !pickedServerId)
+                  (isOnDemand && isNewServer && !pickedServerId)
                 }
                 borderRadius="lg"
                 px={6}

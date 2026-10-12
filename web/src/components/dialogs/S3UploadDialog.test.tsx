@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const api = vi.hoisted(() => ({
   getConversionToolStatus: vi.fn(),
+  getConversionServers: vi.fn(),
   checkPortolanTarget: vi.fn(),
   uploadToS3: vi.fn(),
   uploadMosaic: vi.fn(),
@@ -116,10 +117,11 @@ describe('S3UploadDialog', () => {
       currency: 'EUR', price: '0.0106',
     }
 
-    async function uploadButton(servers: object[]) {
+    async function uploadButton(servers: object[], instanceServers: object[] = []) {
       api.getConversionToolStatus.mockResolvedValue({
         cloudnativegis: { available: true, onDemand: true, servers },
       })
+      api.getConversionServers.mockResolvedValue(instanceServers)
       useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
       render(
         <ChakraProvider>
@@ -132,7 +134,7 @@ describe('S3UploadDialog', () => {
       fireEvent.change(input, {
         target: { files: [new File(['II*\u0000'], 'relief.tif', { type: 'image/tiff' })] },
       })
-      await screen.findByText('Conversion server')
+      await screen.findByText('Server type')
       return screen.findByRole('button', { name: 'Upload' })
     }
 
@@ -154,9 +156,11 @@ describe('S3UploadDialog', () => {
       await userEvent.click(upload)
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      expect(api.uploadToS3.mock.calls[0].at(-2)).toBe(8)
-      // Auto destroy is on by default.
-      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(true)
+      const [hetznerServerId, autoDestroy, instanceServerId] = api.uploadToS3.mock.calls[0].slice(-3)
+      expect(hetznerServerId).toBe(8)
+      // A new server, auto destroyed by default.
+      expect(autoDestroy).toBe(true)
+      expect(instanceServerId).toBeUndefined()
     })
 
     it('keeps the server running with Auto destroy off', async () => {
@@ -168,7 +172,36 @@ describe('S3UploadDialog', () => {
       await userEvent.click(upload)
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(false)
+      expect(api.uploadToS3.mock.calls[0].at(-2)).toBe(false)
+    })
+
+    const kept = {
+      instanceId: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'ready', autoDestroy: false,
+      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 }, created: null, jobs: 1,
+    }
+    const destroyed = { ...kept, instanceId: 'bbbbbbbb-1111-2222-3333-444444444444', autoDestroy: true }
+
+    it('lists running servers, an auto destroy one disabled', async () => {
+      await uploadButton([{ ...cx23, available: true }], [kept, destroyed])
+      await screen.findByRole('option', { name: 'aaaaaaaa · 2 vCPU / 4 GB · 40 GB disk · 1 job' })
+      expect(screen.getByRole('option', { name: 'Create new server' })).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: 'bbbbbbbb · 2 vCPU / 4 GB · 40 GB disk · 1 job — auto destroy' })
+      ).toBeDisabled()
+    })
+
+    it('runs on a running server picked, without a new one', async () => {
+      const upload = await uploadButton([{ ...cx23, available: true }], [kept])
+      await screen.findByRole('option', { name: /^aaaaaaaa/ })
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Server' }), kept.instanceId)
+      // No server type or auto destroy to pick for it.
+      expect(screen.queryByText('Server type')).not.toBeInTheDocument()
+      expect(screen.queryByRole('checkbox', { name: 'Auto destroy' })).not.toBeInTheDocument()
+      await waitFor(() => expect(upload).toBeEnabled())
+      await userEvent.click(upload)
+
+      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+      expect(api.uploadToS3.mock.calls[0].slice(-3)).toEqual([undefined, undefined, kept.instanceId])
     })
   })
 })

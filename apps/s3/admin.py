@@ -72,10 +72,14 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "bucket",
         "status",
         "progress",
+        "instance_id",
+        "auto_destroy",
         "created_at",
         "completed_at",
     ]
-    list_filter = ["kind", "status"]
+    list_select_related = ["owner", "instance_server"]
+    ordering = ["-created_at"]
+    list_filter = ["kind", "status", "auto_destroy"]
     search_fields = [
         "id",
         "instance_server__instance_id",
@@ -116,6 +120,11 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     @admin.display(description="CloudNativeGIS API token")
     def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
         return mask_secret(obj.cloudnativegis_api_token)
+
+    @admin.display(description="Instance ID", ordering="instance_server__instance_id")
+    def instance_id(self, obj: CngLiteJob):
+        """Its on-demand server's GeoHosting id, if it has one."""
+        return obj.instance_server.instance_id if obj.instance_server_id else None
 
 
 class CngLiteInstanceServerJobInline(admin.TabularInline):

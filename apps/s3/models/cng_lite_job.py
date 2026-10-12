@@ -146,8 +146,10 @@ class CngLiteJob(models.Model):
     # job's server, from the enabled ones (see availability). Null without
     # on demand.
     hetzner_server_id = models.PositiveIntegerField(null=True, blank=True)
-    # CLOUDNATIVEGIS_ON_DEMAND: the server GeoHosting started for it, once
-    # GeoHosting has answered about one (see _provision_on_demand).
+    # CLOUDNATIVEGIS_ON_DEMAND: the server it runs on - one of its owner's
+    # running servers picked for it when it was uploaded, or the one
+    # GeoHosting started for it, once GeoHosting has answered about it (see
+    # _provision_on_demand).
     instance_server = models.ForeignKey(
         CngLiteInstanceServer,
         null=True,
@@ -301,7 +303,7 @@ class CngLiteJob(models.Model):
         a poll only if it says something new. Raises ValueError if
         GeoHosting refuses it or says it failed.
         """
-        if not self.hetzner_server_id:
+        if not self.hetzner_server_id and not self.instance_server_id:
             raise ValueError("No server was picked to run this conversion on.")
         geohosting = GeoHostingClient()
         log = self._geohosting_log()
@@ -335,7 +337,9 @@ class CngLiteJob(models.Model):
         has, for a server whose id is the job's own: asking again (e.g. the
         job resumed before GeoHosting's answer was saved) then gives that
         same server rather than starting another. One GeoHosting says is
-        gone (failed, deleted, deleting) is replaced by a new one.
+        gone (failed, deleted, deleting) is replaced by a new one - unless
+        it isn't auto_destroy (e.g. picked to run this job on): that fails
+        the job instead.
         """
         server_id = self.instance_server.instance_id if self.instance_server_id else self.id
         while True:
@@ -354,6 +358,10 @@ class CngLiteJob(models.Model):
                         f"CloudNativeGIS: {exc}"
                     ) from exc
                 gone = exc.status_code == 409 and "That server is" in str(exc)
+                if gone and self.instance_server_id and not self.instance_server.auto_destroy:
+                    raise ValueError(
+                        "The server picked for this conversion isn't running any more."
+                    ) from exc
                 if gone and server_id is not None:
                     # A new one, its id picked by GeoHosting.
                     server_id = None
@@ -481,4 +489,6 @@ class CngLiteJob(models.Model):
             "layers": self.layers,
             "startedAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+            # On demand: the server it runs (or ran) on.
+            "server": self.instance_server.to_dict() if self.instance_server_id else None,
         }

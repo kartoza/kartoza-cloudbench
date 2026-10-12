@@ -172,6 +172,7 @@ def start_conversion(
     replace=False,
     hetzner_server_id=None,
     auto_destroy=True,
+    instance_server=None,
 ):
     """Start converting an upload; raises TargetExists unless `replace` (see check_target)."""
     if not CngLiteJob.is_valid():
@@ -200,6 +201,7 @@ def start_conversion(
         replace_existing=replace,
         hetzner_server_id=hetzner_server_id,
         auto_destroy=auto_destroy,
+        instance_server=instance_server,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
@@ -252,6 +254,7 @@ def inspect_geopackage(
     replace=False,
     hetzner_server_id=None,
     auto_destroy=True,
+    instance_server=None,
 ):
     """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
 
@@ -289,6 +292,7 @@ def inspect_geopackage(
         replace_existing=replace,
         hetzner_server_id=hetzner_server_id,
         auto_destroy=auto_destroy,
+        instance_server=instance_server,
     )
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)

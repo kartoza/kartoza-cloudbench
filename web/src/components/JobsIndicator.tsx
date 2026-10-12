@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw, FiSquare, FiXCircle } from 'react-icons/fi'
 import * as api from '../api'
 import type { ConversionJob } from '../types'
-import { isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
+import { instanceServerLabel, isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
 
 // The header's list of conversions: they run on the server, so progress can
 // be followed from anywhere - after the upload dialog that started one is
@@ -58,7 +58,7 @@ function JobRow({ job }: { job: ConversionJob }) {
     <Box py={2.5} borderBottom="1px solid" borderColor="gray.100" _last={{ borderBottom: 'none' }}>
       <HStack justify="space-between" align="start" spacing={2}>
         <Box minW={0}>
-          <Text fontSize="sm" fontWeight="600" noOfLines={1}>
+          <Text fontSize="sm" fontWeight="600" noOfLines={1} mb="6px">
             {job.sourcePath}
           </Text>
           <Text fontSize="xs" color="gray.500">
@@ -110,6 +110,11 @@ function JobRow({ job }: { job: ConversionJob }) {
             </HStack>
           ))}
         </VStack>
+      )}
+      {job.server && (
+        <Text fontSize="xs" color="gray.500" mt={1} noOfLines={1}>
+          {instanceServerLabel(job.server)} - {job.server.status}
+        </Text>
       )}
     </Box>
   )

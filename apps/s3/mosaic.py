@@ -150,6 +150,7 @@ def start_mosaic(
     replace=False,
     hetzner_server_id=None,
     auto_destroy=True,
+    instance_server=None,
 ):
     """Check and stage an upload of several TIFFs, and start converting them as one mosaic.
 
@@ -184,6 +185,7 @@ def start_mosaic(
         replace_existing=replace,
         hetzner_server_id=hetzner_server_id,
         auto_destroy=auto_destroy,
+        instance_server=instance_server,
         message=f"Waiting to convert {len(names)} tiles",
     )
     job.source_key = sources_directory_key(output_key, job.id)

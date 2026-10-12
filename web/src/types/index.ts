@@ -615,6 +615,8 @@ export interface ConversionJob {
   completedAt?: string
   inputSize: number
   outputSize?: number
+  // On-demand CloudNativeGIS: the server it runs (or ran) on.
+  server?: CloudNativeGISInstanceServer | null
 }
 
 // Conversion tool info
@@ -642,6 +644,23 @@ export interface CloudNativeGISServerType {
   price: string
   // Whether Hetzner has it in stock in its location right now.
   available?: boolean | null
+}
+
+// One of the user's running on-demand CloudNativeGIS servers (GeoHosting's
+// HetznerServerInstance) a conversion can run on.
+export interface CloudNativeGISInstanceServer {
+  instanceId: string
+  // Only provisioning/ready ones are listed to run a conversion on; a
+  // job's server can be any.
+  status: 'provisioning' | 'ready' | 'deleting' | 'deleted' | 'failed'
+  // Deleted once the job it was started for is done: can't run another.
+  autoDestroy: boolean
+  // The CloudNativeGISServerType it was started as.
+  typeId: number | null
+  specification: Record<string, unknown> | null
+  created: string | null
+  // How many conversions have run on it.
+  jobs: number
 }
 
 export interface ConversionToolStatus {

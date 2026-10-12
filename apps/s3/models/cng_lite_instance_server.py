@@ -5,6 +5,7 @@ from django.db import models
 from django.utils.dateparse import parse_datetime
 
 from apps.core.fields import EncryptedCharField
+from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
 
 class CngLiteInstanceServer(models.Model):
@@ -22,6 +23,9 @@ class CngLiteInstanceServer(models.Model):
         DELETING = "deleting", "Deleting"
         DELETED = "deleted", "Deleted"
         FAILED = "failed", "Failed"
+
+    # Running: being started, or ready - what another job can still run on.
+    RUNNING = (Status.PROVISIONING, Status.READY)
 
     # GeoHosting's id for it: the `server_id` its API answers with, and
     # what it's asked for again by.
@@ -81,6 +85,44 @@ class CngLiteInstanceServer(models.Model):
             create_defaults={**values, "auto_destroy": auto_destroy},
         )
         return server
+
+    @classmethod
+    def running_for(cls, user):
+        """`user`'s running servers (provisioning or ready), as GeoHosting has them now.
+
+        Asks GeoHosting for them, saving each (see record) - one it didn't
+        know of before as auto_destroy, so it isn't offered to run another
+        job on - and asks again about the ones saved as running it didn't
+        list (deleted meanwhile, say). None if GeoHosting doesn't know
+        `user`. Raises GeoHostingError if GeoHosting can't be asked.
+        """
+        geohosting = GeoHostingClient()
+        try:
+            answers = geohosting.list_servers(user.get_username())
+        except GeoHostingError as exc:
+            if exc.status_code == 400:
+                return []
+            raise
+        running = [cls.record(answer, user) for answer in answers]
+        listed = [server.pk for server in running]
+        for server in cls.objects.filter(owner=user, status__in=cls.RUNNING).exclude(pk__in=listed):
+            answer = geohosting.get_server(server.instance_id)
+            if answer is None:
+                server.forget()
+            else:
+                cls.record(answer, user)
+        return [server for server in running if server.status in cls.RUNNING]
+
+    def to_dict(self):
+        return {
+            "instanceId": str(self.instance_id),
+            "status": self.status,
+            "autoDestroy": self.auto_destroy,
+            "typeId": self.type_id,
+            "specification": self.specification,
+            "created": self.created.isoformat() if self.created else None,
+            "jobs": self.jobs.count(),
+        }
 
     def forget(self):
         """Gone at GeoHosting (nothing to answer about it any more): deleted, token forgotten."""
