@@ -249,6 +249,10 @@ export default function S3UploadDialog() {
   const pickedServerId = inStockServers.some((server) => server.id === hetznerServerId)
     ? hetznerServerId
     : inStockServers[0]?.id
+  // On demand: whether the conversion's server is deleted once it's done,
+  // or kept running (and billed) after it.
+  const [autoDestroy, setAutoDestroy] = useState(true)
+  const requestedAutoDestroy = onDemandServers.length > 0 ? autoDestroy : undefined
   const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
   // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
@@ -455,7 +459,7 @@ export default function S3UploadDialog() {
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
           connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
-          pickedServerId
+          pickedServerId, requestedAutoDestroy
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -508,7 +512,8 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            pickedServerId
+            pickedServerId,
+            requestedAutoDestroy
           )
         : await api.uploadToS3(
             connectionId,
@@ -525,7 +530,8 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            convertToCloudNative ? pickedServerId : undefined
+            convertToCloudNative ? pickedServerId : undefined,
+            convertToCloudNative ? requestedAutoDestroy : undefined
           )
 
       setUploadResult({
@@ -922,6 +928,7 @@ export default function S3UploadDialog() {
 
                 {/* On-demand CloudNativeGIS: the server type the conversion runs on */}
                 {onDemandServers.length > 0 && (
+                  <>
                   <FormControl>
                     <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Conversion server</FormLabel>
                     <Select
@@ -939,9 +946,30 @@ export default function S3UploadDialog() {
                       ))}
                     </Select>
                     <Text fontSize="xs" color="gray.500" mt={1}>
-                      Started for this conversion only, and deleted once it&apos;s done. Billed per started hour.
+                      Started for this conversion. Billed per started hour, until it&apos;s deleted.
                     </Text>
                   </FormControl>
+                  <FormControl>
+                    <HStack justify="space-between">
+                      <FormLabel htmlFor="auto-destroy" mb={0} fontWeight="500" color="gray.700" fontSize="sm">
+                        Auto destroy
+                      </FormLabel>
+                      <Switch
+                        id="auto-destroy"
+                        isChecked={autoDestroy}
+                        isDisabled={isUploading || isConverting || isInspecting}
+                        onChange={(e) => setAutoDestroy(e.target.checked)}
+                        colorScheme="orange"
+                        size="sm"
+                      />
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      {autoDestroy
+                        ? 'Auto destroy will destroy the server when this job is done.'
+                        : 'The server keeps running (and billed) after this job is done.'}
+                    </Text>
+                  </FormControl>
+                  </>
                 )}
               </VStack>
 

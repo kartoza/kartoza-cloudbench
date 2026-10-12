@@ -44,6 +44,9 @@ class CngLiteInstanceServer(models.Model):
     error = models.TextField(blank=True, default="")
     # When Hetzner created it: it's billed from then until it's deleted.
     created = models.DateTimeField(null=True, blank=True)
+    # Whether it was started to be deleted once its job is done: from the
+    # job it was first asked for by (see CngLiteJob.auto_destroy).
+    auto_destroy = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -54,10 +57,11 @@ class CngLiteInstanceServer(models.Model):
         return f"{self.instance_id} ({self.status})"
 
     @classmethod
-    def record(cls, answer, owner):
+    def record(cls, answer, owner, auto_destroy=True):
         """Save GeoHosting's `answer` about a server (see GeoHostingClient), owned by `owner`.
 
-        Returns the server, created the first time GeoHosting tells of it.
+        Returns the server, created the first time GeoHosting tells of it -
+        with `auto_destroy`, which a later answer doesn't change.
         """
         picked = answer.get("server") or {}
         values = {
@@ -71,7 +75,11 @@ class CngLiteInstanceServer(models.Model):
         if picked:
             values["type_id"] = picked.get("id")
             values["specification"] = picked.get("specifications")
-        server, _ = cls.objects.update_or_create(instance_id=answer["server_id"], defaults=values)
+        server, _ = cls.objects.update_or_create(
+            instance_id=answer["server_id"],
+            defaults=values,
+            create_defaults={**values, "auto_destroy": auto_destroy},
+        )
         return server
 
     def forget(self):

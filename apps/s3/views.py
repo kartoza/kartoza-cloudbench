@@ -84,6 +84,14 @@ def _wants_replace(data):
     return str(data.get("replace", "false")).lower() == "true"
 
 
+def _requested_auto_destroy(data):
+    """Whether a conversion's on-demand server is deleted once it's done.
+
+    `autoDestroy`, true unless it's "false" (see CngLiteJob.auto_destroy).
+    """
+    return str(data.get("autoDestroy", "true")).lower() != "false"
+
+
 def _target_exists_response(exc):
     """409 for an upload that would overwrite an existing layer (see TargetExists)."""
     what = "layer group" if exc.is_group else "layer"
@@ -1184,6 +1192,7 @@ class S3UploadView(APIView):
                             license_url,
                             replace=_wants_replace(request.data),
                             hetzner_server_id=_requested_hetzner_server_id(request.data),
+                            auto_destroy=_requested_auto_destroy(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                     else:
@@ -1209,6 +1218,7 @@ class S3UploadView(APIView):
                             license_url,
                             replace=_wants_replace(request.data),
                             hetzner_server_id=_requested_hetzner_server_id(request.data),
+                            auto_destroy=_requested_auto_destroy(request.data),
                         )
                         message = "File accepted for CloudNativeGIS conversion"
                 except TargetExists as exc:
@@ -1305,6 +1315,7 @@ class S3MosaicUploadView(APIView):
                 license_url,
                 replace=_wants_replace(request.data),
                 hetzner_server_id=_requested_hetzner_server_id(request.data),
+                auto_destroy=_requested_auto_destroy(request.data),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)
@@ -1346,6 +1357,7 @@ class S3GeoPackageInspectView(APIView):
                 license_url,
                 replace=_wants_replace(request.data),
                 hetzner_server_id=_requested_hetzner_server_id(request.data),
+                auto_destroy=_requested_auto_destroy(request.data),
             )
         except TargetExists as exc:
             return _target_exists_response(exc)

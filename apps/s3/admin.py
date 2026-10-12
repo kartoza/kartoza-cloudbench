@@ -100,6 +100,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "masked_cloudnativegis_api_token",
         "hetzner_server_id",
         "instance_server",
+        "auto_destroy",
         "cng_job_id",
         "cng_results",
         "cng_errors",
@@ -143,10 +144,11 @@ class CngLiteInstanceServerAdmin(admin.ModelAdmin):
         "status",
         "type_id",
         "url",
+        "auto_destroy",
         "created",
         "updated_at",
     ]
-    list_filter = ["status"]
+    list_filter = ["status", "auto_destroy"]
     search_fields = ["instance_id", "owner__username", "url"]
     readonly_fields = [
         "instance_id",
@@ -157,6 +159,7 @@ class CngLiteInstanceServerAdmin(admin.ModelAdmin):
         "type_id",
         "specification",
         "error",
+        "auto_destroy",
         "created",
         "created_at",
         "updated_at",

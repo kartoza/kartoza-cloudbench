@@ -60,6 +60,7 @@ def start_geopackage_conversion(job_id, user, layers=None, tables=None):
         license=vector.license,
         license_url=vector.license_url,
         hetzner_server_id=vector.hetzner_server_id,
+        auto_destroy=vector.auto_destroy,
         # Only the first job clears a confirmed-replace folder: this one
         # publishes beside the layers the vector job just put there.
         replace_existing=False,

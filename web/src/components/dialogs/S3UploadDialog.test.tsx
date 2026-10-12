@@ -154,7 +154,21 @@ describe('S3UploadDialog', () => {
       await userEvent.click(upload)
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(8)
+      expect(api.uploadToS3.mock.calls[0].at(-2)).toBe(8)
+      // Auto destroy is on by default.
+      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(true)
+    })
+
+    it('keeps the server running with Auto destroy off', async () => {
+      const upload = await uploadButton([{ ...cx23, available: true }])
+      expect(screen.getByText('Auto destroy will destroy the server when this job is done.')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Auto destroy' }))
+      expect(screen.getByText('The server keeps running (and billed) after this job is done.')).toBeInTheDocument()
+      await waitFor(() => expect(upload).toBeEnabled())
+      await userEvent.click(upload)
+
+      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+      expect(api.uploadToS3.mock.calls[0].at(-1)).toBe(false)
     })
   })
 })

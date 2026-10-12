@@ -155,6 +155,10 @@ class CngLiteJob(models.Model):
         on_delete=models.SET_NULL,
         related_name="jobs",
     )
+    # CLOUDNATIVEGIS_ON_DEMAND: whether GeoHosting is asked to delete its
+    # instance_server once it's done (see deprovision) - not, for a server
+    # kept for other jobs to run on.
+    auto_destroy = models.BooleanField(default=True)
     # The job's id on the CloudNativeGIS side, set once it has been submitted
     # there (see apps.s3.cng_lite.CNGProcessingClient.push) - what its status
     # is polled by.
@@ -359,7 +363,7 @@ class CngLiteJob(models.Model):
 
     def _keep_server(self, answer):
         """Save GeoHosting's `answer` about this job's server, linked as its instance_server."""
-        server = CngLiteInstanceServer.record(answer, self.owner)
+        server = CngLiteInstanceServer.record(answer, self.owner, self.auto_destroy)
         linked = self.instance_server_id == server.pk
         self.instance_server = server
         if not linked:
@@ -369,7 +373,8 @@ class CngLiteJob(models.Model):
     def deprovision(self):
         """Have GeoHosting delete this job's on-demand server, and wait until it's gone.
 
-        Only with CLOUDNATIVEGIS_ON_DEMAND. GeoHosting decides when deleting
+        Only with CLOUDNATIVEGIS_ON_DEMAND, and for an auto_destroy job: any
+        other leaves its server running. GeoHosting decides when deleting
         it has failed, so there's no deadline here. The server's token is
         forgotten once it's asked to delete it (GeoHosting no longer gives
         it out). A job without an instance_server asks for the server whose
@@ -377,7 +382,7 @@ class CngLiteJob(models.Model):
         got one. Raises GeoHostingError if GeoHosting refuses or can't be
         reached.
         """
-        if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+        if not self.deprovisions:
             return
         geohosting = GeoHostingClient()
         log = self._geohosting_log()
@@ -391,6 +396,11 @@ class CngLiteJob(models.Model):
             answer = geohosting.get_server(server_id, log=log)
         if self.instance_server_id:
             self.instance_server.forget()
+
+    @property
+    def deprovisions(self):
+        """Whether its server is deleted once it's done (see deprovision)."""
+        return settings.CLOUDNATIVEGIS_ON_DEMAND and self.auto_destroy
 
     def _geohosting_log(self):
         """A GeoHostingClient `log` callback recording into CngLiteJobLog.

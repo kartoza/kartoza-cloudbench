@@ -193,7 +193,10 @@ export async function uploadToS3(
   replace?: boolean,
   // On-demand CloudNativeGIS: the server type (tools' cloudnativegis.servers
   // id) the conversion's server is started as. Required there.
-  hetznerServerId?: number
+  hetznerServerId?: number,
+  // On-demand CloudNativeGIS: whether the server is deleted once the
+  // conversion is done (the default), or kept running.
+  autoDestroy?: boolean
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -224,6 +227,9 @@ export async function uploadToS3(
   }
   if (hetznerServerId !== undefined) {
     formData.append('hetznerServerId', String(hetznerServerId))
+  }
+  if (autoDestroy !== undefined) {
+    formData.append('autoDestroy', String(autoDestroy))
   }
 
   return postWithProgress(`${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}`, formData, onProgress)
@@ -276,7 +282,8 @@ export async function uploadMosaic(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number
+  hetznerServerId?: number,
+  autoDestroy?: boolean
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   files.forEach((file) => formData.append('files', file))
@@ -286,6 +293,7 @@ export async function uploadMosaic(
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
   if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
   return postWithProgress(`${API_BASE}/s3/mosaic/${encodeURIComponent(connectionId)}`, formData, onProgress)
 }
 
@@ -309,7 +317,8 @@ export async function inspectGeoPackage(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number
+  hetznerServerId?: number,
+  autoDestroy?: boolean
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
@@ -318,6 +327,7 @@ export async function inspectGeoPackage(
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
   if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }

@@ -221,9 +221,9 @@ def raise_if_cancelling(job_id):
 def finish_job(job, outcome, **values):
     """End `job` as `outcome` (completed/failed/cancelled), saving `values` with it.
 
-    With CLOUDNATIVEGIS_ON_DEMAND it's DEPROVISIONING first - `outcome` and
-    `values` saved, so a restart can carry on with just this - while
-    GeoHosting deletes its server. A failure to delete it is only logged:
+    With CLOUDNATIVEGIS_ON_DEMAND, for an auto_destroy job, it's
+    DEPROVISIONING first - `outcome` and `values` saved, so a restart can
+    carry on with just this - while GeoHosting deletes its server. A failure to delete it is only logged:
     the job's outcome stands either way. A job failing while it was being
     cancelled ends cancelled. Saved even while CANCELLING (unlike
     update_job): this is what ends it.
@@ -240,7 +240,7 @@ def finish_job(job, outcome, **values):
         outcome = CngLiteJobStatus.CANCELLED
         values = {**values, "message": "Conversion cancelled", "error": ""}
 
-    if settings.CLOUDNATIVEGIS_ON_DEMAND:
+    if job.deprovisions:
         save(status=CngLiteJobStatus.DEPROVISIONING, outcome=outcome, **values)
         try:
             job.deprovision()
