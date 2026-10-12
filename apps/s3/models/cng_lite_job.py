@@ -26,6 +26,10 @@ CONVERSION_FORMATS = {
 }
 
 
+# GeoHosting's page of a user's on-demand servers ("Server on Demand").
+GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/hetzner-server-instance"
+
+
 def _is_healthy(url):
     """Whether the CloudNativeGIS service at `url` answers its /health check."""
     url = url.rstrip("/")
@@ -223,7 +227,8 @@ class CngLiteJob(models.Model):
         the Hetzner Cloud API, and has a snapshot to start them from) and
         has a server type enabled to start them as, even if none is in stock
         at Hetzner - `servers`, the enabled types, cheapest first, each with
-        whether it's in stock (`available`).
+        whether it's in stock (`available`). On demand, `serversUrl` is
+        GeoHosting's page of the user's servers, where a kept one is deleted.
         """
         if not settings.CLOUDNATIVEGIS_ON_DEMAND:
             return {
@@ -252,7 +257,14 @@ class CngLiteJob(models.Model):
             logger.warning("GeoHosting has no server type enabled for CloudNativeGIS servers.")
         if servers and not any(server.get("available") for server in servers):
             logger.warning("None of GeoHosting's CloudNativeGIS server types is in stock.")
-        return {"available": bool(servers), "onDemand": True, "servers": servers}
+        return {
+            "available": bool(servers),
+            "onDemand": True,
+            "servers": servers,
+            "serversUrl": GEOHOSTING_SERVERS_PAGE.format(
+                geohosting=settings.GEOHOSTING_URL.rstrip("/")
+            ),
+        }
 
     # ---------------------------------
     # STEP 2

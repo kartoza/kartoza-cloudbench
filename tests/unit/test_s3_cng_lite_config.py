@@ -114,10 +114,18 @@ def on_demand_availability(health, server_types, user=None):
     return availability, types
 
 
+# GeoHosting's page of the user's servers, as the geohosting fixture has it.
+SERVERS_URL = "http://geohosting/#/dashboard/hetzner-server-instance"
+
 def test_on_demand_available_with_a_server_type_to_start(geohosting):
     """Not the fixed CLOUDNATIVEGIS_URL: GeoHosting, which starts the servers."""
     availability, types = on_demand_availability({"healthy": True, "snapshot": {"id": 1}}, [CX23])
-    assert availability == {"available": True, "onDemand": True, "servers": [CX23]}
+    assert availability == {
+        "available": True,
+        "onDemand": True,
+        "servers": [CX23],
+        "serversUrl": SERVERS_URL,
+    }
     types.assert_called_once_with(username=None)
 
 
@@ -137,14 +145,24 @@ def test_on_demand_unavailable_for_a_user_geohosting_doesnt_know(geohosting):
 
 def test_on_demand_unavailable_without_an_enabled_server_type(geohosting):
     availability, _ = on_demand_availability({"healthy": True}, [])
-    assert availability == {"available": False, "onDemand": True, "servers": []}
+    assert availability == {
+        "available": False,
+        "onDemand": True,
+        "servers": [],
+        "serversUrl": SERVERS_URL,
+    }
 
 
 def test_on_demand_available_when_none_is_in_stock(geohosting):
     out_of_stock = {**CX23, "available": False}
     availability, _ = on_demand_availability({"healthy": True}, [out_of_stock])
     # Listed, to show it's out of stock.
-    assert availability == {"available": True, "onDemand": True, "servers": [out_of_stock]}
+    assert availability == {
+        "available": True,
+        "onDemand": True,
+        "servers": [out_of_stock],
+        "serversUrl": SERVERS_URL,
+    }
 
 
 def test_on_demand_available_when_one_is_in_stock(geohosting):

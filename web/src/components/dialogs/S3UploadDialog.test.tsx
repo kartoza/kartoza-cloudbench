@@ -119,7 +119,10 @@ describe('S3UploadDialog', () => {
 
     async function uploadButton(servers: object[], instanceServers: object[] = []) {
       api.getConversionToolStatus.mockResolvedValue({
-        cloudnativegis: { available: true, onDemand: true, servers },
+        cloudnativegis: {
+          available: true, onDemand: true, servers,
+          serversUrl: 'http://geohosting/#/dashboard/hetzner-server-instance',
+        },
       })
       api.getConversionServers.mockResolvedValue(instanceServers)
       useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
@@ -154,6 +157,10 @@ describe('S3UploadDialog', () => {
       const upload = await uploadButton([{ ...cx23, available: false }, { ...cx23, id: 8, available: true }])
       await waitFor(() => expect(upload).toBeEnabled())
       await userEvent.click(upload)
+      // Warned first what becomes of the new server.
+      expect(await screen.findByText('The server will be destroyed after this job')).toBeInTheDocument()
+      expect(api.uploadToS3).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
       const [hetznerServerId, autoDestroy, instanceServerId] = api.uploadToS3.mock.calls[0].slice(-3)
@@ -170,9 +177,26 @@ describe('S3UploadDialog', () => {
       expect(screen.getByText('The server keeps running (and billed) after this job is done.')).toBeInTheDocument()
       await waitFor(() => expect(upload).toBeEnabled())
       await userEvent.click(upload)
+      expect(await screen.findByText('The server will keep running')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Server on Demand' })).toHaveAttribute(
+        'href', 'http://geohosting/#/dashboard/hetzner-server-instance'
+      )
+      await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
       expect(api.uploadToS3.mock.calls[0].at(-2)).toBe(false)
+    })
+
+    it('uploads nothing when the server warning is cancelled', async () => {
+      const upload = await uploadButton([{ ...cx23, available: true }])
+      await waitFor(() => expect(upload).toBeEnabled())
+      await userEvent.click(upload)
+      await screen.findByText('The server will be destroyed after this job')
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      await waitFor(() =>
+        expect(screen.queryByText('The server will be destroyed after this job')).not.toBeInTheDocument()
+      )
+      expect(api.uploadToS3).not.toHaveBeenCalled()
     })
 
     const kept = {

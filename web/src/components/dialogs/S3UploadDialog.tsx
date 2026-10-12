@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
+  Link,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -413,8 +420,22 @@ export default function S3UploadDialog() {
     setPendingReplace(null)
   }, [selectedFile, customKey])
 
-  const handleUpload = async (replace = false) => {
+  // On demand, before starting a new server: what's confirmed about it -
+  // auto destroyed (not reusable, the next job billed for a new one), or
+  // kept running (reusable, billed until deleted). Holds handleUpload's
+  // `replace` while the warning is open.
+  const [pendingServerWarning, setPendingServerWarning] = useState<{ replace: boolean } | null>(null)
+  const serverWarningCancelRef = useRef<HTMLButtonElement>(null)
+
+  const handleUpload = async (replace = false, serverConfirmed = false) => {
     if (isUploading || isConverting || isInspecting) return
+    // On demand, a conversion on a new server: first (as Upload is clicked)
+    // warn what becomes of the server, and its bill, once the job is done.
+    const converts = isMosaic || (cngLiteConnected && convertToCloudNative && (isGpkgFile || !!targetFormat))
+    if (!serverConfirmed && isOnDemand && isNewServer && converts) {
+      setPendingServerWarning({ replace })
+      return
+    }
     if (!selectedFile || !connectionId) {
       toast({
         title: 'Missing required fields',
@@ -1402,26 +1423,91 @@ export default function S3UploadDialog() {
         </ModalBody>
 
         {pendingReplace && (
-          <Alert status="warning" borderRadius={0} alignItems="flex-start" py={3}>
+          // Not shrunk to fit a tall body (the modal is capped at 90vh):
+          // the body scrolls instead.
+          <Alert status="warning" borderRadius={0} alignItems="flex-start" py={3} flexShrink={0}>
             <AlertIcon />
-            <VStack align="stretch" spacing={2} flex="1">
+            <VStack spacing={2} flex="1">
               <Text fontSize="sm">
                 A {pendingReplace.kind} already exists at <Code fontSize="xs">{pendingReplace.folder}/</Code>.
                 Replacing removes everything currently in that folder
                 {pendingReplace.kind === 'layer group' ? ', including layers you don\'t select this time,' : ''}
                 {' '}and publishes this upload there.
               </Text>
-              <HStack justify="flex-end" spacing={2}>
+              <HStack justify="flex-end" spacing={2} width="100%">
                 <Button size="sm" variant="ghost" onClick={() => setPendingReplace(null)}>
                   Keep existing
                 </Button>
-                <Button size="sm" colorScheme="red" onClick={() => handleUpload(true)}>
+                <Button size="sm" colorScheme="red" onClick={() => handleUpload(true, true)}>
                   Replace
                 </Button>
               </HStack>
             </VStack>
           </Alert>
         )}
+
+        <AlertDialog
+          isOpen={!!pendingServerWarning}
+          leastDestructiveRef={serverWarningCancelRef}
+          onClose={() => setPendingServerWarning(null)}
+          isCentered
+        >
+          <AlertDialogOverlay>
+            <AlertDialogContent>
+              <AlertDialogHeader fontSize="lg">
+                {autoDestroy ? 'The server will be destroyed after this job' : 'The server will keep running'}
+              </AlertDialogHeader>
+              <AlertDialogBody>
+                {autoDestroy ? (
+                  <VStack align="stretch" spacing={3} fontSize="sm">
+                    <Text>
+                      <b>Auto destroy is on:</b> the server started for this job is destroyed once the job is
+                      done, and can't be reused for another job.
+                    </Text>
+                    <Text>
+                      Each server is billed per started hour, on its own, so the next job starts a new
+                      server, and is billed for it again.
+                    </Text>
+                  </VStack>
+                ) : (
+                  <VStack align="stretch" spacing={3} fontSize="sm">
+                    <Text>
+                      <b>Auto destroy is off:</b> the server keeps running after this job is done, so the next
+                      jobs can reuse it. It/s billed per started hour for as long as it runs.
+                    </Text>
+                    <Text>
+                      To stop it, delete it on the{' '}
+                      {toolStatus?.cloudnativegis?.serversUrl ? (
+                        <Link href={toolStatus.cloudnativegis.serversUrl} isExternal color="orange.500">
+                          Server on Demand
+                        </Link>
+                      ) : (
+                        'Server on Demand'
+                      )}{' '}
+                      page.
+                    </Text>
+                  </VStack>
+                )}
+              </AlertDialogBody>
+              <AlertDialogFooter>
+                <Button ref={serverWarningCancelRef} variant="ghost" onClick={() => setPendingServerWarning(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  colorScheme="orange"
+                  ml={3}
+                  onClick={() => {
+                    const replace = pendingServerWarning?.replace ?? false
+                    setPendingServerWarning(null)
+                    handleUpload(replace, true)
+                  }}
+                >
+                  Continue
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
 
         <ModalFooter
           gap={3}

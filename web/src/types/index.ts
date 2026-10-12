@@ -630,6 +630,9 @@ export interface ConversionToolInfo {
   // (started by GeoHosting), and the server types it may start as.
   onDemand?: boolean
   servers?: CloudNativeGISServerType[]
+  // On demand: GeoHosting's page of the user's servers ("Server on
+  // Demand"), where a server kept running is deleted.
+  serversUrl?: string
 }
 
 // A Hetzner server type GeoHosting may start an on-demand CloudNativeGIS server as.
