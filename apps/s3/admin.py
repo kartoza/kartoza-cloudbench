@@ -4,7 +4,7 @@ from django.contrib import admin
 
 from apps.core.admin import mask_secret
 
-from .models import CngLiteJob, CngLiteJobLog, S3Connection
+from .models import CngLiteInstanceServer, CngLiteJob, CngLiteJobLog, S3Connection
 
 
 @admin.register(S3Connection)
@@ -78,6 +78,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     list_filter = ["kind", "status"]
     search_fields = [
         "id",
+        "instance_server__instance_id",
         "owner__username",
         "connection__name",
         "bucket",
@@ -98,7 +99,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "cloudnativegis_url",
         "masked_cloudnativegis_api_token",
         "hetzner_server_id",
-        "hetzner_server_specification",
+        "instance_server",
         "cng_job_id",
         "cng_results",
         "cng_errors",
@@ -114,3 +115,58 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     @admin.display(description="CloudNativeGIS API token")
     def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
         return mask_secret(obj.cloudnativegis_api_token)
+
+
+class CngLiteInstanceServerJobInline(admin.TabularInline):
+    """The jobs that ran on the server (read-only)."""
+
+    model = CngLiteJob
+    fk_name = "instance_server"
+    extra = 0
+    can_delete = False
+    show_change_link = True
+    fields = readonly_fields = ("id", "kind", "source_name", "status", "created_at")
+
+    def has_add_permission(self, _request, _obj=None):
+        return False
+
+
+@admin.register(CngLiteInstanceServer)
+class CngLiteInstanceServerAdmin(admin.ModelAdmin):
+    """On-demand servers, as GeoHosting last answered about them (read-only)."""
+
+    verbose_name = "CloudNativeGIS Lite Instance Server"
+    inlines = [CngLiteInstanceServerJobInline]
+    list_display = [
+        "instance_id",
+        "owner",
+        "status",
+        "type_id",
+        "url",
+        "created",
+        "updated_at",
+    ]
+    list_filter = ["status"]
+    search_fields = ["instance_id", "owner__username", "url"]
+    readonly_fields = [
+        "instance_id",
+        "owner",
+        "status",
+        "url",
+        "masked_api_token",
+        "type_id",
+        "specification",
+        "error",
+        "created",
+        "created_at",
+        "updated_at",
+    ]
+    # Encrypted at rest like the job's token - never shown in plaintext.
+    exclude = ["api_token"]
+
+    def has_add_permission(self, _request):
+        return False
+
+    @admin.display(description="API token")
+    def masked_api_token(self, obj: CngLiteInstanceServer) -> str:
+        return mask_secret(obj.api_token)

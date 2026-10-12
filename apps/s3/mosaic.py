@@ -323,7 +323,7 @@ def run_mosaic(job_id):
             },
         }
         with httpx.Client(
-            base_url=f"{job.cloudnativegis_url}/",
+            base_url=f"{job.server_url}/",
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
             headers=job.cloudnativegis_headers(),

@@ -29,7 +29,7 @@ class GeoHostingError(Exception):
     """GeoHosting couldn't be reached, refused us, or answered unexpectedly.
 
     `status_code` is GeoHosting's HTTP status, when it answered (e.g. 400 for
-    an unknown user, 409 for a server still being deleted).
+    an unknown user, 409 for a server that isn't running any more).
     """
 
     def __init__(self, message, status_code=None):
@@ -100,52 +100,80 @@ class GeoHostingClient:
             raise self._refused(response, "list its server types")
         return self._json(response)
 
-    # -- A CloudBench job's on-demand server ----------------------------------
+    # -- On-demand servers ------------------------------------------------------
     #
-    # Each takes an optional `log` callback, called once per request with
-    # method, url, request_payload, status_code, response_payload, error and
-    # duration_ms - see apps.s3.models.CngLiteJobLog.
+    # A server (GeoHosting's HetznerServerInstance) is known by its
+    # `server_id`, and can run several jobs (its `job_ids`). Each call takes
+    # an optional `log` callback, called once per request with method, url,
+    # request_payload, status_code, response_payload, error and duration_ms -
+    # see apps.s3.models.CngLiteJobLog.
 
     SERVERS = "api/v1/cloudnative-gis-processing/servers/"
 
-    def create_server(self, job_id, username, hetzner_server_id, log=None):
-        """Ask GeoHosting for a server for `job_id`, owned by GeoHosting user `username`.
+    def create_server(self, job_id, username, hetzner_server_id, server_id=None, log=None):
+        """Ask GeoHosting for a server to run `job_id` on, owned by GeoHosting user `username`.
 
-        Started in the background as `hetzner_server_id` - the `id` of one
-        of cloudnative_gis_processing_server_types, the only type it's
-        started as. Returns GeoHosting's answer, with status "provisioning"
-        - or "ready" (and url/token) if it already was. Asking again for the
-        same job gives the same server. Raises GeoHostingError, with
-        status_code 400 for an unknown user or a server type that isn't
-        enabled, and 409 for a server still being deleted (or another
-        user's job).
+        With `server_id` of a running server (provisioning or ready), that
+        one - `job_id` is added to its job_ids. Without one, or with one
+        GeoHosting has no server for yet (which the new server then takes),
+        a new one is started in the background as `hetzner_server_id` - the
+        `id` of one of cloudnative_gis_processing_server_types, the only
+        type it's started as. Returns GeoHosting's answer, with status
+        "provisioning" - or "ready" (and url/token) if it already was.
+        Raises GeoHostingError, with status_code 400 for an unknown user or
+        a server type that isn't enabled, and 409 for a server that isn't
+        running any more ("That server is <status>") or is another user's.
         """
         payload = {
             "job_id": str(job_id),
             "username": username,
             "hetzner_server_id": hetzner_server_id,
         }
+        if server_id:
+            payload["server_id"] = str(server_id)
         response = self._logged("POST", self.SERVERS, log, json=payload)
         if response.status_code not in (200, 202):
             raise self._refused(response, "start a server")
         return self._json(response)
 
-    def get_server(self, job_id, log=None):
-        """GeoHosting's answer about `job_id`'s server, or None if it has none."""
-        response = self._logged("GET", f"{self.SERVERS}{job_id}/", log)
+    def list_servers(self, username, log=None):
+        """GeoHosting user `username`'s running servers (provisioning or ready), newest first.
+
+        Raises GeoHostingError if GeoHosting doesn't know `username` (400).
+        """
+        response = self._logged("GET", self.SERVERS, log, params={"username": username})
+        if response.status_code != 200:
+            raise self._refused(response, "list the servers")
+        return self._json(response)
+
+    def get_server(self, server_id, log=None):
+        """GeoHosting's answer about server `server_id`, or None if it has none."""
+        response = self._logged("GET", f"{self.SERVERS}{server_id}/", log)
         if response.status_code == 404:
             return None
         if response.status_code != 200:
             raise self._refused(response, "look up the server")
         return self._json(response)
 
-    def delete_server(self, job_id, log=None):
-        """Have GeoHosting delete `job_id`'s server, in the background.
+    def get_job_server(self, job_id, log=None):
+        """GeoHosting's answer about the server `job_id` was asked for, or None.
+
+        The newest, if it was asked for on more than one.
+        """
+        response = self._logged("GET", f"{self.SERVERS}job/{job_id}/", log)
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise self._refused(response, "look up the job's server")
+        return self._json(response)
+
+    def delete_server(self, server_id, log=None):
+        """Have GeoHosting delete server `server_id`, in the background.
 
         Returns its answer (status "deleting"), or None if there was none
         (any more).
         """
-        response = self._logged("DELETE", f"{self.SERVERS}{job_id}/", log)
+        response = self._logged("DELETE", f"{self.SERVERS}{server_id}/", log)
         if response.status_code == 204:
             return None
         if response.status_code != 202:

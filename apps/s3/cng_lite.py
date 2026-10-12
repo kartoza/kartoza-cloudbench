@@ -845,7 +845,7 @@ class CNGProcessingClient:
         """Client for the job's CloudNativeGIS (set by provision())."""
         if self._http is None:
             self._http = httpx.Client(
-                base_url=f"{self.job.cloudnativegis_url}/",
+                base_url=f"{self.job.server_url}/",
                 timeout=httpx.Timeout(60, connect=10),
                 follow_redirects=False,
                 headers=self.job.cloudnativegis_headers(),
@@ -862,7 +862,7 @@ class CNGProcessingClient:
             self.job,
             target=CngLiteJobLog.Target.CLOUDNATIVEGIS,
             method=method,
-            url=f"{self.job.cloudnativegis_url}/{path.lstrip('/')}",
+            url=f"{self.job.server_url}/{path.lstrip('/')}",
             request_payload=request_payload,
             status_code=response.status_code if response is not None else None,
             response_payload=_response_body(response) if response is not None else None,
