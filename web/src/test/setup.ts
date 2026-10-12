@@ -4,7 +4,7 @@
  */
 
 import '@testing-library/jest-dom/vitest'
-import { afterAll, afterEach, beforeAll } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { setupServer } from 'msw/node'
 
@@ -27,20 +27,26 @@ afterEach(() => {
 afterAll(() => server.close())
 
 // user-event redefines HTMLElement.prototype.focus/blur as getter-only, and
-// happy-dom's prototype outlives a test file (vitest.config singleFork). In
-// the next file Chakra's focus-visible assigns HTMLElement.prototype.focus,
-// which then throws ("only a getter") and leaves React broken for every file
-// after it ("Should not already be working."). Make them assignable again.
-for (const name of ['focus', 'blur'] as const) {
-  const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
-  if (descriptor?.get && !descriptor.set) {
-    Object.defineProperty(HTMLElement.prototype, name, {
-      configurable: true,
-      writable: true,
-      value: descriptor.get.call(HTMLElement.prototype),
-    })
+// happy-dom's prototype outlives a test (and a test file: vitest.config
+// singleFork). In a later test Chakra's focus-visible (a Checkbox or Switch)
+// assigns HTMLElement.prototype.focus, which then throws ("only a getter")
+// and leaves React broken for every test after it ("Should not already be
+// working."). Make them assignable again - before every test, since one
+// test's user-event breaks them for the next test in the same file too.
+const makeFocusAssignable = () => {
+  for (const name of ['focus', 'blur'] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    if (descriptor?.get && !descriptor.set) {
+      Object.defineProperty(HTMLElement.prototype, name, {
+        configurable: true,
+        writable: true,
+        value: descriptor.get.call(HTMLElement.prototype),
+      })
+    }
   }
 }
+makeFocusAssignable()
+beforeEach(makeFocusAssignable)
 
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
