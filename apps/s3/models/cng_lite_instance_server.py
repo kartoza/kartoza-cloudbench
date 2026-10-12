@@ -33,9 +33,7 @@ class CngLiteInstanceServer(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cng_lite_instance_servers"
     )
-    status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.PROVISIONING
-    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROVISIONING)
     # Its CloudNativeGIS service, and its bearer token (encrypted at rest) -
     # only while it's ready: GeoHosting gives them out only then.
     url = models.URLField(max_length=2000, blank=True, default="")

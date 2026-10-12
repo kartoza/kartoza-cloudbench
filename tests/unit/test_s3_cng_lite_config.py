@@ -117,6 +117,7 @@ def on_demand_availability(health, server_types, user=None):
 # GeoHosting's page of the user's servers, as the geohosting fixture has it.
 SERVERS_URL = "http://geohosting/#/dashboard/hetzner-server-instance"
 
+
 def test_on_demand_available_with_a_server_type_to_start(geohosting):
     """Not the fixed CLOUDNATIVEGIS_URL: GeoHosting, which starts the servers."""
     availability, types = on_demand_availability({"healthy": True, "snapshot": {"id": 1}}, [CX23])

@@ -174,7 +174,11 @@ def _requested_server(data, user):
         )
         if server is None:
             raise ValueError("That server can't run this conversion: pick another, or a new one.")
-        return {"instance_server": server, "hetzner_server_id": server.type_id, "auto_destroy": False}
+        return {
+            "instance_server": server,
+            "hetzner_server_id": server.type_id,
+            "auto_destroy": False,
+        }
     return {
         "hetzner_server_id": _requested_hetzner_server_id(data),
         "auto_destroy": _requested_auto_destroy(data),
