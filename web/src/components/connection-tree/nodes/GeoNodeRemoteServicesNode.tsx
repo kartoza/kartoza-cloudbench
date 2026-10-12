@@ -5,7 +5,8 @@ import { useUIStore } from '../../../stores/uiStore'
 import type { GeoNodeRemoteService, TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 interface GeoNodeRemoteServicesNodeProps {
   connectionId: string
@@ -77,9 +78,9 @@ export function GeoNodeRemoteServicesNode({
         count={services.length}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {services.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(4)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text color="gray.500" fontSize="sm">
                 No remote services found
               </Text>
@@ -110,7 +111,7 @@ export function GeoNodeRemoteServicesNode({
               )
             })
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

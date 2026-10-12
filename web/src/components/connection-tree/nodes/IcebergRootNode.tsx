@@ -7,7 +7,8 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { IcebergConnectionNode } from './IcebergConnectionNode'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 export function IcebergRootNode() {
   const nodeId = 'iceberg-root'
@@ -62,9 +63,9 @@ export function IcebergRootNode() {
         count={icebergConnections?.length}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {!icebergConnections || icebergConnections.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(2)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text color="gray.500" fontSize="sm">
                 No Iceberg catalogs. Click + to add one.
               </Text>
@@ -77,7 +78,7 @@ export function IcebergRootNode() {
               />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

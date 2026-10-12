@@ -4,6 +4,7 @@ import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
 import type { TreeNode, NodeType } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { ItemNode } from './ItemNode'
 import type { CategoryNodeProps } from '../types'
 
@@ -74,16 +75,20 @@ export function CategoryNode({ connectionId, workspace, category, label }: Categ
         level={4}
         count={items?.length}
       />
-      {isExpanded && items && items.map((item) => (
-        <ItemNode
-          key={item.name}
-          connectionId={connectionId}
-          workspace={workspace}
-          name={item.name}
-          type={getChildType()}
-          storeType={category === 'coveragestores' ? 'coveragestore' : category === 'datastores' ? 'datastore' : undefined}
-        />
-      ))}
+      {isExpanded && items && (
+        <TreeChildren>
+          {items.map((item) => (
+            <ItemNode
+              key={item.name}
+              connectionId={connectionId}
+              workspace={workspace}
+              name={item.name}
+              type={getChildType()}
+              storeType={category === 'coveragestores' ? 'coveragestore' : category === 'datastores' ? 'datastore' : undefined}
+            />
+          ))}
+        </TreeChildren>
+      )}
     </Box>
   )
 }

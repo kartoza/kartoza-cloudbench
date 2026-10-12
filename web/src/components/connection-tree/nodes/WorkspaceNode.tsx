@@ -4,6 +4,7 @@ import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { CategoryNode } from './CategoryNode'
 import type { WorkspaceNodeProps } from '../types'
 
@@ -64,7 +65,7 @@ export function WorkspaceNode({ connectionId, workspace }: WorkspaceNodeProps) {
         level={3}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           <CategoryNode
             connectionId={connectionId}
             workspace={workspace}
@@ -95,7 +96,7 @@ export function WorkspaceNode({ connectionId, workspace }: WorkspaceNodeProps) {
             category="layergroups"
             label="Layer Groups"
           />
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

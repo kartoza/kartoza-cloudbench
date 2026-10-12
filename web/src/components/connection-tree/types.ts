@@ -89,8 +89,6 @@ export interface DatasetRowProps {
   onToggleSelect?: () => void
   onPublish?: () => void
   onPreview?: () => void
-  // Tree depth (see treeIndent); datasets sit under a level-5 store row.
-  level?: number
 }
 
 export interface TreeNodeRowProps {

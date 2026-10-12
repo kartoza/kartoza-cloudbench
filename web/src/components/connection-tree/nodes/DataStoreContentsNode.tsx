@@ -2,6 +2,7 @@ import { Box, Text, useToast, useColorModeValue } from '@chakra-ui/react'
 import { useUIStore } from '../../../stores/uiStore'
 import * as api from '../../../api'
 import { DatasetRow } from '../DatasetRow'
+import { TREE_PLACEHOLDER_PL } from '../utils'
 import type { DataStoreContentsNodeProps } from '../types'
 
 export function DataStoreContentsNode({
@@ -48,7 +49,7 @@ export function DataStoreContentsNode({
       {/* Published feature types */}
       {featureTypes.length > 0 && (
         <Box mb={2}>
-          <Text fontSize="xs" fontWeight="600" color="gray.500" px={2} py={1}>
+          <Text fontSize="xs" fontWeight="600" color="gray.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1}>
             Published ({featureTypes.length})
           </Text>
           {featureTypes.map((ft) => (
@@ -64,7 +65,7 @@ export function DataStoreContentsNode({
       )}
 
       {featureTypes.length === 0 && (
-        <Text fontSize="xs" color="gray.500" px={2} py={2} fontStyle="italic">
+        <Text fontSize="xs" color="gray.500" px={2} pl={TREE_PLACEHOLDER_PL} py={2} fontStyle="italic">
           No datasets in this store
         </Text>
       )}

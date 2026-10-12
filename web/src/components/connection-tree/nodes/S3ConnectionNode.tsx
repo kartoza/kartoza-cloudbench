@@ -7,7 +7,8 @@ import type { TreeNode } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { S3ObjectNode } from './S3ObjectNode'
 import type { S3ConnectionNodeProps } from '../types'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 // A connection is scoped to one bucket. Selecting it opens the full bucket
 // browser in the main panel; expanding it browses the bucket's contents
@@ -84,9 +85,9 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
         count={children ? children.length : undefined}
       />
       {isExpanded && children && (
-        <>
+        <TreeChildren>
           {children.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(3)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text fontSize="xs" color="gray.400">
                 Empty bucket
               </Text>
@@ -96,7 +97,7 @@ export function S3ConnectionNode({ connection }: S3ConnectionNodeProps) {
               <S3ObjectNode key={child.key} connectionId={connection.id} bucket={connection.bucket} object={child} />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

@@ -5,7 +5,8 @@ import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode, QFieldCloudConnection, QFieldCloudProject } from '../../../types'
 import * as api from '../../../api/client'
 import { TreeNodeRow } from '../TreeNodeRow'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 interface QFieldCloudConnectionNodeProps {
   connection: QFieldCloudConnection
@@ -58,11 +59,13 @@ export function QFieldCloudConnectionNode({ connection }: QFieldCloudConnectionN
         count={projects?.length}
       />
       {isExpanded && (
-        <QFieldCloudProjectsNode
-          connectionId={connection.id}
-          projects={projects || []}
-          isLoading={isLoading}
-        />
+        <TreeChildren>
+          <QFieldCloudProjectsNode
+            connectionId={connection.id}
+            projects={projects || []}
+            isLoading={isLoading}
+          />
+        </TreeChildren>
       )}
     </Box>
   )
@@ -109,9 +112,9 @@ function QFieldCloudProjectsNode({ connectionId, projects, isLoading }: QFieldCl
         count={projects.length}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {projects.length === 0 && !isLoading && (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(4)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text color="gray.500" fontSize="sm">No projects found.</Text>
             </Box>
           )}
@@ -122,7 +125,7 @@ function QFieldCloudProjectsNode({ connectionId, projects, isLoading }: QFieldCl
               project={project}
             />
           ))}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )
@@ -174,16 +177,20 @@ function QFieldCloudProjectNode({ connectionId, project }: QFieldCloudProjectNod
         onClick={handleClick}
         level={4}
       />
-      {isExpanded && subCategories.map((cat) => (
-        <QFieldCloudSubCategoryNode
-          key={cat.id}
-          nodeId={cat.id}
-          name={cat.name}
-          type={cat.type}
-          connectionId={connectionId}
-          projectId={project.id}
-        />
-      ))}
+      {isExpanded && (
+        <TreeChildren>
+          {subCategories.map((cat) => (
+            <QFieldCloudSubCategoryNode
+              key={cat.id}
+              nodeId={cat.id}
+              name={cat.name}
+              type={cat.type}
+              connectionId={connectionId}
+              projectId={project.id}
+            />
+          ))}
+        </TreeChildren>
+      )}
     </Box>
   )
 }
