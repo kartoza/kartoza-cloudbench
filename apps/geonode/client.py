@@ -99,6 +99,8 @@ class GeoNodeClient:
 
             return True, f"Connected to GeoNode at {self.url}"
         except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                return False, "GeoNode refused the username and password (or API key)"
             return False, f"HTTP error: {e.response.status_code}"
         except Exception as e:
             return False, str(e)

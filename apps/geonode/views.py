@@ -37,6 +37,7 @@ class GeoNodeConnectionListView(APIView):
                     "name": c.name,
                     "url": c.url,
                     "username": c.username,
+                    "has_token": bool(c.api_key),
                 }
                 for c in connections
             ]
@@ -83,10 +84,11 @@ class GeoNodeConnectionTestView(APIView):
 
         success, message = client.test_connection()
 
+        # The shape the web UI reads (GeoNodeTestResult).
         if success:
-            return Response({"status": "success", "message": message})
+            return Response({"success": True, "message": message})
         return Response(
-            {"status": "error", "message": message},
+            {"success": False, "error": message},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -111,6 +113,7 @@ class GeoNodeConnectionDetailView(APIView):
                     "name": conn.name,
                     "url": conn.url,
                     "username": conn.username,
+                    "has_token": bool(conn.api_key),
                 }
             }
         )

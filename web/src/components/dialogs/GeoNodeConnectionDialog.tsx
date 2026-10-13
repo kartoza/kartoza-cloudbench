@@ -118,7 +118,7 @@ export default function GeoNodeConnectionDialog() {
         url,
         username: authMethod === 0 ? username : undefined,
         password: authMethod === 0 ? password : undefined,
-        token: authMethod === 1 ? token : undefined,
+        apiKey: authMethod === 1 ? token : undefined,
       })
       setTestResult(result)
     } catch (err) {
@@ -148,7 +148,7 @@ export default function GeoNodeConnectionDialog() {
         url,
         username: authMethod === 0 ? username : undefined,
         password: authMethod === 0 ? password : undefined,
-        token: authMethod === 1 ? token : undefined,
+        apiKey: authMethod === 1 ? token : undefined,
       }
 
       if (isEditMode && connectionId) {

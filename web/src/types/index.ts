@@ -795,11 +795,12 @@ export interface GeoNodeConnectionCreate {
   url: string
   username?: string
   password?: string
-  token?: string
+  apiKey?: string
 }
 
 export interface GeoNodeTestResult {
   success: boolean
+  message?: string
   error?: string
 }
 

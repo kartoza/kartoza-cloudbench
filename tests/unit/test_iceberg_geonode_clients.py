@@ -155,9 +155,14 @@ class TestGeoNodeClient:
         http_mock.add("GET", "/api/v2/$", json={})
         ok, msg = self.make().test_connection()
         assert ok and GN in msg
-        http_mock.add("GET", "/api/v2/$", status=403)
+        # A wrong username/password: GeoNode answers 401 (403 without a login).
+        for refused in (401, 403):
+            http_mock.add("GET", "/api/v2/$", status=refused)
+            ok, msg = self.make().test_connection()
+            assert not ok and "refused the username and password" in msg
+        http_mock.add("GET", "/api/v2/$", status=500)
         ok, msg = self.make().test_connection()
-        assert not ok and "403" in msg
+        assert not ok and "500" in msg
         http_mock.add("GET", "/api/v2/$", exc=httpx.ConnectError("down"))
         ok, msg = self.make().test_connection()
         assert not ok and "down" in msg

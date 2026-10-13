@@ -412,6 +412,49 @@ class TestGeoNodeConnectionsAPI:
         )
         assert response.status_code == status.HTTP_201_CREATED
 
+    def test_an_api_key_is_kept(self, api_client: APIClient) -> None:
+        """The dialog sends the token as apiKey; list and detail say there is one."""
+        created = api_client.post(
+            "/api/geonode/connections",
+            {"name": "Keyed", "url": "https://geonode.test", "apiKey": "k-123"},
+            format="json",
+        ).json()
+        listed = api_client.get("/api/geonode/connections").json()
+        assert [c["has_token"] for c in listed if c["id"] == created["id"]] == [True]
+        detail = api_client.get(f"/api/geonode/connections/{created['id']}").json()
+        assert detail["connection"]["has_token"] is True
+
+    @pytest.mark.parametrize(
+        "outcome, code, body",
+        [
+            (
+                (True, "Connected to GeoNode at https://geonode.test"),
+                200,
+                {"success": True, "message": "Connected to GeoNode at https://geonode.test"},
+            ),
+            (
+                (False, "GeoNode refused the username and password (or API key)"),
+                400,
+                {
+                    "success": False,
+                    "error": "GeoNode refused the username and password (or API key)",
+                },
+            ),
+        ],
+    )
+    def test_testing_a_connection_answers_as_the_ui_reads_it(
+        self, api_client: APIClient, outcome, code, body
+    ) -> None:
+        """GeoNodeTestResult: success, then message or error."""
+        with patch("apps.geonode.views.GeoNodeClient.test_connection", return_value=outcome):
+            response = api_client.post(
+                "/api/geonode/connections/test",
+                {"url": "https://geonode.test", "username": "admin", "password": "x"},
+                format="json",
+            )
+        assert response.status_code == code
+        assert response.json() == body
+
 
 @pytest.mark.django_db
 @pytest.mark.api
