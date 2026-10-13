@@ -256,6 +256,10 @@ upload endpoints don't.
 - **Errors known only at the end:** a target answers only once the whole body is in, so
   everything that can be checked first is: the connection, the workspace (GeoServer), the
   size limit (GeoNode), the file type and store name.
+- **An existing store (GeoServer):** a file of the store's own type replaces its data (tested:
+  a zipped shapefile sent twice leaves its features once). A file of another type is refused
+  up front: GeoServer would take a GeoPackage into a shapefile store, replacing its files
+  but not its type, and its layers would break.
 
 ### Gunicorn
 

@@ -971,6 +971,21 @@ class GeoServerClient:
 
     # === File Uploads ===
 
+    def existing_store_type(self, workspace: str, store: str) -> str | None:
+        """The type of the store named `store` in `workspace`, None if there's none.
+
+        GeoServer's name for the type, lowercased: for the types files upload
+        as, that's how upload_store_type names them (shapefile, geopackage,
+        geotiff).
+        """
+        if any(s.get("name") == store for s in self.list_datastores(workspace)):
+            found = self.get_datastore(workspace, store).get("type", "")
+        elif any(s.get("name") == store for s in self.list_coveragestores(workspace)):
+            found = self.get_coveragestore(workspace, store).get("type", "")
+        else:
+            return None
+        return found.lower() or "unknown"
+
     def upload_store_file(
         self,
         workspace: str,

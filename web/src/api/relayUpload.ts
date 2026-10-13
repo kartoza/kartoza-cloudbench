@@ -207,7 +207,12 @@ export async function relayUpload(
   const started = await startRelayUpload(file, target)
   handlers.onStarted?.(started)
   const sent = await sendRelayChunks(file, started, handlers)
-  if (!sent) return null
+  if (!sent) {
+    // Cancelled, maybe before the caller knew the session: don't leave it
+    // holding the request to the target until it times out.
+    await cancelRelayUpload(started.sessionId)
+    return null
+  }
   const status = await waitForRelay(started.sessionId, handlers.sleep)
   if (status.state === 'failed') throw new Error(status.error || 'Upload failed')
   return status
