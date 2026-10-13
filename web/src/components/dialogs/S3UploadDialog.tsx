@@ -1,13 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
-  Link,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -24,7 +17,6 @@ import {
   Icon,
   Box,
   useToast,
-  Progress,
   Select,
   Switch,
   Badge,
@@ -32,24 +24,19 @@ import {
   AlertIcon,
   Code,
   useColorModeValue,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Checkbox,
   Spinner,
   Center,
 } from '@chakra-ui/react'
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle, FiLayers } from 'react-icons/fi'
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiCircle, FiLayers } from 'react-icons/fi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { CloudNativeGISServerType, ConversionJob } from '../../types'
-import { instanceServerLabel, isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
+import { instanceServerLabel, isActiveStatus, isCancellableJob } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
+import S3UploadDialogServerWarning from './S3UploadDialogServerWarning'
+import S3UploadDialogProgress, { itemNoun, type GpkgItem, type UploadResult } from './S3UploadDialogProgress'
 
 // Mirrors apps.s3.portolan.LICENSE_CHOICES — keep in sync. ("proprietary"
 // isn't offered: the Portolan spec forbids it — use "other" with a URL.)
@@ -78,15 +65,6 @@ function formatFileSize(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
-// A row in the GeoPackage picker: a vector layer (-> PMTiles) or raster table (-> COG).
-interface GpkgItem {
-  key: string
-  name: string
-  kind: 'vector' | 'raster'
-  geometryType?: string
-  featureCount?: number
 }
 
 // Helper to detect recommended conversion
@@ -157,7 +135,7 @@ export default function S3UploadDialog() {
   // Upload state
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string; conversionJobId?: string } | null>(null)
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null)
   const [conversionJobId, setConversionJobId] = useState<string | null>(null)
 
   // GeoPackage -> PMTiles/COG layer picker (QGIS-style "select items to add")
@@ -198,14 +176,6 @@ export default function S3UploadDialog() {
   const selectedItems = gpkgItems?.filter((item) => selectedLayerNames.has(item.key)) ?? []
   const selectedVector = selectedItems.filter((item) => item.kind === 'vector')
   const selectedRaster = selectedItems.filter((item) => item.kind === 'raster')
-  const hasVectorItems = !!gpkgItems?.some((item) => item.kind === 'vector')
-  const hasRasterItems = !!gpkgItems?.some((item) => item.kind === 'raster')
-  const itemNoun = (count: number, kinds: GpkgItem[]) => {
-    const vector = kinds.some((item) => item.kind === 'vector')
-    const raster = kinds.some((item) => item.kind === 'raster')
-    const noun = vector && raster ? 'item' : raster ? 'raster table' : 'layer'
-    return count === 1 ? noun : `${noun}s`
-  }
 
   const isOpen = activeDialog === 's3upload'
   const isShapefile = !!selectedFile && /\.(shp|zip)$/i.test(selectedFile.name)
@@ -425,7 +395,6 @@ export default function S3UploadDialog() {
   // kept running (reusable, billed until deleted). Holds handleUpload's
   // `replace` while the warning is open.
   const [pendingServerWarning, setPendingServerWarning] = useState<{ replace: boolean } | null>(null)
-  const serverWarningCancelRef = useRef<HTMLButtonElement>(null)
 
   const handleUpload = async (replace = false, serverConfirmed = false) => {
     if (isUploading || isConverting || isInspecting) return
@@ -613,15 +582,6 @@ export default function S3UploadDialog() {
     }
   }
 
-  const toggleLayer = (key: string) => {
-    setSelectedLayerNames((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
   const handleConfirmLayers = async () => {
     if (!gpkgJobId || selectedItems.length === 0 || isUploading || isConverting) return
 
@@ -802,7 +762,7 @@ export default function S3UploadDialog() {
                     onClick={() => fileInputRef.current?.click()}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
-                    minH="260px"
+                    minH="160px"
                     display="flex"
                     alignItems="center"
                     justifyContent="center"
@@ -932,47 +892,49 @@ export default function S3UploadDialog() {
                 )}
 
                 {/* License (recorded in the generated Portolan catalog entry) */}
-                <FormControl>
-                  <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License</FormLabel>
-                  <Select
-                    value={license}
-                    isDisabled={isUploading || isConverting}
-                    onChange={(e) => setLicense(e.target.value)}
-                    size="sm"
-                    borderRadius="lg"
-                  >
-                    {LICENSE_CHOICES.map((choice) => (
-                      <option key={choice.id} value={choice.id}>
-                        {choice.label}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                {license === 'other' && (
+                <HStack alignItems="flex-start">
                   <FormControl>
-                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License URL (optional)</FormLabel>
-                    <Input
-                      type="url"
-                      value={licenseUrl}
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License</FormLabel>
+                    <Select
+                      value={license}
                       isDisabled={isUploading || isConverting}
-                      onChange={(e) => setLicenseUrl(e.target.value)}
-                      placeholder="https://example.org/data-license"
+                      onChange={(e) => setLicense(e.target.value)}
                       size="sm"
                       borderRadius="lg"
-                    />
-                    <Text fontSize="xs" color="gray.500" mt={1}>
-                      Link to the license terms. Leave empty if they&apos;re not known — the catalog will say so.
-                    </Text>
+                    >
+                      {LICENSE_CHOICES.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </Select>
                   </FormControl>
-                )}
+
+                  {license === 'other' && (
+                    <FormControl>
+                      <FormLabel fontWeight="500" color="gray.700" fontSize="sm">License URL (optional)</FormLabel>
+                      <Input
+                        type="url"
+                        value={licenseUrl}
+                        isDisabled={isUploading || isConverting}
+                        onChange={(e) => setLicenseUrl(e.target.value)}
+                        placeholder="https://example.org/data-license"
+                        size="sm"
+                        borderRadius="lg"
+                      />
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Link to the license terms. Leave empty if they are not known.
+                      </Text>
+                    </FormControl>
+                  )}
+                </HStack>
 
                 {/* On-demand CloudNativeGIS: the server the conversion runs on - one
                     already running, or a new one (its type, and whether it's
                     deleted once the conversion is done) */}
-                {isOnDemand && (
+                {isOnDemand && instanceServers.length && (
                   <FormControl>
-                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server</FormLabel>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Existing Server</FormLabel>
                     <Select
                       value={pickedInstanceId}
                       isDisabled={isUploading || isConverting || isInspecting}
@@ -990,53 +952,53 @@ export default function S3UploadDialog() {
                     </Select>
                     {!isNewServer && (
                       <Text fontSize="xs" color="gray.500" mt={1}>
-                        Runs on this server, and leaves it running.
+                        Runs on this server.
                       </Text>
                     )}
                   </FormControl>
                 )}
                 {isOnDemand && isNewServer && onDemandServers.length > 0 && (
                   <>
-                  <FormControl>
-                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server type</FormLabel>
-                    <Select
-                      value={pickedServerId}
-                      isDisabled={isUploading || isConverting || isInspecting}
-                      onChange={(e) => setHetznerServerId(Number(e.target.value))}
-                      size="sm"
-                      borderRadius="lg"
-                    >
-                      {onDemandServers.map((server) => (
-                        <option key={server.id} value={server.id} disabled={server.available === false}>
-                          {serverLabel(server)}
-                          {server.available === false && ' — out of stock'}
-                        </option>
-                      ))}
-                    </Select>
-                    <Text fontSize="xs" color="gray.500" mt={1}>
-                      Started for this conversion. Billed per started hour, until it&apos;s deleted.
-                    </Text>
-                  </FormControl>
-                  <FormControl>
-                    <HStack justify="space-between">
-                      <FormLabel htmlFor="auto-destroy" mb={0} fontWeight="500" color="gray.700" fontSize="sm">
-                        Auto destroy
-                      </FormLabel>
-                      <Switch
-                        id="auto-destroy"
-                        isChecked={autoDestroy}
+                    <FormControl>
+                      <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server type</FormLabel>
+                      <Select
+                        value={pickedServerId}
                         isDisabled={isUploading || isConverting || isInspecting}
-                        onChange={(e) => setAutoDestroy(e.target.checked)}
-                        colorScheme="orange"
+                        onChange={(e) => setHetznerServerId(Number(e.target.value))}
                         size="sm"
-                      />
-                    </HStack>
-                    <Text fontSize="xs" color="gray.500" mt={1}>
-                      {autoDestroy
-                        ? 'Auto destroy will destroy the server when this job is done.'
-                        : 'The server keeps running (and billed) after this job is done.'}
-                    </Text>
-                  </FormControl>
+                        borderRadius="lg"
+                      >
+                        {onDemandServers.map((server) => (
+                          <option key={server.id} value={server.id} disabled={server.available === false}>
+                            {serverLabel(server)}
+                            {server.available === false && ' — out of stock'}
+                          </option>
+                        ))}
+                      </Select>
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Started for this job. Billed per started hour, until it is deleted.
+                      </Text>
+                    </FormControl>
+                    <FormControl>
+                      <HStack justify="space-between">
+                        <FormLabel htmlFor="auto-destroy" mb={0} fontWeight="500" color="gray.700" fontSize="sm">
+                          Auto destroy
+                        </FormLabel>
+                        <Switch
+                          id="auto-destroy"
+                          isChecked={autoDestroy}
+                          isDisabled={isUploading || isConverting || isInspecting}
+                          onChange={(e) => setAutoDestroy(e.target.checked)}
+                          colorScheme="orange"
+                          size="sm"
+                        />
+                      </HStack>
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        {autoDestroy
+                          ? 'Auto destroy will destroy the server when this job is done.'
+                          : 'The server keeps running (and billed) after this job is done.'}
+                      </Text>
+                    </FormControl>
                   </>
                 )}
               </VStack>
@@ -1104,323 +1066,22 @@ export default function S3UploadDialog() {
               )}
             </HStack>
           )}
-
-          {/* GeoPackage layer/table picker (QGIS-style "Select Items to Add") —
-              the main focus of the dialog once a GeoPackage is inspected.
-              Vector layers (-> PMTiles) show geometry/feature columns;
-              raster tables (-> COG) are name-only. */}
-          {inLayerPickerMode && gpkgItems && (
-            <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
-              <HStack justify="space-between" mb={3}>
-                <Text fontWeight="600" color="gray.700" fontSize="md">
-                  Select {itemNoun(2, gpkgItems)} to convert ({selectedItems.length}/{gpkgItems.length})
-                </Text>
-                <HStack spacing={1}>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={() => setSelectedLayerNames(new Set(gpkgItems.map((item) => item.key)))}
-                  >
-                    Select All
-                  </Button>
-                  <Button size="xs" variant="ghost" onClick={() => setSelectedLayerNames(new Set())}>
-                    Deselect All
-                  </Button>
-                </HStack>
-              </HStack>
-              <Box maxH="380px" overflowY="auto" borderRadius="md" border="1px solid" borderColor="gray.200" bg="white">
-                <Table size="sm">
-                  <Thead position="sticky" top={0} bg="gray.50">
-                    <Tr>
-                      <Th width="1%" />
-                      <Th>{hasVectorItems ? 'Layer' : 'Table'}</Th>
-                      {hasVectorItems && hasRasterItems && <Th>Type</Th>}
-                      {hasVectorItems && <Th>Geometry</Th>}
-                      {hasVectorItems && <Th isNumeric>Features</Th>}
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {gpkgItems.map((item) => (
-                      <Tr key={item.key} cursor="pointer" onClick={() => toggleLayer(item.key)}>
-                        <Td onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            isChecked={selectedLayerNames.has(item.key)}
-                            onChange={() => toggleLayer(item.key)}
-                          />
-                        </Td>
-                        <Td fontSize="sm" fontWeight="500">{item.name}</Td>
-                        {hasVectorItems && hasRasterItems && (
-                          <Td>
-                            <Badge colorScheme={item.kind === 'vector' ? 'blue' : 'orange'} variant="subtle" fontSize="xs">
-                              {item.kind === 'vector' ? 'Vector' : 'Raster'}
-                            </Badge>
-                          </Td>
-                        )}
-                        {hasVectorItems && (
-                          <>
-                            <Td fontSize="sm" color="gray.500">{item.geometryType ?? '-'}</Td>
-                            <Td fontSize="sm" color="gray.500" isNumeric>
-                              {item.featureCount !== undefined ? item.featureCount.toLocaleString() : '-'}
-                            </Td>
-                          </>
-                        )}
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
-              </Box>
-            </Box>
-          )}
-
-          {/* Conversion progress — takes over the layer picker's spot as
-              the main focus once the layers have been confirmed. */}
-          {gpkgFlowActive && !inLayerPickerMode && conversionJob && isActiveStatus(conversionJob.status) && (
-            <Box mt={3} p={4} bg="blue.50" borderRadius="lg" border="1px solid" borderColor="blue.200">
-              <HStack mb={2}>
-                <Icon as={FiRefreshCw} className="spin" color="blue.500" />
-                <Text fontWeight="600" color="gray.700" fontSize="md">
-                  {conversionJob.targetFormat === 'cog' ? 'Converting raster tables...' : 'Converting layers...'}
-                  {conversionJobIds.length > 1 &&
-                    ` (${conversionJobIds.indexOf(conversionJobId ?? '') + 1} of ${conversionJobIds.length})`}
-                </Text>
-              </HStack>
-              <Progress
-                value={conversionJob.progress}
-                size="sm"
-                colorScheme="blue"
-                borderRadius="sm"
-                hasStripe
-                isAnimated
-              />
-              <Text fontSize="sm" color="gray.600" mt={2}>
-                {conversionJob.message}
-              </Text>
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                You can close this dialog: the conversion carries on, and its progress stays under Jobs in the header.
-              </Text>
-              {(() => {
-                const layerStatuses = layerConversionStatuses(conversionJob)
-                if (!layerStatuses) return null
-                return (
-                  <VStack align="stretch" spacing={1} mt={3} pt={3} borderTop="1px solid" borderColor="blue.100" maxH="300px" overflowY="auto">
-                    {layerStatuses.map((layer) => (
-                      <HStack key={layer.name} spacing={2}>
-                        {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={4} />}
-                        {layer.status === 'active' && (
-                          <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={4} />
-                        )}
-                        {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={4} />}
-                        <Text
-                          fontSize="sm"
-                          color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
-                          fontWeight={layer.status === 'active' ? '600' : '400'}
-                        >
-                          {layer.name}
-                        </Text>
-                      </HStack>
-                    ))}
-                  </VStack>
-                )
-              })()}
-            </Box>
-          )}
-
-          {/* Status section - below the two columns */}
-          <VStack spacing={2} mt={4} align="stretch">
-            {/* Upload Progress */}
-            {isUploading && (
-              <Box w="100%">
-                <HStack justify="space-between" mb={1}>
-                  <Text fontSize="xs" color="gray.600">Uploading...</Text>
-                  <Text fontSize="xs" color="gray.600">{uploadProgress}%</Text>
-                </HStack>
-                <Progress
-                  value={uploadProgress}
-                  size="xs"
-                  colorScheme="orange"
-                  borderRadius="sm"
-                  hasStripe
-                  isAnimated
-                />
-              </Box>
-            )}
-
-            {/* Conversion Job Progress (GeoPackage jobs show this above instead) */}
-            {!gpkgFlowActive && conversionJob && isActiveStatus(conversionJob.status) && (
-              <Box w="100%" p={2} bg="blue.50" borderRadius="lg">
-                <HStack mb={1}>
-                  <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
-                  <Text fontWeight="500" color="blue.700" fontSize="xs">Converting...</Text>
-                </HStack>
-                <Progress
-                  value={conversionJob.progress}
-                  size="xs"
-                  colorScheme="blue"
-                  borderRadius="sm"
-                  hasStripe
-                  isAnimated
-                />
-                <Text fontSize="xs" color="gray.600" mt={1}>
-                  {conversionJob.message}
-                </Text>
-                <Text fontSize="xs" color="gray.500">
-                  You can close this dialog: progress stays under Jobs in the header.
-                </Text>
-                {(() => {
-                  const layerStatuses = layerConversionStatuses(conversionJob)
-                  if (!layerStatuses) return null
-                  return (
-                    <VStack align="stretch" spacing={0.5} mt={2} pt={2} borderTop="1px solid" borderColor="blue.100">
-                      {layerStatuses.map((layer) => (
-                        <HStack key={layer.name} spacing={2}>
-                          {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={3} />}
-                          {layer.status === 'active' && (
-                            <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
-                          )}
-                          {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={3} />}
-                          <Text
-                            fontSize="xs"
-                            color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
-                            fontWeight={layer.status === 'active' ? '600' : '400'}
-                          >
-                            {layer.name}
-                          </Text>
-                        </HStack>
-                      ))}
-                    </VStack>
-                  )
-                })()}
-              </Box>
-            )}
-
-            {/* Upload/Conversion Result */}
-            <AnimatePresence>
-              {conversionJobError && (
-                <Alert status="error" borderRadius="lg">
-                  <AlertIcon />
-                  <Text fontSize="xs">Unable to check conversion status: {(conversionJobError as Error).message}</Text>
-                </Alert>
-              )}
-              {uploadResult && !conversionJob && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  style={{ width: '100%' }}
-                >
-                  <Alert
-                    status={uploadResult.success ? 'success' : 'error'}
-                    borderRadius="lg"
-                    variant="subtle"
-                    py={2}
-                  >
-                    <AlertIcon as={uploadResult.success ? FiCheckCircle : FiAlertCircle} boxSize={4} />
-                    <Text fontSize="xs">{uploadResult.message}</Text>
-                  </Alert>
-                </motion.div>
-              )}
-
-              {/* A GeoPackage converted both ways: how its first job (the
-                  vector layers) went, above the last one's result. */}
-              {earlierJobs.map((job) => (
-                <Alert
-                  key={job.id}
-                  status={job.status === 'completed' ? (job.error ? 'warning' : 'success') : 'error'}
-                  borderRadius="lg"
-                  variant="subtle"
-                  py={2}
-                >
-                  <AlertIcon boxSize={4} />
-                  <Box>
-                    <Text fontSize="xs" fontWeight="500">
-                      {job.targetFormat === 'cog' ? 'Raster tables' : 'Vector layers'}: {job.message}
-                    </Text>
-                    {job.error && (
-                      <Text fontSize="xs" color="gray.600">
-                        {job.error}
-                      </Text>
-                    )}
-                  </Box>
-                </Alert>
-              ))}
-
-              {conversionJob && conversionJob.status === 'completed' && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  style={{ width: '100%' }}
-                >
-                  <Alert status="success" borderRadius="lg" variant="subtle" py={2}>
-                    <AlertIcon as={FiCheckCircle} boxSize={4} />
-                    <Box>
-                      <Text fontSize="xs" fontWeight="500">Conversion Complete</Text>
-                      {conversionJob.outputPath ? (
-                        <Text fontSize="xs" color="gray.600">
-                          Output: {conversionJob.outputPath}
-                        </Text>
-                      ) : (
-                        <>
-                          <Text fontSize="xs" color="gray.600">
-                            {conversionJob.outputPaths?.length ?? 0} files created:
-                          </Text>
-                          {conversionJob.outputPaths?.map((path) => (
-                            <Text key={path} fontSize="xs" color="gray.600" noOfLines={1}>
-                              {path}
-                            </Text>
-                          ))}
-                        </>
-                      )}
-                    </Box>
-                  </Alert>
-                  {conversionJob.error && (
-                    <Alert status="warning" borderRadius="lg" variant="subtle" py={2} mt={2}>
-                      <AlertIcon boxSize={4} />
-                      <Box>
-                        <Text fontSize="xs" fontWeight="500">Some layers were skipped</Text>
-                        {conversionJob.error.split('; ').map((line) => (
-                          <Text key={line} fontSize="xs" color="gray.600">
-                            {line}
-                          </Text>
-                        ))}
-                      </Box>
-                    </Alert>
-                  )}
-                </motion.div>
-              )}
-
-              {conversionJob && conversionJob.status === 'cancelled' && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  style={{ width: '100%' }}
-                >
-                  <Alert status="info" borderRadius="lg" variant="subtle" py={2}>
-                    <AlertIcon boxSize={4} />
-                    <Text fontSize="xs" fontWeight="500">Conversion cancelled — nothing was published.</Text>
-                  </Alert>
-                </motion.div>
-              )}
-
-              {conversionJob && conversionJob.status === 'failed' && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  style={{ width: '100%' }}
-                >
-                  <Alert status="error" borderRadius="lg" variant="subtle" py={2}>
-                    <AlertIcon as={FiAlertCircle} boxSize={4} />
-                    <Box>
-                      <Text fontSize="xs" fontWeight="500">Conversion Failed</Text>
-                      <Text fontSize="xs" color="gray.600">
-                        {conversionJob.error}
-                      </Text>
-                    </Box>
-                  </Alert>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </VStack>
         </ModalBody>
+
+        <S3UploadDialogProgress
+          gpkgItems={gpkgItems}
+          selectedLayerNames={selectedLayerNames}
+          onSelectedLayerNamesChange={setSelectedLayerNames}
+          inLayerPickerMode={inLayerPickerMode}
+          isUploading={isUploading}
+          uploadProgress={uploadProgress}
+          uploadResult={uploadResult}
+          conversionJob={conversionJob}
+          conversionJobError={conversionJobError}
+          conversionJobId={conversionJobId}
+          conversionJobIds={conversionJobIds}
+          earlierJobs={earlierJobs}
+        />
 
         {pendingReplace && (
           // Not shrunk to fit a tall body (the modal is capped at 90vh):
@@ -1446,68 +1107,18 @@ export default function S3UploadDialog() {
           </Alert>
         )}
 
-        <AlertDialog
+        <S3UploadDialogServerWarning
           isOpen={!!pendingServerWarning}
-          leastDestructiveRef={serverWarningCancelRef}
-          onClose={() => setPendingServerWarning(null)}
-          isCentered
-        >
-          <AlertDialogOverlay>
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize="lg">
-                {autoDestroy ? 'The server will be destroyed after this job' : 'The server will keep running'}
-              </AlertDialogHeader>
-              <AlertDialogBody>
-                {autoDestroy ? (
-                  <VStack align="stretch" spacing={3} fontSize="sm">
-                    <Text>
-                      <b>Auto destroy is on:</b> the server started for this job is destroyed once the job is
-                      done, and can't be reused for another job.
-                    </Text>
-                    <Text>
-                      Each server is billed per started hour, on its own, so the next job starts a new
-                      server, and is billed for it again.
-                    </Text>
-                  </VStack>
-                ) : (
-                  <VStack align="stretch" spacing={3} fontSize="sm">
-                    <Text>
-                      <b>Auto destroy is off:</b> the server keeps running after this job is done, so the next
-                      jobs can reuse it. It/s billed per started hour for as long as it runs.
-                    </Text>
-                    <Text>
-                      To stop it, delete it on the{' '}
-                      {toolStatus?.cloudnativegis?.serversUrl ? (
-                        <Link href={toolStatus.cloudnativegis.serversUrl} isExternal color="orange.500">
-                          Server on Demand
-                        </Link>
-                      ) : (
-                        'Server on Demand'
-                      )}{' '}
-                      page.
-                    </Text>
-                  </VStack>
-                )}
-              </AlertDialogBody>
-              <AlertDialogFooter>
-                <Button ref={serverWarningCancelRef} variant="ghost" onClick={() => setPendingServerWarning(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme="orange"
-                  ml={3}
-                  onClick={() => {
-                    const replace = pendingServerWarning?.replace ?? false
-                    setPendingServerWarning(null)
-                    handleUpload(replace, true)
-                  }}
-                >
-                  Continue
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialogOverlay>
-        </AlertDialog>
+          autoDestroy={autoDestroy}
+          onAutoDestroyChange={setAutoDestroy}
+          serversUrl={toolStatus?.cloudnativegis?.serversUrl}
+          onCancel={() => setPendingServerWarning(null)}
+          onContinue={() => {
+            const replace = pendingServerWarning?.replace ?? false
+            setPendingServerWarning(null)
+            handleUpload(replace, true)
+          }}
+        />
 
         <ModalFooter
           gap={3}
