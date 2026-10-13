@@ -302,6 +302,14 @@ def _geoserver_sender(request, data: dict, filename: str, size: int, response_ti
     client = get_geoserver_client(data.get("connectionId", ""), request.user)
     # Known before any data is sent: GeoServer only answers once it's all in.
     client.get_workspace(workspace)
+    # A file for a store of another type would still be taken, replacing the
+    # store's files but not its type: its layers break.
+    existing = client.existing_store_type(workspace, store_name)
+    if existing and existing != upload_store_type(filename):
+        raise UploadError(
+            f"{workspace} already has a {existing} store named {store_name}; "
+            "pick another store name"
+        )
 
     def send(content):
         try:

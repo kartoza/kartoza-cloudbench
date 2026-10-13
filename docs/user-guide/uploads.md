@@ -46,6 +46,10 @@ than its disk.
 2. **Upload chunks**: each one is passed on as it arrives
 3. **Publish**: GeoServer creates the store and layer (GeoNode imports the dataset)
 
+Uploading to a GeoServer store name that's already taken replaces that store's data, if
+the file is of the store's type. A file of another type (a GeoPackage for a shapefile
+store, say) is refused: pick another store name.
+
 ## Shapefile Requirements
 
 When uploading shapefiles:

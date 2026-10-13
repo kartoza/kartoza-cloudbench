@@ -254,6 +254,33 @@ def test_geoserver_store_types(http_mock, filename, url):
     assert http_mock.calls[0].content == b"x"
 
 
+@pytest.mark.parametrize(
+    "datastores, coveragestores, found",
+    [
+        ([], [], None),
+        ([{"name": "other"}], [], None),
+        ([{"name": "roads"}], [], "shapefile"),
+        ([], [{"name": "roads"}], "geotiff"),
+    ],
+)
+def test_geoserver_existing_store_type(http_mock, datastores, coveragestores, found):
+    base = "/rest/workspaces/ws"
+    http_mock.add("GET", f"{base}/datastores.json", json={"dataStores": {"dataStore": datastores}})
+    http_mock.add(
+        "GET",
+        f"{base}/coveragestores.json",
+        json={"coverageStores": {"coverageStore": coveragestores}},
+    )
+    http_mock.add("GET", f"{base}/datastores/roads.json", json={"dataStore": {"type": "Shapefile"}})
+    http_mock.add(
+        "GET", f"{base}/coveragestores/roads.json", json={"coverageStore": {"type": "GeoTIFF"}}
+    )
+    client = GeoServerClient(
+        Connection(id="c", name="gs", url="http://gs", username="", password="")
+    )
+    assert client.existing_store_type("ws", "roads") == found
+
+
 def test_geoserver_refusing_says_why(http_mock):
     http_mock.add("PUT", "/rest/workspaces/ws/datastores/r/file.shp", status=500, text="bad zip")
     client = GeoServerClient(
@@ -269,6 +296,7 @@ def test_geoserver_refusing_says_why(http_mock):
 @pytest.fixture
 def geoserver():
     client = MagicMock(spec=GeoServerClient)
+    client.existing_store_type.return_value = None
     target = Target()
     client.upload_store_file.side_effect = lambda _ws, store, _name, content, _size, _timeout: (
         target.send(content) and {"storeName": store, "storeType": "shapefile"}
@@ -362,6 +390,26 @@ def test_upload_to_a_missing_workspace(authenticated_api_client, geoserver):
     geoserver.get_workspace.side_effect = GeoServerError("Resource not found", status_code=404)
     response = authenticated_api_client.post("/api/upload/relay", GEOSERVER_UPLOAD, format="json")
     assert response.status_code == 400 and response.json()["error"] == "Workspace not found"
+
+
+@pytest.mark.django_db
+def test_upload_over_a_store_of_another_type(authenticated_api_client, geoserver):
+    """GeoServer would take it, replacing the store's files but not its type."""
+    geoserver.existing_store_type.return_value = "geopackage"
+    response = authenticated_api_client.post("/api/upload/relay", GEOSERVER_UPLOAD, format="json")
+    assert response.status_code == 400
+    assert response.json()["error"] == (
+        "ws already has a geopackage store named roads; pick another store name"
+    )
+    geoserver.existing_store_type.assert_called_once_with("ws", "roads")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_upload_over_a_store_of_the_same_type(authenticated_api_client, geoserver):
+    geoserver.existing_store_type.return_value = "shapefile"
+    started = authenticated_api_client.post("/api/upload/relay", GEOSERVER_UPLOAD, format="json")
+    assert started.status_code == 201, started.json()
+    authenticated_api_client.delete(f"/api/upload/relay/{started.json()['sessionId']}")
 
 
 @pytest.mark.django_db(transaction=True)

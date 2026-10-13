@@ -153,6 +153,27 @@ describe('relayed uploads', () => {
     expect(startBody).toMatchObject({ target: 'geoserver', filename: 'roads.zip', fileSize: 10 })
   })
 
+  it('ends a session cancelled before the caller knew it', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? new Response(JSON.stringify(started), { status: 201 })
+        : new Response('{}'),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await relayUpload(
+      file,
+      { target: 'geoserver', connectionId: 'c1', workspace: 'ws', storeName: 'roads' },
+      { sleep: noSleep, isCancelled: () => true },
+    )
+    expect(status).toBeNull()
+    expect(FakeXHR.instances).toHaveLength(0)
+    expect(fetchMock.mock.calls.map(([url, init]) => [init?.method, url.split('/upload/')[1]])).toEqual([
+      ['POST', 'relay'],
+      ['DELETE', 'relay/s1'],
+    ])
+  })
+
   it('reports why the target refused the file', async () => {
     vi.stubGlobal(
       'fetch',

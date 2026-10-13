@@ -113,7 +113,9 @@ export default function GeoNodeUploadDialog() {
   const [errorMsg, setErrorMsg] = useState('')
 
   const sessionIdRef = useRef<string | null>(null)
-  const isCancelledRef = useRef(false)
+  // The running upload. Closing the dialog cancels it, and once cancelled it
+  // leaves the dialog alone (it may already show another upload).
+  const uploadRef = useRef<{ cancelled: boolean } | null>(null)
 
   const isOpen = activeDialog === 'geonodeupload'
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
@@ -134,7 +136,7 @@ export default function GeoNodeUploadDialog() {
     setEtaSeconds(0)
     setErrorMsg('')
     sessionIdRef.current = null
-    isCancelledRef.current = false
+    uploadRef.current = null
   }, [initialUploadType])
 
   useEffect(() => {
@@ -158,7 +160,8 @@ export default function GeoNodeUploadDialog() {
   const handleUpload = async () => {
     if (!selectedFile || !connectionId) return
 
-    isCancelledRef.current = false
+    const upload = { cancelled: false }
+    uploadRef.current = upload
 
     setPhase('chunking')
     setRetry(null)
@@ -186,8 +189,11 @@ export default function GeoNodeUploadDialog() {
             sessionIdRef.current = sessionId
             setChunksTotal(totalChunks)
           },
-          onChunkProgress: (pct) => setChunkProgress(pct),
+          onChunkProgress: (pct) => {
+            if (!upload.cancelled) setChunkProgress(pct)
+          },
           onChunkSent: (sentChunks, sentBytes) => {
+            if (upload.cancelled) return
             const elapsedSec = (Date.now() - startTime) / 1000
             const speed = elapsedSec > 0 ? sentBytes / elapsedSec : 0
             setRetry(null)
@@ -197,10 +203,13 @@ export default function GeoNodeUploadDialog() {
             setEtaSeconds(speed > 0 ? (totalBytes - sentBytes) / speed : 0)
             if (sentBytes >= totalBytes) setPhase('finalizing')
           },
-          onRetry: (attempt, delaySeconds) => setRetry({ attempt, delaySeconds }),
-          isCancelled: () => isCancelledRef.current,
+          onRetry: (attempt, delaySeconds) => {
+            if (!upload.cancelled) setRetry({ attempt, delaySeconds })
+          },
+          isCancelled: () => upload.cancelled,
         },
       )
+      if (upload.cancelled) return
       if (!status || status.state === 'cancelled') {
         setPhase('cancelled')
         return
@@ -220,29 +229,34 @@ export default function GeoNodeUploadDialog() {
         duration: 3000,
       })
     } catch (err) {
-      if (!isCancelledRef.current) {
+      if (!upload.cancelled) {
         const msg = (err as Error).message
         setErrorMsg(msg)
         setPhase('error')
         toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
     } finally {
-      setRetry(null)
+      if (!upload.cancelled) setRetry(null)
     }
   }
 
   const handleCancel = async () => {
-    isCancelledRef.current = true
+    if (uploadRef.current) uploadRef.current.cancelled = true
     const sessId = sessionIdRef.current
-    if (sessId) await cancelRelayUpload(sessId)
     setPhase('cancelled')
+    if (sessId) await cancelRelayUpload(sessId)
   }
 
   const overallPct = chunksTotal > 0 ? Math.round((chunksUploaded / chunksTotal) * 100) : 0
   const isUploading = phase === 'chunking' || phase === 'finalizing'
 
+  const handleClose = () => {
+    if (isUploading) handleCancel()
+    closeDialog()
+  }
+
   return (
-    <Modal isOpen={isOpen} onClose={closeDialog} size="lg" isCentered>
+    <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         <Box
@@ -490,7 +504,7 @@ export default function GeoNodeUploadDialog() {
         </ModalBody>
 
         <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
-          <Button variant="ghost" onClick={closeDialog} borderRadius="lg">
+          <Button variant="ghost" onClick={handleClose} borderRadius="lg">
             {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
           {phase !== 'done' && (

@@ -96,7 +96,9 @@ export default function UploadDialog() {
   const [uploadResult, setUploadResult] = useState<GeoServerUploadResult | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
-  const isCancelledRef = useRef(false)
+  // The running upload. Closing the dialog cancels it, and once cancelled it
+  // leaves the dialog alone (it may already show another upload).
+  const uploadRef = useRef<{ cancelled: boolean } | null>(null)
 
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
   const dropzoneBorderColor = useColorModeValue('gray.300', 'gray.600')
@@ -118,7 +120,7 @@ export default function UploadDialog() {
     setErrorMsg('')
     setUploadResult(null)
     sessionIdRef.current = null
-    isCancelledRef.current = false
+    uploadRef.current = null
   }, [])
 
   useEffect(() => {
@@ -145,7 +147,8 @@ export default function UploadDialog() {
   const handleUpload = async () => {
     if (!selectedFile || !connectionId || !workspace) return
 
-    isCancelledRef.current = false
+    const upload = { cancelled: false }
+    uploadRef.current = upload
     setPhase('chunking')
     setRetry(null)
     setChunksUploaded(0)
@@ -166,8 +169,11 @@ export default function UploadDialog() {
             sessionIdRef.current = sessionId
             setChunksTotal(totalChunks)
           },
-          onChunkProgress: (pct) => setChunkProgress(pct),
+          onChunkProgress: (pct) => {
+            if (!upload.cancelled) setChunkProgress(pct)
+          },
           onChunkSent: (sentChunks, sentBytes) => {
+            if (upload.cancelled) return
             const elapsedSec = (Date.now() - startTime) / 1000
             const speed = elapsedSec > 0 ? sentBytes / elapsedSec : 0
             setRetry(null)
@@ -177,10 +183,13 @@ export default function UploadDialog() {
             setEtaSeconds(speed > 0 ? (totalBytes - sentBytes) / speed : 0)
             if (sentBytes >= totalBytes) setPhase('finalizing')
           },
-          onRetry: (attempt, delaySeconds) => setRetry({ attempt, delaySeconds }),
-          isCancelled: () => isCancelledRef.current,
+          onRetry: (attempt, delaySeconds) => {
+            if (!upload.cancelled) setRetry({ attempt, delaySeconds })
+          },
+          isCancelled: () => upload.cancelled,
         },
       )
+      if (upload.cancelled) return
       if (!status || status.state === 'cancelled') {
         setPhase('cancelled')
         return
@@ -196,25 +205,26 @@ export default function UploadDialog() {
       queryClient.invalidateQueries({ queryKey: ['coveragestores', connectionId, workspace] })
       queryClient.invalidateQueries({ queryKey: ['layers', connectionId, workspace] })
     } catch (err) {
-      if (!isCancelledRef.current) {
+      if (!upload.cancelled) {
         const msg = (err as Error).message
         setErrorMsg(msg)
         setPhase('error')
         toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
     } finally {
-      setRetry(null)
+      if (!upload.cancelled) setRetry(null)
     }
   }
 
   const handleCancel = async () => {
-    isCancelledRef.current = true
+    if (uploadRef.current) uploadRef.current.cancelled = true
     const sessId = sessionIdRef.current
-    if (sessId) await cancelRelayUpload(sessId)
     setPhase('cancelled')
+    if (sessId) await cancelRelayUpload(sessId)
   }
 
   const handleClose = () => {
+    if (isUploading) handleCancel()
     resetState()
     closeDialog()
   }
