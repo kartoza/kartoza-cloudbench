@@ -7,7 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient
-from apps.s3.models import CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteInstanceServer, CngLiteJob, CngLiteJobStatus
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 
@@ -32,11 +32,20 @@ def job(settings, django_user_model):
     GeoHostingClient.clear_token_cache()
 
 
-def server(job, status, **fields):
-    return {"job_id": str(job.id), "status": status, "url": "", "token": "", **fields}
+def server(job, status, server_id=None, **fields):
+    """GeoHosting's answer about `job`'s server (by default the one asked for by its id)."""
+    return {
+        "server_id": str(server_id or job.id),
+        "job_ids": [str(job.id)],
+        "status": status,
+        "url": "",
+        "token": "",
+        **fields,
+    }
 
 
 READY = {"url": "http://10.0.0.5:8000", "token": "server-token"}
+NEW_SERVER_ID = "66666666-7777-8888-9999-000000000000"
 
 
 def provision(job, *answers):
@@ -55,7 +64,9 @@ def provision(job, *answers):
             job.provision()
         finally:
             job.refresh_from_db()
-    return [(call.args[0], call.args[1]) for call in request.call_args_list]
+    return [
+        (call.args[0], call.args[1], call.kwargs.get("json")) for call in request.call_args_list
+    ]
 
 
 def logged(job):
@@ -74,13 +85,19 @@ def test_asks_geohosting_and_waits_until_its_ready(job):
         httpx.Response(200, json=server(job, "ready", **READY)),
     )
 
-    assert requests == [
+    assert [(method, url) for method, url, _ in requests] == [
         ("POST", SERVERS),
         ("GET", f"{SERVERS}{job.id}/"),
         ("GET", f"{SERVERS}{job.id}/"),
     ]
-    assert job.cloudnativegis_url == "http://10.0.0.5:8000"
-    assert job.cloudnativegis_api_token == "server-token"
+    # Its server, mirrored as its instance_server: the url/token it runs on.
+    server_ = job.instance_server
+    assert str(server_.instance_id) == str(job.id)
+    assert (server_.status, server_.owner) == ("ready", job.owner)
+    assert job.server_url == "http://10.0.0.5:8000"
+    assert job.server_api_token == "server-token"
+    # Not copied onto the job: they're its server's.
+    assert (job.cloudnativegis_url, job.cloudnativegis_api_token) == ("", "")
     # The request, and the poll that said it's ready - not the one in between.
     assert logged(job) == [("POST", 202, "provisioning"), ("GET", 200, "ready")]
     ready = job.logs.last()
@@ -90,7 +107,7 @@ def test_asks_geohosting_and_waits_until_its_ready(job):
 
 
 @pytest.mark.django_db
-def test_posts_the_jobs_owner_and_its_server_type(job):
+def test_posts_the_jobs_owner_its_server_type_and_its_own_id(job):
     with (
         patch.object(
             GeoHostingClient, "create_server", return_value=server(job, "ready", **READY)
@@ -100,6 +117,8 @@ def test_posts_the_jobs_owner_and_its_server_type(job):
         job.provision()
     assert create.call_args.args == (job.id, "tim")
     assert create.call_args.kwargs["hetzner_server_id"] == 7
+    # Asked for by the job's own id: asked again (resumed), it's the same one.
+    assert create.call_args.kwargs["server_id"] == job.id
 
 
 @pytest.mark.django_db
@@ -122,7 +141,8 @@ def test_keeps_its_server_types_specification(job):
         httpx.Response(202, json={**server(job, "provisioning"), "server": picked}),
         httpx.Response(200, json={**server(job, "ready", **READY), "server": picked}),
     )
-    assert job.hetzner_server_specification == specification
+    assert job.instance_server.specification == specification
+    assert job.instance_server.type_id == 7
 
 
 @pytest.mark.django_db
@@ -140,7 +160,8 @@ def test_a_server_that_failed_to_start_fails_the_job(job):
             httpx.Response(202, json=server(job, "provisioning")),
             httpx.Response(200, json=server(job, "failed", error="no stock")),
         )
-    assert job.cloudnativegis_url == ""
+    assert job.instance_server.status == "failed"
+    assert job.server_url == ""
     assert logged(job) == [("POST", 202, "provisioning"), ("GET", 200, "failed")]
 
 
@@ -151,22 +172,27 @@ def test_an_owner_geohosting_doesnt_know(job):
 
 
 @pytest.mark.django_db
-def test_waits_out_a_server_still_being_deleted(job):
+def test_a_server_gone_is_replaced_by_a_new_one(job):
+    # Its own server (by its id) is deleted: GeoHosting starts another,
+    # picking its id.
     requests = provision(
         job,
-        httpx.Response(409, json={"detail": "That job's server is still being deleted."}),
-        httpx.Response(202, json=server(job, "ready", **READY)),
+        httpx.Response(409, json={"detail": "That server is deleted; ask for a new one."}),
+        httpx.Response(202, json=server(job, "ready", server_id=NEW_SERVER_ID, **READY)),
     )
-    assert [method for method, _ in requests] == ["POST", "POST"]
-    assert job.cloudnativegis_url == "http://10.0.0.5:8000"
+    [(_, _, first), (_, _, second)] = requests
+    assert first["server_id"] == str(job.id)
+    assert "server_id" not in second
+    assert str(job.instance_server.instance_id) == NEW_SERVER_ID
+    assert job.server_url == "http://10.0.0.5:8000"
 
 
 @pytest.mark.django_db
-def test_another_users_job_fails_it(job):
+def test_another_users_server_fails_it(job):
     with pytest.raises(ValueError, match="belongs to another user"):
         provision(
             job,
-            httpx.Response(409, json={"detail": "That job's server belongs to another user."}),
+            httpx.Response(409, json={"detail": "That server belongs to another user."}),
         )
 
 
@@ -175,11 +201,57 @@ def test_asks_again_for_a_server_gone_meanwhile(job):
     requests = provision(
         job,
         httpx.Response(202, json=server(job, "provisioning")),
-        httpx.Response(404, json={"detail": "No server for that job."}),
+        httpx.Response(404, json={"detail": "No such server."}),
         httpx.Response(202, json=server(job, "ready", **READY)),
     )
-    assert [method for method, _ in requests] == ["POST", "GET", "POST"]
-    assert job.cloudnativegis_api_token == "server-token"
+    assert [method for method, _, _ in requests] == ["POST", "GET", "POST"]
+    # Asked for again by the same id.
+    assert requests[2][2]["server_id"] == str(job.id)
+    assert job.server_api_token == "server-token"
+
+
+@pytest.mark.django_db
+def test_runs_on_a_running_server_picked(job):
+    picked = CngLiteInstanceServer.objects.create(
+        instance_id=NEW_SERVER_ID,
+        owner=job.owner,
+        status="ready",
+        auto_destroy=False,
+        url="http://10.0.0.9:8000",
+        api_token="picked-token",
+        type_id=7,
+    )
+    job.instance_server = picked
+    job.auto_destroy = False
+    job.save()
+    requests = provision(
+        job,
+        httpx.Response(200, json=server(job, "ready", server_id=NEW_SERVER_ID, **READY)),
+    )
+    [(method, _, payload)] = requests
+    assert (method, payload["server_id"]) == ("POST", NEW_SERVER_ID)
+    assert job.instance_server == picked
+    assert CngLiteInstanceServer.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_a_picked_server_gone_fails_the_job(job):
+    picked = CngLiteInstanceServer.objects.create(
+        instance_id=NEW_SERVER_ID,
+        owner=job.owner,
+        status="ready",
+        auto_destroy=False,
+    )
+    job.instance_server = picked
+    job.auto_destroy = False
+    job.save()
+    with pytest.raises(ValueError, match="picked for this conversion isn't running any more"):
+        provision(
+            job,
+            httpx.Response(409, json={"detail": "That server is deleted; ask for a new one."}),
+        )
+    # No new server started in its place.
+    assert CngLiteInstanceServer.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -193,5 +265,5 @@ def test_waits_for_as_long_as_geohosting_is_starting_it(job):
         httpx.Response(200, json=server(job, "ready", **READY)),
     )
     assert len(requests) == 52
-    assert job.cloudnativegis_url == "http://10.0.0.5:8000"
+    assert job.server_url == "http://10.0.0.5:8000"
     assert logged(job) == [("POST", 202, "provisioning"), ("GET", 200, "ready")]

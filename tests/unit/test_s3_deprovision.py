@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 from apps.s3.cng_lite import CNGProcessingClient, finish_job, resume_interrupted_conversions
-from apps.s3.models import CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteInstanceServer, CngLiteJob, CngLiteJobStatus
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 
@@ -41,8 +41,12 @@ def job(settings, tmp_path, django_user_model):
     )
 
 
-def server(job, status):
-    return {"job_id": str(job.id), "status": status, "url": "", "token": ""}
+def server(job, status, server_id=None):
+    """GeoHosting's answer about `job`'s server (by default the one asked for by its id)."""
+    return {"server_id": str(server_id or job.id), "status": status, "url": "", "token": ""}
+
+
+KEPT_SERVER_ID = "66666666-7777-8888-9999-000000000000"
 
 
 def deprovision(job, *answers):
@@ -74,7 +78,9 @@ def test_deletes_the_server_and_waits_until_its_gone(on_demand, job):
         ("GET", f"{SERVERS}{job.id}/"),
         ("GET", f"{SERVERS}{job.id}/"),
     ]
-    assert job.cloudnativegis_api_token == ""
+    # Its server, mirrored: deleted, its token forgotten.
+    assert job.instance_server.status == "deleted"
+    assert job.instance_server.api_token == ""
     # The request, and the poll that said it's gone - not the one in between.
     assert [(log.method, log.status_code) for log in job.logs.all()] == [
         ("DELETE", 202),
@@ -97,6 +103,44 @@ def test_a_server_gone_meanwhile_is_deleted(on_demand, job):
         httpx.Response(404, json={"detail": "No server for that job."}),
     )
     assert [method for method, _ in requests] == ["DELETE", "GET"]
+
+
+@pytest.mark.django_db
+def test_deletes_its_instance_server_by_its_id(on_demand, job):
+    kept = CngLiteInstanceServer.objects.create(
+        instance_id=KEPT_SERVER_ID,
+        owner=job.owner,
+        status="ready",
+        api_token="server-token",
+    )
+    CngLiteJob.objects.filter(pk=job.pk).update(instance_server=kept)
+    job.refresh_from_db()
+    requests = deprovision(job, httpx.Response(204))
+    assert requests == [("DELETE", f"{SERVERS}{KEPT_SERVER_ID}/")]
+    # GeoHosting has none (any more): forgotten.
+    kept.refresh_from_db()
+    assert (kept.status, kept.api_token) == ("deleted", "")
+
+
+@pytest.mark.django_db
+def test_no_server_to_delete_without_auto_destroy(on_demand, job):
+    CngLiteJob.objects.filter(pk=job.pk).update(auto_destroy=False)
+    job.refresh_from_db()
+    with patch("apps.core.geohosting.httpx.request") as request:
+        job.deprovision()
+    request.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_without_auto_destroy_it_ends_straight_away(on_demand, job):
+    CngLiteJob.objects.filter(pk=job.pk).update(auto_destroy=False)
+    job.refresh_from_db()
+    with patch.object(job, "deprovision") as deprovision:
+        finish_job(job, CngLiteJobStatus.COMPLETED, progress=100)
+    # Its server keeps running, for other jobs.
+    deprovision.assert_not_called()
+    job.refresh_from_db()
+    assert job.status == CngLiteJobStatus.COMPLETED
 
 
 @pytest.mark.django_db

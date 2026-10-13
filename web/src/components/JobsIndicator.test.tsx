@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { ChakraProvider } from '@chakra-ui/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ConversionJob } from '../types'
@@ -50,6 +50,22 @@ describe('JobsIndicator', () => {
     getConversionJobs.mockReset()
   })
   afterEach(() => client.clear())
+
+  it('shows the server a job runs on, with its status', async () => {
+    const server = {
+      instanceId: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'ready' as const, autoDestroy: false,
+      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 }, created: null, jobs: 2,
+    }
+    getConversionJobs.mockResolvedValue([job('a', 'polling', { server }), job('b', 'completed')])
+    renderIndicator(client)
+    await screen.findByText('1')
+    fireEvent.click(document.querySelector('button[aria-controls^="popover-content"]') as HTMLElement)
+    expect(
+      await screen.findByText('aaaaaaaa · 2 vCPU / 4 GB · 40 GB disk · 2 jobs - ready')
+    ).toBeInTheDocument()
+    // Only under the job that has one.
+    expect(screen.getAllByText(/ - ready$/)).toHaveLength(1)
+  })
 
   it('shows how many conversions are running', async () => {
     getConversionJobs.mockResolvedValue([job('a', 'polling'), job('b', 'pending'), job('c', 'completed')])

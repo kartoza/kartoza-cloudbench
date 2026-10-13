@@ -221,9 +221,9 @@ def raise_if_cancelling(job_id):
 def finish_job(job, outcome, **values):
     """End `job` as `outcome` (completed/failed/cancelled), saving `values` with it.
 
-    With CLOUDNATIVEGIS_ON_DEMAND it's DEPROVISIONING first - `outcome` and
-    `values` saved, so a restart can carry on with just this - while
-    GeoHosting deletes its server. A failure to delete it is only logged:
+    With CLOUDNATIVEGIS_ON_DEMAND, for an auto_destroy job, it's
+    DEPROVISIONING first - `outcome` and `values` saved, so a restart can
+    carry on with just this - while GeoHosting deletes its server. A failure to delete it is only logged:
     the job's outcome stands either way. A job failing while it was being
     cancelled ends cancelled. Saved even while CANCELLING (unlike
     update_job): this is what ends it.
@@ -240,7 +240,7 @@ def finish_job(job, outcome, **values):
         outcome = CngLiteJobStatus.CANCELLED
         values = {**values, "message": "Conversion cancelled", "error": ""}
 
-    if settings.CLOUDNATIVEGIS_ON_DEMAND:
+    if job.deprovisions:
         save(status=CngLiteJobStatus.DEPROVISIONING, outcome=outcome, **values)
         try:
             job.deprovision()
@@ -845,7 +845,7 @@ class CNGProcessingClient:
         """Client for the job's CloudNativeGIS (set by provision())."""
         if self._http is None:
             self._http = httpx.Client(
-                base_url=f"{self.job.cloudnativegis_url}/",
+                base_url=f"{self.job.server_url}/",
                 timeout=httpx.Timeout(60, connect=10),
                 follow_redirects=False,
                 headers=self.job.cloudnativegis_headers(),
@@ -862,7 +862,7 @@ class CNGProcessingClient:
             self.job,
             target=CngLiteJobLog.Target.CLOUDNATIVEGIS,
             method=method,
-            url=f"{self.job.cloudnativegis_url}/{path.lstrip('/')}",
+            url=f"{self.job.server_url}/{path.lstrip('/')}",
             request_payload=request_payload,
             status_code=response.status_code if response is not None else None,
             response_payload=_response_body(response) if response is not None else None,

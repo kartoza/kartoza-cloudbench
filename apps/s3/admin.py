@@ -4,7 +4,7 @@ from django.contrib import admin
 
 from apps.core.admin import mask_secret
 
-from .models import CngLiteJob, CngLiteJobLog, S3Connection
+from .models import CngLiteInstanceServer, CngLiteJob, CngLiteJobLog, S3Connection
 
 
 @admin.register(S3Connection)
@@ -72,12 +72,17 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "bucket",
         "status",
         "progress",
+        "instance_id",
+        "auto_destroy",
         "created_at",
         "completed_at",
     ]
-    list_filter = ["kind", "status"]
+    list_select_related = ["owner", "instance_server"]
+    ordering = ["-created_at"]
+    list_filter = ["kind", "status", "auto_destroy"]
     search_fields = [
         "id",
+        "instance_server__instance_id",
         "owner__username",
         "connection__name",
         "bucket",
@@ -98,7 +103,8 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         "cloudnativegis_url",
         "masked_cloudnativegis_api_token",
         "hetzner_server_id",
-        "hetzner_server_specification",
+        "instance_server",
+        "auto_destroy",
         "cng_job_id",
         "cng_results",
         "cng_errors",
@@ -114,3 +120,65 @@ class CngLiteJobAdmin(admin.ModelAdmin):
     @admin.display(description="CloudNativeGIS API token")
     def masked_cloudnativegis_api_token(self, obj: CngLiteJob) -> str:
         return mask_secret(obj.cloudnativegis_api_token)
+
+    @admin.display(description="Instance ID", ordering="instance_server__instance_id")
+    def instance_id(self, obj: CngLiteJob):
+        """Its on-demand server's GeoHosting id, if it has one."""
+        return obj.instance_server.instance_id if obj.instance_server_id else None
+
+
+class CngLiteInstanceServerJobInline(admin.TabularInline):
+    """The jobs that ran on the server (read-only)."""
+
+    model = CngLiteJob
+    fk_name = "instance_server"
+    extra = 0
+    can_delete = False
+    show_change_link = True
+    fields = readonly_fields = ("id", "kind", "source_name", "status", "created_at")
+
+    def has_add_permission(self, _request, _obj=None):
+        return False
+
+
+@admin.register(CngLiteInstanceServer)
+class CngLiteInstanceServerAdmin(admin.ModelAdmin):
+    """On-demand servers, as GeoHosting last answered about them (read-only)."""
+
+    verbose_name = "CloudNativeGIS Lite Instance Server"
+    inlines = [CngLiteInstanceServerJobInline]
+    list_display = [
+        "instance_id",
+        "owner",
+        "status",
+        "type_id",
+        "url",
+        "auto_destroy",
+        "created",
+        "updated_at",
+    ]
+    list_filter = ["status", "auto_destroy"]
+    search_fields = ["instance_id", "owner__username", "url"]
+    readonly_fields = [
+        "instance_id",
+        "owner",
+        "status",
+        "url",
+        "masked_api_token",
+        "type_id",
+        "specification",
+        "error",
+        "auto_destroy",
+        "created",
+        "created_at",
+        "updated_at",
+    ]
+    # Encrypted at rest like the job's token - never shown in plaintext.
+    exclude = ["api_token"]
+
+    def has_add_permission(self, _request):
+        return False
+
+    @admin.display(description="API token")
+    def masked_api_token(self, obj: CngLiteInstanceServer) -> str:
+        return mask_secret(obj.api_token)

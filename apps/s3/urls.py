@@ -71,6 +71,11 @@ urlpatterns = [
         name="s3-conversion-tools",
     ),
     path(
+        "s3/conversion/servers",
+        views.S3ConversionServersView.as_view(),
+        name="s3-conversion-servers",
+    ),
+    path(
         "s3/conversion/jobs",
         views.S3ConversionJobsView.as_view(),
         name="s3-conversion-jobs",

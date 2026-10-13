@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
+  Link,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -40,7 +47,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import type { CloudNativeGISServerType, ConversionJob } from '../../types'
-import { isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
+import { instanceServerLabel, isActiveStatus, isCancellableJob, layerConversionStatuses } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 
@@ -249,6 +256,28 @@ export default function S3UploadDialog() {
   const pickedServerId = inStockServers.some((server) => server.id === hetznerServerId)
     ? hetznerServerId
     : inStockServers[0]?.id
+  // On demand: whether the conversion's server is deleted once it's done,
+  // or kept running (and billed) after it.
+  const [autoDestroy, setAutoDestroy] = useState(true)
+  // On demand: the user's running servers. Picking one runs the conversion
+  // on it instead of starting a new one ("Create new server", the default);
+  // an auto destroy one is listed, but can't be picked.
+  const isOnDemand = !!toolStatus?.cloudnativegis?.onDemand
+  const { data: instanceServers = [] } = useQuery({
+    queryKey: ['conversionServers'],
+    queryFn: () => api.getConversionServers(),
+    enabled: isOpen && isOnDemand,
+  })
+  const [instanceServerId, setInstanceServerId] = useState('')
+  const pickedInstanceId = instanceServers.some(
+    (server) => server.instanceId === instanceServerId && !server.autoDestroy
+  )
+    ? instanceServerId
+    : ''
+  const isNewServer = !pickedInstanceId
+  const requestedHetznerServerId = isNewServer ? pickedServerId : undefined
+  const requestedAutoDestroy = isOnDemand && isNewServer ? autoDestroy : undefined
+  const requestedInstanceServerId = pickedInstanceId || undefined
   const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
   const showCOG = (isTiff || isGpkgFile) && cngLiteConnected
   // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
@@ -391,8 +420,22 @@ export default function S3UploadDialog() {
     setPendingReplace(null)
   }, [selectedFile, customKey])
 
-  const handleUpload = async (replace = false) => {
+  // On demand, before starting a new server: what's confirmed about it -
+  // auto destroyed (not reusable, the next job billed for a new one), or
+  // kept running (reusable, billed until deleted). Holds handleUpload's
+  // `replace` while the warning is open.
+  const [pendingServerWarning, setPendingServerWarning] = useState<{ replace: boolean } | null>(null)
+  const serverWarningCancelRef = useRef<HTMLButtonElement>(null)
+
+  const handleUpload = async (replace = false, serverConfirmed = false) => {
     if (isUploading || isConverting || isInspecting) return
+    // On demand, a conversion on a new server: first (as Upload is clicked)
+    // warn what becomes of the server, and its bill, once the job is done.
+    const converts = isMosaic || (cngLiteConnected && convertToCloudNative && (isGpkgFile || !!targetFormat))
+    if (!serverConfirmed && isOnDemand && isNewServer && converts) {
+      setPendingServerWarning({ replace })
+      return
+    }
     if (!selectedFile || !connectionId) {
       toast({
         title: 'Missing required fields',
@@ -455,7 +498,7 @@ export default function S3UploadDialog() {
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
           connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
-          pickedServerId
+          requestedHetznerServerId, requestedAutoDestroy, requestedInstanceServerId
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -508,7 +551,9 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            pickedServerId
+            requestedHetznerServerId,
+            requestedAutoDestroy,
+            requestedInstanceServerId
           )
         : await api.uploadToS3(
             connectionId,
@@ -525,7 +570,9 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            convertToCloudNative ? pickedServerId : undefined
+            convertToCloudNative ? requestedHetznerServerId : undefined,
+            convertToCloudNative ? requestedAutoDestroy : undefined,
+            convertToCloudNative ? requestedInstanceServerId : undefined
           )
 
       setUploadResult({
@@ -920,10 +967,38 @@ export default function S3UploadDialog() {
                   </FormControl>
                 )}
 
-                {/* On-demand CloudNativeGIS: the server type the conversion runs on */}
-                {onDemandServers.length > 0 && (
+                {/* On-demand CloudNativeGIS: the server the conversion runs on - one
+                    already running, or a new one (its type, and whether it's
+                    deleted once the conversion is done) */}
+                {isOnDemand && (
                   <FormControl>
-                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Conversion server</FormLabel>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server</FormLabel>
+                    <Select
+                      value={pickedInstanceId}
+                      isDisabled={isUploading || isConverting || isInspecting}
+                      onChange={(e) => setInstanceServerId(e.target.value)}
+                      size="sm"
+                      borderRadius="lg"
+                    >
+                      <option value="">Create new server</option>
+                      {instanceServers.map((server) => (
+                        <option key={server.instanceId} value={server.instanceId} disabled={server.autoDestroy}>
+                          {instanceServerLabel(server)}
+                          {server.autoDestroy && ' — auto destroy'}
+                        </option>
+                      ))}
+                    </Select>
+                    {!isNewServer && (
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Runs on this server, and leaves it running.
+                      </Text>
+                    )}
+                  </FormControl>
+                )}
+                {isOnDemand && isNewServer && onDemandServers.length > 0 && (
+                  <>
+                  <FormControl>
+                    <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server type</FormLabel>
                     <Select
                       value={pickedServerId}
                       isDisabled={isUploading || isConverting || isInspecting}
@@ -939,9 +1014,30 @@ export default function S3UploadDialog() {
                       ))}
                     </Select>
                     <Text fontSize="xs" color="gray.500" mt={1}>
-                      Started for this conversion only, and deleted once it&apos;s done. Billed per started hour.
+                      Started for this conversion. Billed per started hour, until it&apos;s deleted.
                     </Text>
                   </FormControl>
+                  <FormControl>
+                    <HStack justify="space-between">
+                      <FormLabel htmlFor="auto-destroy" mb={0} fontWeight="500" color="gray.700" fontSize="sm">
+                        Auto destroy
+                      </FormLabel>
+                      <Switch
+                        id="auto-destroy"
+                        isChecked={autoDestroy}
+                        isDisabled={isUploading || isConverting || isInspecting}
+                        onChange={(e) => setAutoDestroy(e.target.checked)}
+                        colorScheme="orange"
+                        size="sm"
+                      />
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      {autoDestroy
+                        ? 'Auto destroy will destroy the server when this job is done.'
+                        : 'The server keeps running (and billed) after this job is done.'}
+                    </Text>
+                  </FormControl>
+                  </>
                 )}
               </VStack>
 
@@ -1327,26 +1423,91 @@ export default function S3UploadDialog() {
         </ModalBody>
 
         {pendingReplace && (
-          <Alert status="warning" borderRadius={0} alignItems="flex-start" py={3}>
+          // Not shrunk to fit a tall body (the modal is capped at 90vh):
+          // the body scrolls instead.
+          <Alert status="warning" borderRadius={0} alignItems="flex-start" py={3} flexShrink={0}>
             <AlertIcon />
-            <VStack align="stretch" spacing={2} flex="1">
+            <VStack spacing={2} flex="1">
               <Text fontSize="sm">
                 A {pendingReplace.kind} already exists at <Code fontSize="xs">{pendingReplace.folder}/</Code>.
                 Replacing removes everything currently in that folder
                 {pendingReplace.kind === 'layer group' ? ', including layers you don\'t select this time,' : ''}
                 {' '}and publishes this upload there.
               </Text>
-              <HStack justify="flex-end" spacing={2}>
+              <HStack justify="flex-end" spacing={2} width="100%">
                 <Button size="sm" variant="ghost" onClick={() => setPendingReplace(null)}>
                   Keep existing
                 </Button>
-                <Button size="sm" colorScheme="red" onClick={() => handleUpload(true)}>
+                <Button size="sm" colorScheme="red" onClick={() => handleUpload(true, true)}>
                   Replace
                 </Button>
               </HStack>
             </VStack>
           </Alert>
         )}
+
+        <AlertDialog
+          isOpen={!!pendingServerWarning}
+          leastDestructiveRef={serverWarningCancelRef}
+          onClose={() => setPendingServerWarning(null)}
+          isCentered
+        >
+          <AlertDialogOverlay>
+            <AlertDialogContent>
+              <AlertDialogHeader fontSize="lg">
+                {autoDestroy ? 'The server will be destroyed after this job' : 'The server will keep running'}
+              </AlertDialogHeader>
+              <AlertDialogBody>
+                {autoDestroy ? (
+                  <VStack align="stretch" spacing={3} fontSize="sm">
+                    <Text>
+                      <b>Auto destroy is on:</b> the server started for this job is destroyed once the job is
+                      done, and can't be reused for another job.
+                    </Text>
+                    <Text>
+                      Each server is billed per started hour, on its own, so the next job starts a new
+                      server, and is billed for it again.
+                    </Text>
+                  </VStack>
+                ) : (
+                  <VStack align="stretch" spacing={3} fontSize="sm">
+                    <Text>
+                      <b>Auto destroy is off:</b> the server keeps running after this job is done, so the next
+                      jobs can reuse it. It/s billed per started hour for as long as it runs.
+                    </Text>
+                    <Text>
+                      To stop it, delete it on the{' '}
+                      {toolStatus?.cloudnativegis?.serversUrl ? (
+                        <Link href={toolStatus.cloudnativegis.serversUrl} isExternal color="orange.500">
+                          Server on Demand
+                        </Link>
+                      ) : (
+                        'Server on Demand'
+                      )}{' '}
+                      page.
+                    </Text>
+                  </VStack>
+                )}
+              </AlertDialogBody>
+              <AlertDialogFooter>
+                <Button ref={serverWarningCancelRef} variant="ghost" onClick={() => setPendingServerWarning(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  colorScheme="orange"
+                  ml={3}
+                  onClick={() => {
+                    const replace = pendingServerWarning?.replace ?? false
+                    setPendingServerWarning(null)
+                    handleUpload(replace, true)
+                  }}
+                >
+                  Continue
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
 
         <ModalFooter
           gap={3}
@@ -1393,7 +1554,7 @@ export default function S3UploadDialog() {
                   !selectedFile ||
                   shapefileBlocked ||
                   (convertToCloudNative && !!targetFormat && !canConvert(targetFormat)) ||
-                  (!!toolStatus?.cloudnativegis?.onDemand && !pickedServerId)
+                  (isOnDemand && isNewServer && !pickedServerId)
                 }
                 borderRadius="lg"
                 px={6}
