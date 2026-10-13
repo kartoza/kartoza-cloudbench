@@ -217,7 +217,7 @@ describe('S3UploadDialog', () => {
     it('runs on a running server picked, without a new one', async () => {
       const upload = await uploadButton([{ ...cx23, available: true }], [kept])
       await screen.findByRole('option', { name: /^aaaaaaaa/ })
-      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Server' }), kept.instanceId)
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Existing Server' }), kept.instanceId)
       // No server type or auto destroy to pick for it.
       expect(screen.queryByText('Server type')).not.toBeInTheDocument()
       expect(screen.queryByRole('checkbox', { name: 'Auto destroy' })).not.toBeInTheDocument()
