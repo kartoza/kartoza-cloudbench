@@ -64,11 +64,17 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Configuration: getting-started/configuration.md
   - User Guide:
+    - Overview & Workflow: user-guide/overview.md
+    - Connections: user-guide/connections.md
     - Web UI: user-guide/web-ui.md
     - TUI: user-guide/tui.md
     - GeoServer Management: user-guide/geoserver.md
+    - GeoNode Uploads: user-guide/geonode.md
     - File Uploads: user-guide/uploads.md
+    - On-demand Conversions: user-guide/on-demand-conversions.md
+    - Cloud-Native Formats: user-guide/formats.md
     - Layer Preview: user-guide/preview.md
+    - Troubleshooting: user-guide/troubleshooting.md
   - Administrator Guide:
     - Deployment: admin-guide/deployment.md
     - Docker: admin-guide/docker.md
@@ -76,6 +82,7 @@ nav:
   - Developer Guide:
     - Architecture: dev-guide/architecture.md
     - API Reference: dev-guide/api.md
+    - Testing: dev-guide/testing.md
     - Contributing: dev-guide/contributing.md
   - About:
     - License: about/license.md
