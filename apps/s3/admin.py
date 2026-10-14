@@ -5,7 +5,7 @@ from django.contrib import admin, messages
 from apps.core.admin import mask_secret
 from apps.core.geohosting import GeoHostingError
 
-from .models import CngLiteServer, CngLiteJob, CngLiteJobLog, S3Connection
+from .models import CngLiteJob, CngLiteJobLog, CngLiteServer, S3Connection
 
 
 @admin.register(S3Connection)

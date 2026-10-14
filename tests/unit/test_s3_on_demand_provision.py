@@ -7,7 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient
-from apps.s3.models import CngLiteServer, CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, CngLiteServer
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 

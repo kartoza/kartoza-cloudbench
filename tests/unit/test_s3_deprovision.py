@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 from apps.s3.cng_lite import CNGProcessingClient, finish_job, resume_interrupted_conversions
-from apps.s3.models import CngLiteServer, CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, CngLiteServer
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 
