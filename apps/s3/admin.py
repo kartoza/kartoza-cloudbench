@@ -1,10 +1,11 @@
 """Admin registration for S3 connections and CloudNativeGIS Lite jobs."""
 
-from django.contrib import admin
+from django.contrib import admin, messages
 
 from apps.core.admin import mask_secret
+from apps.core.geohosting import GeoHostingError
 
-from .models import CngLiteInstanceServer, CngLiteJob, CngLiteJobLog, S3Connection
+from .models import CngLiteJob, CngLiteJobLog, CngLiteServer, S3Connection
 
 
 @admin.register(S3Connection)
@@ -127,7 +128,7 @@ class CngLiteJobAdmin(admin.ModelAdmin):
         return obj.instance_server.instance_id if obj.instance_server_id else None
 
 
-class CngLiteInstanceServerJobInline(admin.TabularInline):
+class CngLiteServerJobInline(admin.TabularInline):
     """The jobs that ran on the server (read-only)."""
 
     model = CngLiteJob
@@ -141,12 +142,13 @@ class CngLiteInstanceServerJobInline(admin.TabularInline):
         return False
 
 
-@admin.register(CngLiteInstanceServer)
-class CngLiteInstanceServerAdmin(admin.ModelAdmin):
+@admin.register(CngLiteServer)
+class CngLiteServerAdmin(admin.ModelAdmin):
     """On-demand servers, as GeoHosting last answered about them (read-only)."""
 
-    verbose_name = "CloudNativeGIS Lite Instance Server"
-    inlines = [CngLiteInstanceServerJobInline]
+    verbose_name = "CloudNativeGIS Lite Server"
+    inlines = [CngLiteServerJobInline]
+    actions = ["sync_from_geohosting"]
     list_display = [
         "instance_id",
         "owner",
@@ -179,6 +181,22 @@ class CngLiteInstanceServerAdmin(admin.ModelAdmin):
     def has_add_permission(self, _request):
         return False
 
+    @admin.action(description="Sync from GeoHosting")
+    def sync_from_geohosting(self, request, queryset):
+        """Ask GeoHosting about the selected servers again (see CngLiteServer.sync_from_geohosting)."""
+        synced = 0
+        for server in queryset.select_related("owner"):
+            try:
+                server.sync_from_geohosting()
+            except GeoHostingError as exc:
+                self.message_user(request, f"{server}: {exc}", level=messages.ERROR)
+            else:
+                synced += 1
+        if synced:
+            self.message_user(
+                request, f"{synced} server(s) synced from GeoHosting.", level=messages.SUCCESS
+            )
+
     @admin.display(description="API token")
-    def masked_api_token(self, obj: CngLiteInstanceServer) -> str:
+    def masked_api_token(self, obj: CngLiteServer) -> str:
         return mask_secret(obj.api_token)

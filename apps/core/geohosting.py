@@ -102,7 +102,7 @@ class GeoHostingClient:
 
     # -- On-demand servers ------------------------------------------------------
     #
-    # A server (GeoHosting's HetznerServerInstance) is known by its
+    # A server (GeoHosting's HetznerServer) is known by its
     # `server_id`, and can run several jobs (its `job_ids`). Each call takes
     # an optional `log` callback, called once per request with method, url,
     # request_payload, status_code, response_payload, error and duration_ms -

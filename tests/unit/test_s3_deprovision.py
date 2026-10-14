@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 from apps.s3.cng_lite import CNGProcessingClient, finish_job, resume_interrupted_conversions
-from apps.s3.models import CngLiteInstanceServer, CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, CngLiteServer
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 
@@ -107,7 +107,7 @@ def test_a_server_gone_meanwhile_is_deleted(on_demand, job):
 
 @pytest.mark.django_db
 def test_deletes_its_instance_server_by_its_id(on_demand, job):
-    kept = CngLiteInstanceServer.objects.create(
+    kept = CngLiteServer.objects.create(
         instance_id=KEPT_SERVER_ID,
         owner=job.owner,
         status="ready",

@@ -92,7 +92,7 @@ GeoHosting side (`django_project/geohosting_controller/`):
 | # | Work | Status |
 |---|---|---|
 | G1 | `HetznerClient` as a service (`connections/hetzner.py`) | done |
-| G2 | `EncryptedCharField`, `HetznerServer` catalog (admin "Sync from Hetzner"), `HetznerServerInstance`, `CloudBenchLog`, admin | done |
+| G2 | `EncryptedCharField`, `HetznerServerType` catalog (admin "Sync from Hetzner"), `HetznerServer`, `CloudBenchLog`, admin | done |
 | G3 | `start()` / `remove()`, Celery tasks `spin_up_server` / `delete_server` | done |
 | G4 | API `POST /servers/`, `GET` / `DELETE /servers/<job_id>/` (OAuth scope `cloudbench` only) | done |
 | G5 | Reaper (Celery beat) for stuck/forgotten servers | deferred — **required before production** |
@@ -118,10 +118,10 @@ Decisions:
 - Asynchronous: POST answers 202, Celery spins the server up, CloudBench polls.
 - The cng-lite token is stored encrypted on both sides and cleared once the
   server is deleted.
-- Server type: the user picks one of GeoHosting's enabled x86 `HetznerServer`s
+- Server type: the user picks one of GeoHosting's enabled x86 `HetznerServerType`s
   (by id) in the upload dialog; it's required on demand. Only that one is
   started — out of stock fails the job, no fallback.
-- `HetznerServer` sync: a changed price/currency is a new row (no unique
+- `HetznerServerType` sync: a changed price/currency is a new row (no unique
   constraint), taking over `enable` from the old one; the old row is kept.
 - No CloudBench-side timeout for starting/deleting a server, and no stale
   handling there: GeoHosting handles it.

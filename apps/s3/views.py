@@ -55,8 +55,8 @@ from .geopackage_convert import start_geopackage_conversion as start_geopackage_
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
-    CngLiteInstanceServer,
     CngLiteJob,
+    CngLiteServer,
     S3Connection,
 )
 from .mosaic import start_mosaic
@@ -163,10 +163,10 @@ def _requested_server(data, user):
         except ValueError:
             instance_id = None
         server = (
-            CngLiteInstanceServer.objects.filter(
+            CngLiteServer.objects.filter(
                 owner=user,
                 instance_id=instance_id,
-                status__in=CngLiteInstanceServer.RUNNING,
+                status__in=CngLiteServer.RUNNING,
                 auto_destroy=False,
             ).first()
             if instance_id
@@ -1059,7 +1059,7 @@ class S3ConversionServersView(APIView):
     """The user's running on-demand servers, to run a conversion on."""
 
     def get(self, request):
-        """GET: {servers: [...]}, as GeoHosting has them now (see CngLiteInstanceServer.running_for).
+        """GET: {servers: [...]}, as GeoHosting has them now (see CngLiteServer.running_for).
 
         The auto_destroy ones are listed too, but can't be picked (see
         _requested_server). None without CLOUDNATIVEGIS_ON_DEMAND; 503 if
@@ -1068,7 +1068,7 @@ class S3ConversionServersView(APIView):
         if not settings.CLOUDNATIVEGIS_ON_DEMAND or not GeoHostingClient.is_configured():
             return Response({"servers": []})
         try:
-            servers = CngLiteInstanceServer.running_for(request.user)
+            servers = CngLiteServer.running_for(request.user)
         except GeoHostingError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"servers": [server.to_dict() for server in servers]})
