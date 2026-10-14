@@ -71,7 +71,9 @@ def test_admin_action(admin_client, server):
 
 
 def test_admin_action_reports_an_error(admin_client, server):
-    with patch.object(GeoHostingClient, "get_server", side_effect=GeoHostingError("GeoHosting is down")):
+    with patch.object(
+        GeoHostingClient, "get_server", side_effect=GeoHostingError("GeoHosting is down")
+    ):
         response = run_action(admin_client, server)
 
     server.refresh_from_db()
