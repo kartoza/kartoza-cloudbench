@@ -46,6 +46,39 @@ import { useUIStore } from '../stores/uiStore'
 // Disable Cesium Ion (we don't use it)
 Cesium.Ion.defaultAccessToken = ''
 
+// Web Mercator (EPSG:3857) metres -> lon/lat degrees.
+function mercatorToLngLat(x: number, y: number): [number, number] {
+  const R = 20037508.342789244
+  const lng = (x / R) * 180
+  const lat = (Math.atan(Math.exp((y / R) * Math.PI)) * 360) / Math.PI - 90
+  return [lng, lat]
+}
+
+// A COG/GeoTIFF's lon/lat extent, read from the file itself. The preview API
+// doesn't return bounds for rasters, so without this a COG renders but is
+// never placed on the map (it stays blank). Handles the CRSs CloudBench's
+// conversion produces: the source COG (often EPSG:4326) and its 3857 copy.
+function boundsFromGeoTIFF(
+  image: GeoTIFF.GeoTIFFImage
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  try {
+    const [minX, minY, maxX, maxY] = image.getBoundingBox()
+    const keys = image.getGeoKeys() ?? {}
+    const epsg = keys.ProjectedCSTypeGeoKey || keys.GeographicTypeGeoKey
+    if (epsg === 4326 || (!keys.ProjectedCSTypeGeoKey && keys.GeographicTypeGeoKey === 4326)) {
+      return { minX, minY, maxX, maxY }
+    }
+    if (epsg === 3857 || epsg === 900913) {
+      const [west, south] = mercatorToLngLat(minX, minY)
+      const [east, north] = mercatorToLngLat(maxX, maxY)
+      return { minX: west, minY: south, maxX: east, maxY: north }
+    }
+  } catch {
+    // Unreadable geokeys: fall through and leave it unplaced.
+  }
+  return null
+}
+
 interface S3LayerPreviewProps {
   connectionId: string
   bucketName: string
@@ -528,8 +561,9 @@ export default function S3LayerPreview({
 
             ctx.putImageData(imageData, 0, 0)
 
-            // Add as image source to map
-            const bounds = metadata.bounds
+            // Add as image source to map. The preview API doesn't send bounds
+            // for rasters, so fall back to the extent read from the COG itself.
+            const bounds = metadata.bounds ?? boundsFromGeoTIFF(image)
             if (bounds && map.current) {
               map.current.addSource('s3-layer', {
                 type: 'image',
@@ -549,6 +583,11 @@ export default function S3LayerPreview({
                 paint: {
                   'raster-opacity': 1,
                 },
+              })
+
+              map.current.fitBounds([bounds.minX, bounds.minY, bounds.maxX, bounds.maxY], {
+                padding: 50,
+                maxZoom: 15,
               })
             }
           }
