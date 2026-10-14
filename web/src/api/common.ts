@@ -13,7 +13,17 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   if (token) {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
     if (url.startsWith(API_BASE) || url.startsWith('/api')) {
-      init = { ...init, headers: { Authorization: `Token ${token}`, ...(init?.headers ?? {}) } }
+      // Build via Headers so a caller's existing headers are kept whatever
+      // form they take — a plain object, an array, or a Headers instance.
+      // Spreading `...init.headers` dropped a Headers instance entirely
+      // (it has no enumerable own properties), which stripped the Range
+      // header pmtiles sends as a Headers object: the proxy then answered
+      // 200 (whole file) instead of 206, and pmtiles rejected it with
+      // "content-length exceeding request". geotiff passes a plain object,
+      // so its ranges survived and COGs loaded — this only bit pmtiles.
+      const headers = new Headers(init?.headers ?? {})
+      if (!headers.has('Authorization')) headers.set('Authorization', `Token ${token}`)
+      init = { ...init, headers }
     }
   }
   return _originalFetch(input, init)

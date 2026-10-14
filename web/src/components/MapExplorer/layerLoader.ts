@@ -9,6 +9,7 @@ import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import type { LidarControl } from 'maplibre-gl-lidar'
 import { getS3PresignedUrl, type LayerFormat } from '../../api/mapExplorer'
+import { getS3ProxyURL } from '../../api/s3'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -190,13 +191,21 @@ export async function loadLayerOntoMap(
   // The map's point cloud control, created on first use (COPC only).
   getLidar?: () => LidarControl
 ): Promise<LoadedLayerInfo> {
-  const url = await getS3PresignedUrl(connectionId, layer.key)
-
+  // COPC's point cloud is read in a Web Worker, which doesn't go through the
+  // app's fetch patch that injects the auth token, so the same-origin proxy
+  // answers it 401 — it needs a presigned bucket URL. COG and PMTiles are
+  // fetched on the main thread (the patched window.fetch adds the token), so
+  // they go through the same-origin proxy: a presigned bucket URL points at
+  // the bucket's own origin, which sends no CORS headers, so fetching it from
+  // the page fails ("Request failed") even though opening the link works.
   if (layer.format === 'copc') {
     if (!getLidar) throw new Error('This map cannot show point clouds.')
-    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), url, layer.opacity)
+    const presignedUrl = await getS3PresignedUrl(connectionId, layer.key)
+    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), presignedUrl, layer.opacity)
     return { bounds, isVector: false, pointCloudId }
   }
+
+  const url = getS3ProxyURL(connectionId, layer.key)
 
   if (layer.format === 'cog') {
     const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
