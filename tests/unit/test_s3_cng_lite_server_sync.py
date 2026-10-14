@@ -16,6 +16,9 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def server(settings, django_user_model):
     settings.CLOUDBENCH_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    settings.GEOHOSTING_URL = "http://geohosting"
+    settings.GEOHOSTING_CLIENT_ID = "cloudbench"
+    settings.GEOHOSTING_CLIENT_SECRET = "secret"
     return CngLiteServer.objects.create(
         instance_id=uuid.uuid4(),
         owner=django_user_model.objects.create(username="tim"),
