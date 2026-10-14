@@ -121,7 +121,7 @@ describe('S3UploadDialog', () => {
       api.getConversionToolStatus.mockResolvedValue({
         cloudnativegis: {
           available: true, onDemand: true, servers,
-          serversUrl: 'http://geohosting/#/dashboard/hetzner-server-instance',
+          serversUrl: 'http://geohosting/#/dashboard/server-on-demand',
         },
       })
       api.getConversionServers.mockResolvedValue(instanceServers)
@@ -179,7 +179,7 @@ describe('S3UploadDialog', () => {
       await userEvent.click(upload)
       expect(await screen.findByText('The server will keep running')).toBeInTheDocument()
       expect(screen.getByRole('link', { name: 'Server on Demand' })).toHaveAttribute(
-        'href', 'http://geohosting/#/dashboard/hetzner-server-instance'
+        'href', 'http://geohosting/#/dashboard/server-on-demand'
       )
       await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 

@@ -115,7 +115,7 @@ def on_demand_availability(health, server_types, user=None):
 
 
 # GeoHosting's page of the user's servers, as the geohosting fixture has it.
-SERVERS_URL = "http://geohosting/#/dashboard/hetzner-server-instance"
+SERVERS_URL = "http://geohosting/#/dashboard/server-on-demand"
 
 
 def test_on_demand_available_with_a_server_type_to_start(geohosting):

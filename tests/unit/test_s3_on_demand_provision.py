@@ -7,7 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from apps.core.geohosting import GeoHostingClient
-from apps.s3.models import CngLiteInstanceServer, CngLiteJob, CngLiteJobStatus
+from apps.s3.models import CngLiteServer, CngLiteJob, CngLiteJobStatus
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 
@@ -212,7 +212,7 @@ def test_asks_again_for_a_server_gone_meanwhile(job):
 
 @pytest.mark.django_db
 def test_runs_on_a_running_server_picked(job):
-    picked = CngLiteInstanceServer.objects.create(
+    picked = CngLiteServer.objects.create(
         instance_id=NEW_SERVER_ID,
         owner=job.owner,
         status="ready",
@@ -231,12 +231,12 @@ def test_runs_on_a_running_server_picked(job):
     [(method, _, payload)] = requests
     assert (method, payload["server_id"]) == ("POST", NEW_SERVER_ID)
     assert job.instance_server == picked
-    assert CngLiteInstanceServer.objects.count() == 1
+    assert CngLiteServer.objects.count() == 1
 
 
 @pytest.mark.django_db
 def test_a_picked_server_gone_fails_the_job(job):
-    picked = CngLiteInstanceServer.objects.create(
+    picked = CngLiteServer.objects.create(
         instance_id=NEW_SERVER_ID,
         owner=job.owner,
         status="ready",
@@ -251,7 +251,7 @@ def test_a_picked_server_gone_fails_the_job(job):
             httpx.Response(409, json={"detail": "That server is deleted; ask for a new one."}),
         )
     # No new server started in its place.
-    assert CngLiteInstanceServer.objects.count() == 1
+    assert CngLiteServer.objects.count() == 1
 
 
 @pytest.mark.django_db

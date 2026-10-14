@@ -637,7 +637,7 @@ export interface ConversionToolInfo {
 
 // A Hetzner server type GeoHosting may start an on-demand CloudNativeGIS server as.
 export interface CloudNativeGISServerType {
-  // GeoHosting's HetznerServer id: what a conversion's server is started as.
+  // GeoHosting's HetznerServerType id: what a conversion's server is started as.
   id: number
   type: string
   location: string
@@ -650,7 +650,7 @@ export interface CloudNativeGISServerType {
 }
 
 // One of the user's running on-demand CloudNativeGIS servers (GeoHosting's
-// HetznerServerInstance) a conversion can run on.
+// HetznerServer) a conversion can run on.
 export interface CloudNativeGISInstanceServer {
   instanceId: string
   // Only provisioning/ready ones are listed to run a conversion on; a

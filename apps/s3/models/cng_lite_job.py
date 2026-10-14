@@ -12,7 +12,7 @@ from django.db.models import Q
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
-from .cng_lite_instance_server import CngLiteInstanceServer
+from .cng_lite_server import CngLiteServer
 from .s3_connection import S3Connection
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ CONVERSION_FORMATS = {
 
 
 # GeoHosting's page of a user's on-demand servers ("Server on Demand").
-GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/hetzner-server-instance"
+GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/server-on-demand"
 
 
 def _is_healthy(url):
@@ -146,7 +146,7 @@ class CngLiteJob(models.Model):
     cloudnativegis_url = models.URLField(max_length=2000, blank=True, default="")
     cloudnativegis_api_token = EncryptedCharField(blank=True, default="")
     # CLOUDNATIVEGIS_ON_DEMAND (required there): the id of the GeoHosting
-    # HetznerServer (a server type in a location) the user picked for the
+    # HetznerServerType (a server type in a location) the user picked for the
     # job's server, from the enabled ones (see availability). Null without
     # on demand.
     hetzner_server_id = models.PositiveIntegerField(null=True, blank=True)
@@ -155,7 +155,7 @@ class CngLiteJob(models.Model):
     # GeoHosting started for it, once GeoHosting has answered about it (see
     # _provision_on_demand).
     instance_server = models.ForeignKey(
-        CngLiteInstanceServer,
+        CngLiteServer,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
@@ -322,8 +322,8 @@ class CngLiteJob(models.Model):
         self._set_message("Starting a CloudNativeGIS server")
 
         server = self._ask_geohosting_for_server(geohosting, log)
-        while server.status != CngLiteInstanceServer.Status.READY:
-            if server.status == CngLiteInstanceServer.Status.FAILED:
+        while server.status != CngLiteServer.Status.READY:
+            if server.status == CngLiteServer.Status.FAILED:
                 raise ValueError(
                     "GeoHosting couldn't start a CloudNativeGIS server: "
                     f"{server.error or 'unknown error'}"
@@ -336,8 +336,8 @@ class CngLiteJob(models.Model):
             else:
                 server = self._keep_server(answer)
             if server.status in (
-                CngLiteInstanceServer.Status.DELETING,
-                CngLiteInstanceServer.Status.DELETED,
+                CngLiteServer.Status.DELETING,
+                CngLiteServer.Status.DELETED,
             ):
                 # Gone meanwhile (e.g. cleaned up): ask for a new one.
                 server = self._ask_geohosting_for_server(geohosting, log)
@@ -383,7 +383,7 @@ class CngLiteJob(models.Model):
 
     def _keep_server(self, answer):
         """Save GeoHosting's `answer` about this job's server, linked as its instance_server."""
-        server = CngLiteInstanceServer.record(answer, self.owner, self.auto_destroy)
+        server = CngLiteServer.record(answer, self.owner, self.auto_destroy)
         linked = self.instance_server_id == server.pk
         self.instance_server = server
         if not linked:
@@ -410,7 +410,7 @@ class CngLiteJob(models.Model):
         answer = geohosting.delete_server(server_id, log=log)
         while answer is not None:
             server = self._keep_server(answer)
-            if server.status == CngLiteInstanceServer.Status.DELETED:
+            if server.status == CngLiteServer.Status.DELETED:
                 return
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
             answer = geohosting.get_server(server_id, log=log)

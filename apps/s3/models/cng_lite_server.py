@@ -8,8 +8,8 @@ from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
 
-class CngLiteInstanceServer(models.Model):
-    """A GeoHosting HetznerServerInstance: a CloudNativeGIS server jobs run on.
+class CngLiteServer(models.Model):
+    """A GeoHosting HetznerServer: a CloudNativeGIS server jobs run on.
 
     CLOUDNATIVEGIS_ON_DEMAND only. Kept as GeoHosting last answered about it
     (see record) - one server can run several of its owner's jobs (`jobs`).
@@ -31,14 +31,14 @@ class CngLiteInstanceServer(models.Model):
     # what it's asked for again by.
     instance_id = models.UUIDField(unique=True)
     owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cng_lite_instance_servers"
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cng_lite_servers"
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROVISIONING)
     # Its CloudNativeGIS service, and its bearer token (encrypted at rest) -
     # only while it's ready: GeoHosting gives them out only then.
     url = models.URLField(max_length=2000, blank=True, default="")
     api_token = EncryptedCharField(blank=True, default="")
-    # The GeoHosting HetznerServer (a server type in a location) it was
+    # The GeoHosting HetznerServerType (a server type in a location) it was
     # started as, and its specifications (cores, memory, disk, ...).
     type_id = models.PositiveIntegerField(null=True, blank=True)
     specification = models.JSONField(null=True, blank=True)
@@ -110,6 +110,19 @@ class CngLiteInstanceServer(models.Model):
             else:
                 cls.record(answer, user)
         return [server for server in running if server.status in cls.RUNNING]
+
+    def sync_from_geohosting(self):
+        """Ask GeoHosting about it again, saving its answer (see record).
+
+        Forgotten (see forget) if GeoHosting has none any more. Raises
+        GeoHostingError if GeoHosting can't be asked.
+        """
+        answer = GeoHostingClient().get_server(self.instance_id)
+        if answer is None:
+            self.forget()
+        else:
+            self.record(answer, self.owner)
+            self.refresh_from_db()
 
     def to_dict(self):
         return {
