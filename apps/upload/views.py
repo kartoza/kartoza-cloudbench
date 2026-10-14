@@ -29,6 +29,19 @@ from .models import UploadSession
 User = get_user_model()
 
 
+def _safe_filename(filename: str) -> str:
+    """The basename of an uploaded file, rejecting path-traversal names.
+
+    The filename comes from the client and is later joined onto the upload
+    directory, so ``../`` or an absolute path would escape it. Keep only the
+    final component and refuse one that is empty, ``.`` or ``..``.
+    """
+    name = Path(str(filename)).name
+    if name in ("", ".", ".."):
+        raise UploadError(f"Invalid filename: {filename!r}")
+    return name
+
+
 def _get_session(session_id: str) -> UploadSession | None:
     """Look up an upload session; a malformed (non-UUID) id is just not found."""
     try:
@@ -43,7 +56,9 @@ def _assemble_file(session: UploadSession) -> Path:
         raise UploadError(f"Missing chunks: {missing}", str(session.session_id))
 
     upload_dir = Path(session.upload_dir)
-    final_path = upload_dir / session.filename
+    # Defence in depth: the filename is sanitised at init, but never write
+    # outside the session's own directory even if a bad value slipped in.
+    final_path = upload_dir / _safe_filename(session.filename)
     with open(final_path, "wb") as outfile:
         for i in range(session.total_chunks):
             chunk_path = upload_dir / f"chunk_{i:06d}"
@@ -83,6 +98,11 @@ class UploadInitView(APIView):
                 {"error": "filename and fileSize are required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            filename = _safe_filename(filename)
+        except UploadError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         max_size = getattr(settings, "UPLOAD_MAX_FILE_SIZE", 10 * 1024 * 1024 * 1024)
         if file_size > max_size:
