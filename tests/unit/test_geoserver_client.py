@@ -166,9 +166,7 @@ WRITE_CASES = [
     ("update_style_content", ("st", "<sld/>"), "PUT"),
     ("delete_style", ("st",), "DELETE"),
     ("update_layer_styles", ("ws", "ly", "st"), "PUT"),
-    ("upload_shapefile", ("ws", "ds", b"zip"), "PUT"),
-    ("upload_geotiff", ("ws", "cs", b"tiff"), "PUT"),
-    ("upload_geopackage", ("ws", "ds", b"gpkg"), "PUT"),
+    ("upload_store_file", ("ws", "ds", "a.zip", [b"zip"], 3, 30), "PUT"),
 ]
 
 

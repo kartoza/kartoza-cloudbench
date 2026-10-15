@@ -223,19 +223,6 @@ export interface Coverage {
   store: string
 }
 
-// Upload types
-export interface UploadResult {
-  success: boolean
-  message: string
-  storeName?: string
-  storeType?: string
-  published?: boolean
-  path?: string
-  filename?: string
-  fileSize?: number
-  sessionId?: string
-}
-
 // Preview types
 export interface PreviewRequest {
   connId: string
