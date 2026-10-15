@@ -49,6 +49,12 @@ server picker and the cost confirmation in the upload dialog.
 6. Watch the job. The dialog reports each stage and refreshes the bucket
    listing when it finishes. You can close the dialog — the job keeps running.
 
+![The S3 upload dialog in on-demand mode — a GeoTIFF marked for COG conversion, a Server type picker with specs and price per hour, and an Auto destroy toggle](images/s3-upload-ondemand.png)
+
+The **Server type** picker and the cost confirmation are what set on-demand
+apart from fixed mode; the price shown (for example `0.0176 EUR/h`) is Hetzner's
+plus a margin.
+
 ## What happens behind the scenes
 
 A conversion moves through these stages, and you can follow them on the job:

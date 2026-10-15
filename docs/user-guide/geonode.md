@@ -13,6 +13,8 @@ its title and abstract in the same step. For adding the connection, see
 4. Upload. CloudBench sends the file to GeoNode and reports when the import
    finishes.
 
+![The GeoNode upload dialog — a Dataset/Document switch, the chosen file, and Title and Abstract fields](images/geonode-upload.png)
+
 ## Titles and abstracts
 
 GeoNode imports a dataset under a name derived from the file, and does **not**

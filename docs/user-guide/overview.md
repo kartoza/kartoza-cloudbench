@@ -10,6 +10,8 @@ task follows. For installing or deploying it, see
 [Getting Started](../getting-started/installation.md); for each screen in
 detail, see the rest of the User Guide.
 
+![The CloudBench dashboard — connection tree on the left, server status on the right](images/dashboard.png)
+
 ## Where CloudBench runs
 
 CloudBench runs in two places, and both use the same interface:

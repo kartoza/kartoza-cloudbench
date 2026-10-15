@@ -16,6 +16,8 @@ type and switch between them in the tree.
 3. Click **Test** — CloudBench checks it can reach the service and
    authenticate — then **Save**. A connection that fails the test is not saved.
 
+![The Add S3 Connection dialog — name, endpoint, bucket, and access keys, with Test Connection and Add Connection](images/add-s3-connection.png)
+
 Inside GeoHosting, the connections for your instances are usually added for
 you; you can still add your own.
 
