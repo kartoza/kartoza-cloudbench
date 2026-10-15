@@ -9,6 +9,7 @@ main
 
 static/
 .env
+.env.staging
 
 web/public/maputnik/
 
@@ -69,3 +70,7 @@ volumes
 
 # MkDocs build output
 site/
+.staging-auth.json
+.staging-browser-state.json
+.staging/
+.staging-token

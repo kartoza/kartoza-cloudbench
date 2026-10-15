@@ -187,6 +187,7 @@ markers = [
     "api: API endpoint tests",
     "tui: TUI tests",
     "frontend: Frontend component tests",
+    "staging: Browser tests against staging (tests/staging, needs browser_login.py)",
 ]
 
 [tool.coverage.run]
