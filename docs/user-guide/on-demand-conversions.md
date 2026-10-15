@@ -103,11 +103,6 @@ and is marked cancelled. A GeoPackage's paired jobs are cancelled together.
   has no server to run on in on-demand mode, so the upload reports an error
   ("Pick a server to run the conversion on", or a 502 from the inspect step).
   Use the fixed mode for GeoPackages, or convert their layers separately.
-- **Point-cloud (COPC) preview needs bucket CORS.** The conversion works and
-  the `.copc.laz` lands in the bucket, but previewing it reads the file from
-  the bucket's own origin in a background worker. Unless the bucket sends CORS
-  headers, that preview stays blank. The file itself is fine to download and
-  open elsewhere.
 - **One server per job.** A GeoPackage's two jobs (in fixed mode) use one
   server each, run one after the other, not a shared server.
 

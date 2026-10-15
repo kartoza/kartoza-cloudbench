@@ -37,7 +37,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import { parquetMetadata, parquetReadObjects } from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 import * as api from '../api'
-import { getS3PresignedUrl } from '../api/mapExplorer'
+import { getS3ProxyURL } from '../api/s3'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
@@ -1045,11 +1045,17 @@ export default function S3LayerPreview({
       lidarControl.current = control
       mapInstance.addControl(control, 'top-right')
 
-      // From a presigned URL, not the proxy: maplibre-gl-lidar fetches the
-      // file itself, without CloudBench's auth token (the proxy answered
-      // 401), and S3 serves the octree's byte ranges directly.
-      getS3PresignedUrl(connectionId, objectKey)
-        .then((url) => control.loadPointCloud(url))
+      // Through the same-origin proxy, not a presigned bucket URL (the bucket
+      // sends no CORS headers). maplibre-gl-lidar reads the octree's byte
+      // ranges from a Web Worker that can't set an Authorization header, so the
+      // token rides in the URL as ?token= (QueryTokenAuthentication on the
+      // proxy view). The URL must be absolute — the reader parses it with
+      // new URL(source).
+      const token = localStorage.getItem('token')
+      const copcUrl = new URL(getS3ProxyURL(connectionId, objectKey), window.location.origin)
+      if (token) copcUrl.searchParams.set('token', token)
+      control
+        .loadPointCloud(copcUrl.toString())
         .catch((err) => setError(`Could not load the point cloud: ${err instanceof Error ? err.message : err}`))
       setPointCloudLoaded(true)
     })

@@ -43,11 +43,11 @@ Common symptoms and what to check. Page-specific troubleshooting also lives in
   couldn't read the file from the bucket. Recent CloudBench reads these through
   its own proxy to avoid this; if you still see it, make sure you are on the
   current build.
-- **Point cloud (COPC) preview is blank.** Previewing a `.copc.laz` reads it
-  from the bucket's own origin in a background worker, which needs CORS headers
-  on the bucket. Until those are set, the preview stays blank — the file itself
-  is fine to download and open elsewhere. See
-  [On-demand Conversions → Current limits](on-demand-conversions.md#current-limits).
+- **Point cloud (COPC) preview is blank.** Like the other formats, a `.copc.laz`
+  is streamed through CloudBench's own proxy, so a blank preview usually means
+  you are on an older build — make sure you are on the current one. If it stays
+  blank on the current build, the file's extent may be unreadable; downloading
+  it and opening it in a desktop GIS confirms the data is intact.
 - **Layer in the wrong place.** Check its coordinate system and bounding box.
 
 ## Still stuck?

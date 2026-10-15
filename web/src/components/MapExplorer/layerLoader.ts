@@ -8,7 +8,7 @@ import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import type { LidarControl } from 'maplibre-gl-lidar'
-import { getS3PresignedUrl, type LayerFormat } from '../../api/mapExplorer'
+import { type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
 import type { LegendItem } from './types'
 
@@ -191,17 +191,25 @@ export async function loadLayerOntoMap(
   // The map's point cloud control, created on first use (COPC only).
   getLidar?: () => LidarControl
 ): Promise<LoadedLayerInfo> {
-  // COPC's point cloud is read in a Web Worker, which doesn't go through the
-  // app's fetch patch that injects the auth token, so the same-origin proxy
-  // answers it 401 — it needs a presigned bucket URL. COG and PMTiles are
-  // fetched on the main thread (the patched window.fetch adds the token), so
-  // they go through the same-origin proxy: a presigned bucket URL points at
-  // the bucket's own origin, which sends no CORS headers, so fetching it from
-  // the page fails ("Request failed") even though opening the link works.
+  // Everything streams through the same-origin proxy, never a presigned
+  // bucket URL (the bucket sends no CORS headers, so a page fetch of one
+  // fails "Request failed"). COG and PMTiles are fetched on the main thread,
+  // where the patched window.fetch (api/common.ts) adds the auth token. COPC
+  // is read in a Web Worker (maplibre-gl-lidar), which that patch can't reach
+  // and which can't set an Authorization header, so its proxy URL carries the
+  // token as a ?token= query parameter instead (QueryTokenAuthentication on
+  // the proxy view) — no bucket CORS needed.
   if (layer.format === 'copc') {
     if (!getLidar) throw new Error('This map cannot show point clouds.')
-    const presignedUrl = await getS3PresignedUrl(connectionId, layer.key)
-    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), presignedUrl, layer.opacity)
+    // The COPC reader parses the URL with `new URL(source)` (no base) and
+    // fetches it from its Worker, so it must be absolute, not the root-relative
+    // `/api/...` the proxy helper returns. Resolve it against this page's origin
+    // (same-origin, so no bucket CORS) and add the token the Worker can't send
+    // as a header.
+    const token = localStorage.getItem('token')
+    const url = new URL(getS3ProxyURL(connectionId, layer.key), window.location.origin)
+    if (token) url.searchParams.set('token', token)
+    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), url.toString(), layer.opacity)
     return { bounds, isVector: false, pointCloudId }
   }
 

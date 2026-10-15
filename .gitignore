@@ -74,3 +74,4 @@ site/
 .staging-browser-state.json
 .staging/
 .staging-token
+.local-token
