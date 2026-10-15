@@ -8,8 +8,8 @@ on the map. Most files are EPSG:4326. Files with `utm50s` in the name use
 EPSG:32750, to check reprojection.
 
 ```bash
-python3 manual-test-data/generate.py           # ~35 MB
-python3 manual-test-data/generate.py --large   # also large/ (~500 MB), for cancel/restart tests
+python3 tests/staging/manual-test-data/generate.py           # ~35 MB
+python3 tests/staging/manual-test-data/generate.py --large   # also large/ (~500 MB), for cancel/restart tests
 ```
 
 The script needs GDAL's Python bindings and numpy. Only the script and this

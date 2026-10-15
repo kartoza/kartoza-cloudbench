@@ -82,11 +82,11 @@ Everything is skipped cleanly when you are not logged in.
 | `test_09_s3_mosaic_on_demand` | Several tiles → one COG mosaic |
 | `test_10_s3_geopackage_on_demand` | Skips: GeoPackage inspect is deferred on demand |
 
-The sample files they upload come from `manual-test-data/` — regenerate them
-with GDAL:
+The sample files they upload come from `tests/staging/manual-test-data/` —
+regenerate them with GDAL:
 
 ```bash
-python manual-test-data/generate.py            # add --large for the size tests
+python tests/staging/manual-test-data/generate.py   # add --large for the size tests
 ```
 
 ### Two rules

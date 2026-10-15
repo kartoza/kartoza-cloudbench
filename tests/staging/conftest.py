@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover
 REPO = Path(__file__).resolve().parents[2]
 AUTH_FILE = REPO / ".staging-auth.json"
 WORK_DIR = REPO / ".staging"  # git-ignored: asset cache, screenshots
-TEST_DATA = REPO / "manual-test-data"
+TEST_DATA = Path(__file__).parent / "manual-test-data"
 # GeoHosting's SSO token lives 12 h; leave a margin for a long run.
 AUTH_MAX_AGE = 11 * 3600
 
@@ -145,12 +145,12 @@ def staging(api):
 
 @pytest.fixture
 def data_file(tmp_path, run_id):
-    """Copy a file from manual-test-data/ under a run-specific name."""
+    """Copy a file from tests/staging/manual-test-data/ under a run-specific name."""
 
     def copy(relative):
         source = TEST_DATA / relative
         if not source.exists():
-            pytest.skip(f"{relative} missing: run manual-test-data/generate.py")
+            pytest.skip(f"{relative} missing: run tests/staging/manual-test-data/generate.py")
         target = tmp_path / f"{run_id}_{source.name}"
         shutil.copy(source, target)
         return target

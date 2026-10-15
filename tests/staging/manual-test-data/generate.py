@@ -5,8 +5,8 @@ CloudNativeGIS conversions, on-demand included. Everything is synthetic and
 lies around Bali (EPSG:4326, or UTM 50S / EPSG:32750 where a projected CRS is
 the point), so layers from different files overlap on the map.
 
-    python3 manual-test-data/generate.py            # small and medium files
-    python3 manual-test-data/generate.py --large    # also the large ones (cancel tests)
+    python3 tests/staging/manual-test-data/generate.py            # small and medium files
+    python3 tests/staging/manual-test-data/generate.py --large    # also the large ones (cancel tests)
 
 Needs GDAL's Python bindings (``osgeo``) and numpy. Output goes next to this
 script; see README.md for which file to use where.
