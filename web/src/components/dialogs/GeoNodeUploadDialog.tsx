@@ -20,6 +20,7 @@ import {
   Progress,
   Textarea,
   Badge,
+  Checkbox,
   Alert,
   AlertIcon,
   useColorModeValue,
@@ -33,6 +34,7 @@ import {
   uploadChunk,
   cancelUpload,
   completeGeoNodeUpload,
+  detectGeoNodeLayers,
   CHUNK_SIZE,
 } from '../../api/chunkedUpload'
 
@@ -83,7 +85,14 @@ function getSupportedFileInfo(filename: string): { supported: boolean; type: str
   }
 }
 
-type UploadPhase = 'idle' | 'chunking' | 'finalizing' | 'done' | 'error' | 'cancelled'
+type UploadPhase =
+  | 'idle'
+  | 'chunking'
+  | 'selecting-layers'
+  | 'finalizing'
+  | 'done'
+  | 'error'
+  | 'cancelled'
 
 export default function GeoNodeUploadDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
@@ -111,6 +120,8 @@ export default function GeoNodeUploadDialog() {
   const [speedBps, setSpeedBps] = useState(0)
   const [etaSeconds, setEtaSeconds] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
+  const [gpkgLayers, setGpkgLayers] = useState<string[]>([])
+  const [selectedLayers, setSelectedLayers] = useState<string[]>([])
 
   const sessionIdRef = useRef<string | null>(null)
   const isPausedRef = useRef(false)
@@ -134,6 +145,8 @@ export default function GeoNodeUploadDialog() {
     setSpeedBps(0)
     setEtaSeconds(0)
     setErrorMsg('')
+    setGpkgLayers([])
+    setSelectedLayers([])
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
@@ -221,8 +234,45 @@ export default function GeoNodeUploadDialog() {
         return
       }
 
+      // A multi-layer GeoPackage can't be imported whole (GeoNode takes no
+      // layer choice and 500s on layers of unlike CRS). Detect its layers and
+      // let the user pick, like the PostGIS import does; one layer or a
+      // non-GeoPackage just finalises.
+      if (uploadType === 'dataset' && selectedFile.name.toLowerCase().endsWith('.gpkg')) {
+        setPhase('finalizing')
+        const { layers } = await detectGeoNodeLayers(sessionId)
+        if (layers.length > 1) {
+          setGpkgLayers(layers)
+          setSelectedLayers(layers)
+          setPhase('selecting-layers')
+          return
+        }
+      }
+
+      await finalizeUpload()
+    } catch (err) {
+      if (!isCancelledRef.current) {
+        const msg = (err as Error).message
+        setErrorMsg(msg)
+        setPhase('error')
+        toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
+      }
+    }
+  }
+
+  const finalizeUpload = async (sourceLayers?: string[]) => {
+    const sessionId = sessionIdRef.current
+    if (!sessionId || !connectionId) return
+    try {
       setPhase('finalizing')
-      await completeGeoNodeUpload(sessionId, connectionId, title || undefined, abstract || undefined, uploadType)
+      await completeGeoNodeUpload(
+        sessionId,
+        connectionId,
+        title || undefined,
+        abstract || undefined,
+        uploadType,
+        sourceLayers,
+      )
 
       setPhase('done')
       if (uploadType === 'document') {
@@ -245,6 +295,12 @@ export default function GeoNodeUploadDialog() {
         toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
       }
     }
+  }
+
+  const toggleLayer = (layer: string) => {
+    setSelectedLayers((prev) =>
+      prev.includes(layer) ? prev.filter((l) => l !== layer) : [...prev, layer],
+    )
   }
 
   const handlePause = () => { isPausedRef.current = true; setIsPaused(true) }
@@ -394,6 +450,44 @@ export default function GeoNodeUploadDialog() {
               </>
             )}
 
+            {/* Layer picker — a multi-layer GeoPackage is imported one layer
+                at a time, so the user chooses which layers to publish. */}
+            {phase === 'selecting-layers' && (
+              <FormControl>
+                <FormLabel fontWeight="500">
+                  Layers to import
+                  <Text as="span" fontSize="xs" color="gray.500" fontWeight="400" ml={2}>
+                    this GeoPackage has {gpkgLayers.length} layers
+                  </Text>
+                </FormLabel>
+                <VStack
+                  align="stretch"
+                  spacing={1}
+                  maxH="220px"
+                  overflowY="auto"
+                  p={2}
+                  bg={dropzoneBg}
+                  borderRadius="lg"
+                  border="1px solid"
+                  borderColor="gray.200"
+                >
+                  {gpkgLayers.map((layer) => (
+                    <Checkbox
+                      key={layer}
+                      colorScheme="teal"
+                      isChecked={selectedLayers.includes(layer)}
+                      onChange={() => toggleLayer(layer)}
+                    >
+                      {layer}
+                    </Checkbox>
+                  ))}
+                </VStack>
+                <Text fontSize="xs" color="gray.500" mt={2}>
+                  Each selected layer becomes its own GeoNode dataset.
+                </Text>
+              </FormControl>
+            )}
+
             {/* Uploading: file info + progress */}
             {(isUploading || phase === 'done' || phase === 'cancelled') && selectedFile && (
               <Box
@@ -519,7 +613,18 @@ export default function GeoNodeUploadDialog() {
           <Button variant="ghost" onClick={closeDialog} borderRadius="lg">
             {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
-          {phase !== 'done' && (
+          {phase === 'selecting-layers' ? (
+            <Button
+              colorScheme="teal"
+              onClick={() => finalizeUpload(selectedLayers)}
+              isDisabled={selectedLayers.length === 0}
+              borderRadius="lg"
+              px={6}
+              leftIcon={<FiLayers />}
+            >
+              Publish {selectedLayers.length} layer{selectedLayers.length === 1 ? '' : 's'}
+            </Button>
+          ) : phase !== 'done' && (
             <Button
               colorScheme="teal"
               onClick={handleUpload}
