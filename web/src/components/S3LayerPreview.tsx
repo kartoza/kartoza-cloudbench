@@ -38,6 +38,7 @@ import { parquetMetadata, parquetReadObjects } from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 import * as api from '../api'
 import { getS3ProxyURL } from '../api/s3'
+import { BASEMAP_STYLE_URL } from '../config/basemap'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
@@ -446,28 +447,10 @@ export default function S3LayerPreview({
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'osm': {
-            type: 'raster',
-            tiles: [
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-            ],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors',
-          },
-        },
-        layers: [
-          {
-            id: 'osm-tiles',
-            type: 'raster',
-            source: 'osm',
-            minzoom: 0,
-            maxzoom: 19,
-          },
-        ],
-      },
+      // Shared OpenFreeMap basemap (see config/basemap.ts) — not raster OSM,
+      // which the OSM Tile Usage Policy blocks (403). The data layer is added
+      // on top after 'load', below.
+      style: BASEMAP_STYLE_URL,
       center,
       zoom: 2,
     })

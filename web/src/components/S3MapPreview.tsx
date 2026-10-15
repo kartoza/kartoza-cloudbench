@@ -8,8 +8,8 @@ import { cogProtocol } from '@geomatico/maplibre-cog-protocol'
 import { getPmtilesStyle } from '../api/mapExplorer'
 import { useUIStore } from '../stores/uiStore'
 import { loadLayerOntoMap, applyPmtilesVectorStyle, layerIdFor } from './MapExplorer/layerLoader'
+import { BASEMAP_STYLE_URL } from '../config/basemap'
 
-const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 const LAYER_COLOR = '#54A2CC'
 
 interface S3MapPreviewProps {
