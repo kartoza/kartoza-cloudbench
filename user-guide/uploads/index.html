@@ -15,10 +15,10 @@
         <link rel="canonical" href="https://kartoza.github.io/kartoza-cloudbench/user-guide/uploads/">
       
       
-        <link rel="prev" href="../geoserver/">
+        <link rel="prev" href="../geonode/">
       
       
-        <link rel="next" href="../preview/">
+        <link rel="next" href="../on-demand-conversions/">
       
       
         
@@ -272,7 +272,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../web-ui/" class="md-tabs__link">
+        <a href="../overview/" class="md-tabs__link">
           
   
   
@@ -625,6 +625,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview & Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../web-ui/" class="md-nav__link">
         
   
@@ -689,6 +745,34 @@
     
   
     GeoServer Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../geonode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoNode Uploads
   
 
     
@@ -928,6 +1012,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../on-demand-conversions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    On-demand Conversions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud-Native Formats
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../preview/" class="md-nav__link">
         
   
@@ -936,6 +1076,34 @@
     
   
     Layer Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -1198,6 +1366,34 @@
     
   
     API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev-guide/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
   
 
     
@@ -1632,6 +1828,12 @@
 <li><code>.prj</code> - Projection (recommended)</li>
 </ul>
 <h2 id="s3-cloud-native-options">S3 Cloud-Native Options</h2>
+<blockquote>
+<p>For the full picture of cloud-native conversion — every source/output pair,
+the per-job <strong>on-demand</strong> servers, cost, job stages, and limits — see
+<a href="../on-demand-conversions/">On-demand Conversions</a>. This section covers the
+<strong>fixed</strong> (non-demand) CloudNativeGIS flow.</p>
+</blockquote>
 <p>For S3 uploads, selecting a <code>.shp</code> file or a zipped shapefile (<code>.zip</code>) shows
 <strong>PMTiles</strong> under <strong>Convert to Cloud-Native</strong> when CloudNativeGIS
 is reachable. Cloudbench checks the service from Django using
@@ -1659,13 +1861,14 @@ database, but the background thread does not survive a Django restart; interrupt
 jobs eventually report failure and must be retried. Local temporary files are
 removed after processing. The created layer remains in CloudNativeGIS for inspection.</p>
 <h2 id="geopackage">GeoPackage</h2>
-<p>GeoPackage files can contain:</p>
-<ul>
-<li>Multiple vector layers</li>
-<li>Raster tiles</li>
-<li>Feature attributes</li>
-</ul>
-<p>All layers in the GeoPackage are published.</p>
+<p>A GeoPackage can hold several vector layers and raster tables in one file.
+When you upload one for cloud-native conversion, CloudBench <strong>inspects</strong> it and
+shows a picker so you choose which layers and tables to convert; the vector
+layers become PMTiles + GeoParquet and the raster tables become COGs, as one
+layer group.</p>
+<p>Inspection is not available in <strong>on-demand</strong> mode — see the limits in
+<a href="../on-demand-conversions/">On-demand Conversions</a>. Use the fixed mode for
+GeoPackages, or convert their layers as separate files.</p>
 <h2 id="geotiff">GeoTIFF</h2>
 <p>GeoTIFF requirements:</p>
 <ul>
