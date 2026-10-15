@@ -6,7 +6,9 @@ Provides endpoints for:
 - Resource browsing
 """
 
+import logging
 import shutil
+import threading
 import uuid
 from pathlib import Path
 
@@ -21,6 +23,24 @@ from apps.upload.views import _assemble_file, _get_session
 from .client import GeoNodeClient, get_geonode_client
 from .remote_service import get_remote_service
 from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
+
+logger = logging.getLogger(__name__)
+
+
+def _apply_metadata_later(client: GeoNodeClient, execution_id: str, title, abstract) -> None:
+    """Set the title/abstract once GeoNode has imported the dataset.
+
+    GeoNode ignores both on the upload itself, and its import runs on for a
+    while after the upload is answered, so this waits in a thread.
+    """
+
+    def run():
+        try:
+            client.apply_dataset_metadata(execution_id, title=title, abstract=abstract)
+        except Exception:
+            logger.exception("Setting the metadata of GeoNode import %s failed", execution_id)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 class GeoNodeConnectionListView(APIView):
@@ -275,6 +295,8 @@ class GeoNodeUploadCompleteView(APIView):
                     title=title,
                     abstract=abstract,
                 )
+                if (title or abstract) and upload_result.get("execution_id"):
+                    _apply_metadata_later(client, upload_result["execution_id"], title, abstract)
 
             return Response(
                 {

@@ -206,7 +206,8 @@ describe('mapExplorer API', () => {
     pmtilesMock.getMetadata.mockResolvedValue({ vector_layers: [{ id: 'roads' }] })
     pmtilesMock.getHeader.mockResolvedValue({ centerLon: 10, centerLat: 20, centerZoom: 5 })
     stubFetch((url) => {
-      if (url.includes('styles/default.json')) return json({ url: 'https://signed.test/style' })
+      // The saved style is now fetched straight from the same-origin proxy.
+      if (url.includes('styles/default.json')) return json({}, 404) // none saved
       if (url.includes('/s3/presigned/')) return json({ url: 'https://signed.test/tiles' })
       return json({}, 404)
     })
@@ -237,9 +238,10 @@ describe('mapExplorer API', () => {
       layers: [{ id: 'background', type: 'background' }],
     }
     stubFetch((url) => {
-      if (url.includes('styles/default.json')) return json({ url: 'https://signed.test/style' })
+      // The saved style comes straight from the same-origin proxy now.
+      if (url.includes('styles/default.json')) return json(saved)
       if (url.includes('/s3/presigned/')) return json({ url: 'https://signed.test/tiles' })
-      return json(saved)
+      return json({}, 404)
     })
     const open = vi.fn()
     vi.stubGlobal('open', open)

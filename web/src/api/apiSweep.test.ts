@@ -145,9 +145,11 @@ describe('API sweep', () => {
       await import('./common')
       localStorage.setItem('token', 'abc')
       await window.fetch('/api/probe', { headers: { 'X-Test': '1' } })
-      const init = spy.mock.calls[0][1] as { headers: Record<string, string> }
-      expect(init.headers.Authorization).toBe('Token abc')
-      expect(init.headers['X-Test']).toBe('1')
+      const init = spy.mock.calls[0][1] as RequestInit
+      // common.ts builds a Headers instance so a caller's Range/etc. survive.
+      const headers = new Headers(init.headers)
+      expect(headers.get('Authorization')).toBe('Token abc')
+      expect(headers.get('X-Test')).toBe('1')
       await window.fetch('https://other.test/x')
       expect(spy.mock.calls[1][1]).toBeUndefined()
     } finally {

@@ -37,7 +37,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import { parquetMetadata, parquetReadObjects } from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 import * as api from '../api'
-import { getS3PresignedUrl } from '../api/mapExplorer'
+import { getS3ProxyURL } from '../api/s3'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
@@ -45,6 +45,39 @@ import { useUIStore } from '../stores/uiStore'
 
 // Disable Cesium Ion (we don't use it)
 Cesium.Ion.defaultAccessToken = ''
+
+// Web Mercator (EPSG:3857) metres -> lon/lat degrees.
+function mercatorToLngLat(x: number, y: number): [number, number] {
+  const R = 20037508.342789244
+  const lng = (x / R) * 180
+  const lat = (Math.atan(Math.exp((y / R) * Math.PI)) * 360) / Math.PI - 90
+  return [lng, lat]
+}
+
+// A COG/GeoTIFF's lon/lat extent, read from the file itself. The preview API
+// doesn't return bounds for rasters, so without this a COG renders but is
+// never placed on the map (it stays blank). Handles the CRSs CloudBench's
+// conversion produces: the source COG (often EPSG:4326) and its 3857 copy.
+function boundsFromGeoTIFF(
+  image: GeoTIFF.GeoTIFFImage
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  try {
+    const [minX, minY, maxX, maxY] = image.getBoundingBox()
+    const keys = image.getGeoKeys() ?? {}
+    const epsg = keys.ProjectedCSTypeGeoKey || keys.GeographicTypeGeoKey
+    if (epsg === 4326 || (!keys.ProjectedCSTypeGeoKey && keys.GeographicTypeGeoKey === 4326)) {
+      return { minX, minY, maxX, maxY }
+    }
+    if (epsg === 3857 || epsg === 900913) {
+      const [west, south] = mercatorToLngLat(minX, minY)
+      const [east, north] = mercatorToLngLat(maxX, maxY)
+      return { minX: west, minY: south, maxX: east, maxY: north }
+    }
+  } catch {
+    // Unreadable geokeys: fall through and leave it unplaced.
+  }
+  return null
+}
 
 interface S3LayerPreviewProps {
   connectionId: string
@@ -528,8 +561,9 @@ export default function S3LayerPreview({
 
             ctx.putImageData(imageData, 0, 0)
 
-            // Add as image source to map
-            const bounds = metadata.bounds
+            // Add as image source to map. The preview API doesn't send bounds
+            // for rasters, so fall back to the extent read from the COG itself.
+            const bounds = metadata.bounds ?? boundsFromGeoTIFF(image)
             if (bounds && map.current) {
               map.current.addSource('s3-layer', {
                 type: 'image',
@@ -549,6 +583,11 @@ export default function S3LayerPreview({
                 paint: {
                   'raster-opacity': 1,
                 },
+              })
+
+              map.current.fitBounds([bounds.minX, bounds.minY, bounds.maxX, bounds.maxY], {
+                padding: 50,
+                maxZoom: 15,
               })
             }
           }
@@ -1006,11 +1045,17 @@ export default function S3LayerPreview({
       lidarControl.current = control
       mapInstance.addControl(control, 'top-right')
 
-      // From a presigned URL, not the proxy: maplibre-gl-lidar fetches the
-      // file itself, without CloudBench's auth token (the proxy answered
-      // 401), and S3 serves the octree's byte ranges directly.
-      getS3PresignedUrl(connectionId, objectKey)
-        .then((url) => control.loadPointCloud(url))
+      // Through the same-origin proxy, not a presigned bucket URL (the bucket
+      // sends no CORS headers). maplibre-gl-lidar reads the octree's byte
+      // ranges from a Web Worker that can't set an Authorization header, so the
+      // token rides in the URL as ?token= (QueryTokenAuthentication on the
+      // proxy view). The URL must be absolute — the reader parses it with
+      // new URL(source).
+      const token = localStorage.getItem('token')
+      const copcUrl = new URL(getS3ProxyURL(connectionId, objectKey), window.location.origin)
+      if (token) copcUrl.searchParams.set('token', token)
+      control
+        .loadPointCloud(copcUrl.toString())
         .catch((err) => setError(`Could not load the point cloud: ${err instanceof Error ? err.message : err}`))
       setPointCloudLoaded(true)
     })

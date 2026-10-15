@@ -29,10 +29,12 @@ from django.db.models import Q
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.authentication import TokenAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
+from apps.core.sso_auth import QueryTokenAuthentication, SignedSSOTokenAuthentication
 
 from . import layer_groups, portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
@@ -699,7 +701,19 @@ class S3ProxyView(APIView):
     point cloud's octree nodes (maplibre-gl-lidar), a PMTiles' tiles.
     Answering one with the whole object made such readers parse the start
     of the file as whatever part they had asked for.
+
+    Also accepts the token as a ``?token=`` query parameter
+    (QueryTokenAuthentication), on top of the usual ``Token`` header, so the
+    COPC reader's Web Worker — which can't set a header — can stream through
+    this proxy instead of straight from the bucket (which would need CORS on
+    the bucket). The header path is unchanged for COG/PMTiles/README.
     """
+
+    authentication_classes = [
+        SignedSSOTokenAuthentication,
+        QueryTokenAuthentication,
+        TokenAuthentication,
+    ]
 
     def get(self, request, conn_id, key):
         """Stream object content - all of it, or the requested byte range."""

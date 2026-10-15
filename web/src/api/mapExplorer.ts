@@ -8,7 +8,7 @@
 
 import { PMTiles } from 'pmtiles'
 import { API_BASE, handleResponse } from './common'
-import { getS3Connections } from './s3'
+import { getS3Connections, getS3ProxyURL } from './s3'
 
 // What Map Explorer renders: vector/raster PMTiles, an EPSG:3857 COG, or a
 // COPC point cloud (drawn by maplibre-gl-lidar).
@@ -236,8 +236,10 @@ export async function getPmtilesStyle(
   pmtilesKey: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const url = await getS3PresignedUrl(connectionId, styleKeyForPmtiles(pmtilesKey))
-    const response = await fetch(url)
+    // Same-origin proxy, not a presigned bucket URL: the saved style JSON is
+    // fetched from the page, and the bucket's origin sends no CORS headers
+    // (which blocked it, so the layer fell back to its default colouring).
+    const response = await fetch(getS3ProxyURL(connectionId, styleKeyForPmtiles(pmtilesKey)))
     if (!response.ok) return null
     return await response.json()
   } catch {

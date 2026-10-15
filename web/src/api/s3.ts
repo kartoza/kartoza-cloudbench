@@ -379,6 +379,14 @@ export async function cancelGeoPackageInspection(jobId: string): Promise<void> {
   await handleResponse<void>(response)
 }
 
+// Same-origin proxy URL for an S3 object, streamed through the API. Unlike a
+// presigned URL (which points at the bucket's own origin and is blocked by
+// CORS when fetched from the app), this can be fetched from the page.
+export function getS3ProxyURL(connectionId: string, key: string): string {
+  const encodedKey = key.split('/').map(encodeURIComponent).join('/')
+  return `${API_BASE}/s3/proxy/${encodeURIComponent(connectionId)}/${encodedKey}`
+}
+
 // Get a presigned URL for an S3 object
 export async function getS3PresignedURL(
   connectionId: string,

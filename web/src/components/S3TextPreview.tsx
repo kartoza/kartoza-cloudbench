@@ -66,8 +66,10 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
     setError(null)
     setContent(null)
 
-    api.getS3PresignedURL(connectionId, objectKey)
-      .then((result) => fetch(result.url))
+    // Fetch through the same-origin proxy, not a presigned bucket URL: the
+    // bucket's origin has no CORS headers, so fetching it from the page fails
+    // ("Failed to fetch") even though opening the link directly works.
+    fetch(api.getS3ProxyURL(connectionId, objectKey))
       .then((response) => {
         if (!response.ok) throw new Error(`Failed to fetch object (${response.status})`)
         return response.text()

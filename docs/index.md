@@ -2,6 +2,11 @@
 
 A comprehensive cloud-native geospatial data management platform with TUI (Terminal User Interface) and Web UI for managing GeoServer, PostgreSQL/PostGIS, S3 storage, and more.
 
+> **New to CloudBench?** Start with [Overview & Workflow](user-guide/overview.md)
+> for how the pieces fit together, then
+> [On-demand Conversions](user-guide/on-demand-conversions.md) for turning S3
+> uploads into cloud-native layers.
+
 ## Features
 
 ### Web UI

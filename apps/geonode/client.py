@@ -4,6 +4,8 @@ Provides a client for interacting with GeoNode REST API
 for managing geospatial data catalog and services.
 """
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +17,8 @@ from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -258,6 +262,53 @@ class GeoNodeClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def get_execution(self, execution_id: str) -> dict[str, Any]:
+        """The importer's execution request for an upload (status, resources)."""
+        response = self.client.get(f"/executionrequest/{execution_id}")
+        response.raise_for_status()
+        return response.json().get("request", {})
+
+    def update_dataset(self, dataset_id: int, fields: dict[str, Any]) -> None:
+        """Change a dataset's metadata (title, abstract…)."""
+        response = self.client.patch(f"/datasets/{dataset_id}", json=fields)
+        response.raise_for_status()
+
+    def apply_dataset_metadata(
+        self,
+        execution_id: str,
+        title: str | None = None,
+        abstract: str | None = None,
+        timeout: float = 600,
+        interval: float = 5,
+    ) -> list[int]:
+        """Give the datasets an upload created their title and abstract.
+
+        GeoNode's importer ignores the title and abstract sent with the
+        upload (the dataset is named after its file or layer), so set them
+        once the import has finished. Returns the datasets changed; none if
+        the import failed or didn't finish in ``timeout`` seconds.
+        """
+        fields = {k: v for k, v in (("title", title), ("abstract", abstract)) if v}
+        if not fields:
+            return []
+        deadline = time.monotonic() + timeout
+        while True:
+            execution = self.get_execution(execution_id)
+            status = execution.get("status")
+            if status == "finished":
+                break
+            if status == "failed" or time.monotonic() > deadline:
+                logger.warning("GeoNode import %s ended %s: metadata not set", execution_id, status)
+                return []
+            time.sleep(interval)
+        resources = (execution.get("output_params") or {}).get("resources") or []
+        ids = [r["id"] for r in resources if r.get("id")]
+        if not ids and execution.get("geonode_resource"):
+            ids = [execution["geonode_resource"]]
+        for dataset_id in ids:
+            self.update_dataset(dataset_id, fields)
+        return ids
 
     def upload_document(
         self,
