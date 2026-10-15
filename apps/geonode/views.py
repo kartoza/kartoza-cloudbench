@@ -27,6 +27,16 @@ from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
 logger = logging.getLogger(__name__)
 
 
+def _api_key(data) -> str:
+    """The GeoNode API token from a request body.
+
+    The connection dialog sends it as ``token``; older callers sent ``apiKey``.
+    Accept either so the token isn't silently dropped (which left token auth
+    unauthenticated).
+    """
+    return data.get("apiKey") or data.get("token") or ""
+
+
 def _apply_metadata_later(client: GeoNodeClient, execution_id: str, title, abstract) -> None:
     """Set the title/abstract once GeoNode has imported the dataset.
 
@@ -71,7 +81,7 @@ class GeoNodeConnectionListView(APIView):
             url=data.get("url", ""),
             username=data.get("username", ""),
             password=data.get("password", ""),
-            api_key=data.get("apiKey", ""),
+            api_key=_api_key(data),
         )
 
         config = get_config(request.user)
@@ -98,7 +108,7 @@ class GeoNodeConnectionTestView(APIView):
             url=data.get("url", ""),
             username=data.get("username"),
             password=data.get("password"),
-            api_key=data.get("apiKey"),
+            api_key=_api_key(data) or None,
         )
 
         success, message = client.test_connection()
@@ -151,8 +161,8 @@ class GeoNodeConnectionDetailView(APIView):
         conn.username = data.get("username", conn.username)
         if "password" in data:
             conn.password = data["password"]
-        if "apiKey" in data:
-            conn.api_key = data["apiKey"]
+        if "apiKey" in data or "token" in data:
+            conn.api_key = _api_key(data)
 
         config.update_geonode_connection(conn)
 
