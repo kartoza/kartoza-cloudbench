@@ -152,13 +152,21 @@ class TestGeoNodeClient:
         assert self.make().client.auth is None
 
     def test_test_connection(self, http_mock):
-        http_mock.add("GET", "/api/v2/$", json={})
+        # Probes /resources (what the app reads), not the /api/v2/ root, which
+        # 401s for credentials it rejects even on a working GeoNode.
+        http_mock.add("GET", "/resources", json={"resources": []})
         ok, msg = self.make().test_connection()
         assert ok and GN in msg
-        http_mock.add("GET", "/api/v2/$", status=403)
+        # Reached GeoNode but it rejected the credentials -> clear message.
+        http_mock.add("GET", "/resources", status=401)
+        ok, msg = self.make(username="u", password="p").test_connection()
+        assert not ok and "rejected" in msg.lower()
+        # Auth required but none was supplied.
+        http_mock.add("GET", "/resources", status=403)
         ok, msg = self.make().test_connection()
-        assert not ok and "403" in msg
-        http_mock.add("GET", "/api/v2/$", exc=httpx.ConnectError("down"))
+        assert not ok and "authentication" in msg.lower()
+        # Unreachable host.
+        http_mock.add("GET", "/resources", exc=httpx.ConnectError("down"))
         ok, msg = self.make().test_connection()
         assert not ok and "down" in msg
 

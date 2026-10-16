@@ -94,18 +94,30 @@ class GeoNodeClient:
     def test_connection(self) -> tuple[bool, str]:
         """Test the connection.
 
+        Probes ``/api/v2/resources`` — the endpoint the app actually reads —
+        rather than the API root ``/api/v2/``. The root answers 401 whenever
+        credentials are present but rejected there, even for a GeoNode that
+        serves resources and accepts uploads fine, so testing it reported a
+        working connection as broken. This also tells "can't reach GeoNode"
+        apart from "GeoNode rejected these credentials".
+
         Returns:
             Tuple of (success, message)
         """
         try:
-            response = self.client.get("/")
-            response.raise_for_status()
+            response = self.client.get("/resources", params={"page_size": 1})
+        except Exception as e:
+            return False, f"Could not reach GeoNode at {self.url}: {e}"
 
-            return True, f"Connected to GeoNode at {self.url}"
+        if response.status_code in (401, 403):
+            if self.username or self.api_key:
+                return False, "Reached GeoNode, but it rejected the credentials."
+            return False, "GeoNode requires authentication; add a username/password or API token."
+        try:
+            response.raise_for_status()
         except httpx.HTTPStatusError as e:
             return False, f"HTTP error: {e.response.status_code}"
-        except Exception as e:
-            return False, str(e)
+        return True, f"Connected to GeoNode at {self.url}"
 
     def list_categories(self) -> list[dict[str, Any]]:
         """List resource categories.

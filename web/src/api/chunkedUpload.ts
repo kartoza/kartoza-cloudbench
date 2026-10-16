@@ -104,12 +104,32 @@ export async function completeUpload(sessionId: string): Promise<UploadResult> {
   return res.json()
 }
 
+export async function detectGeoNodeLayers(
+  sessionId: string,
+): Promise<{ filename: string; layers: string[] }> {
+  const res = await fetch(`${API_BASE}/geonode/upload/detect-layers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCSRFToken(),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function completeGeoNodeUpload(
   sessionId: string,
   connectionId: string,
   title?: string,
   abstract?: string,
   uploadType: 'dataset' | 'document' = 'dataset',
+  sourceLayers?: string[],
 ): Promise<{ published: boolean; filename: string; fileSize: number; [key: string]: unknown }> {
   const res = await fetch(`${API_BASE}/geonode/upload/complete`, {
     method: 'POST',
@@ -118,7 +138,7 @@ export async function completeGeoNodeUpload(
       'X-CSRFToken': getCSRFToken(),
     },
     credentials: 'include',
-    body: JSON.stringify({ sessionId, connectionId, title, abstract, uploadType }),
+    body: JSON.stringify({ sessionId, connectionId, title, abstract, uploadType, sourceLayers }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }))

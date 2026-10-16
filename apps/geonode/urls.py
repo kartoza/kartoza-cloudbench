@@ -23,6 +23,11 @@ urlpatterns = [
     ),
     # Upload
     path(
+        "geonode/upload/detect-layers",
+        views.GeoNodeUploadDetectLayersView.as_view(),
+        name="geonode-upload-detect-layers",
+    ),
+    path(
         "geonode/upload/complete",
         views.GeoNodeUploadCompleteView.as_view(),
         name="geonode-upload-complete",
