@@ -11,6 +11,7 @@ bucket (see apps.s3.direct_upload); CloudBench writes the Portolan metadata.
 import hashlib
 import logging
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -278,20 +279,51 @@ def cancel_job(job):
 
 
 def expire_stalled_job(job):
+    """Fail `job` if it's active but hasn't been updated for too long.
+
+    Ended through finish_job, like any failed job: on demand, its server is
+    deleted first. That waits for GeoHosting, so it's done in the
+    background; without a server to delete it's ended straight away.
+    """
     cutoff = timezone.now() - timedelta(seconds=settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT + 120)
-    expired = CngLiteJob.objects.filter(
+    # Claimed by this request only: any other sees it updated.
+    claimed = CngLiteJob.objects.filter(
         pk=job.pk,
         status__in=ACTIVE_CNG_LITE_JOB_STATUSES,
         updated_at__lt=cutoff,
-    ).update(
-        status=CngLiteJobStatus.FAILED,
-        error="Conversion was interrupted or stopped responding. Please retry the upload.",
-        message="CloudNativeGIS conversion interrupted",
-        completed_at=timezone.now(),
-    )
-    if expired:
-        shutil.rmtree(job_directory(job.kind, job.pk), ignore_errors=True)
-        job.refresh_from_db()
+    ).update(updated_at=timezone.now())
+    if not claimed:
+        return
+    shutil.rmtree(job_directory(job.kind, job.pk), ignore_errors=True)
+    job.refresh_from_db()
+    if job.deprovisions:
+        threading.Thread(target=_end_stalled_job_in_background, args=(job.id,), daemon=True).start()
+    else:
+        _end_stalled_job(job)
+
+
+def _end_stalled_job(job):
+    """End a job expire_stalled_job claimed: failed - or, if it had finished
+    and was only deleting its server, as it was going to."""
+    if job.status == CngLiteJobStatus.DEPROVISIONING:
+        finish_job(job, job.outcome or CngLiteJobStatus.FAILED)
+    else:
+        finish_job(
+            job,
+            CngLiteJobStatus.FAILED,
+            error="Conversion was interrupted or stopped responding. Please retry the upload.",
+            message="CloudNativeGIS conversion interrupted",
+        )
+
+
+def _end_stalled_job_in_background(job_id):
+    close_old_connections()
+    try:
+        _end_stalled_job(CngLiteJob.objects.get(pk=job_id))
+    except Exception:
+        logger.exception("Job %s: couldn't end it after it stalled", job_id)
+    finally:
+        close_old_connections()
 
 
 def request_json(client, method, path, **kwargs):
