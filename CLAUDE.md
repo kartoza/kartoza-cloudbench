@@ -68,7 +68,7 @@ restart finishes a `CANCELLING` job as `CANCELLED`.
 | `is_valid()` | `CLOUDNATIVEGIS_URL` set | GeoHosting configured (`GEOHOSTING_URL`, client id/secret) |
 | `health()` / `availability()` | `GET {CLOUDNATIVEGIS_URL}/health` | GeoHosting's `/healthy/` OK **and** one of `/server-types/` in stock (`available`, from Hetzner's `server_types[].locations[].available`) |
 | Tools API `cloudnativegis` | `onDemand: false`, `servers: []` | `onDemand: true`, `servers`: the enabled types |
-| Server type | — | picked in the upload dialog (`hetznerServerId`, required); saved as `hetzner_server_id`, its specs in `hetzner_server_specification` |
+| Server type | — | picked in the upload dialog (`serverTypeId`, required); saved as `hetzner_server_id`, its specs in `hetzner_server_specification` |
 | Provisioning | URL/token from settings | POST, poll until `ready` |
 | `/health` wait | max 600s (`CLOUDNATIVEGIS_PROVISIONING_TIMEOUT`, hardcoded) | same (normally instant: GeoHosting already checked it) |
 | Finishing | straight to completed/failed | deprovisioning, then completed/failed |

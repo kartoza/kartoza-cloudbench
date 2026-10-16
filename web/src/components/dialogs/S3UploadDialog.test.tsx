@@ -113,7 +113,7 @@ describe('S3UploadDialog', () => {
 
   describe('on demand', () => {
     const cx23 = {
-      id: 72, type: 'cx23', location: 'hel1', specifications: { cores: 2, memory: 4, disk: 40 },
+      id: 72, location: 'hel1', specifications: { cores: 2, memory: 4, disk: 40 },
       currency: 'EUR', price: '0.0106',
     }
 
@@ -149,7 +149,7 @@ describe('S3UploadDialog', () => {
     it('lists each server with its disk', async () => {
       await uploadButton([{ ...cx23, available: true }])
       expect(
-        screen.getByRole('option', { name: 'cx23 · hel1 · 2 vCPU / 4 GB · 40 GB disk · 0.0106 EUR/h' })
+        screen.getByRole('option', { name: 'hel1 · 2 vCPU / 4 GB · 40 GB disk · 0.0106 EUR/h' })
       ).toBeInTheDocument()
     })
 
@@ -163,8 +163,8 @@ describe('S3UploadDialog', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
       await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      const [hetznerServerId, autoDestroy, instanceServerId] = api.uploadToS3.mock.calls[0].slice(-3)
-      expect(hetznerServerId).toBe(8)
+      const [serverTypeId, autoDestroy, instanceServerId] = api.uploadToS3.mock.calls[0].slice(-3)
+      expect(serverTypeId).toBe(8)
       // A new server, auto destroyed by default.
       expect(autoDestroy).toBe(true)
       expect(instanceServerId).toBeUndefined()

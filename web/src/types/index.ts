@@ -635,22 +635,22 @@ export interface ConversionToolInfo {
   serversUrl?: string
 }
 
-// A Hetzner server type GeoHosting may start an on-demand CloudNativeGIS server as.
+// A server type GeoHosting may start an on-demand CloudNativeGIS server as.
 export interface CloudNativeGISServerType {
-  // GeoHosting's HetznerServerType id: what a conversion's server is started as.
+  // GeoHosting's server type id: what a conversion's server is started as.
+  // Not its type name: CloudBench doesn't pass it on.
   id: number
-  type: string
   location: string
   specifications: Record<string, unknown>
   currency: string
   // Per hour, excluding VAT, as a decimal string.
   price: string
-  // Whether Hetzner has it in stock in its location right now.
+  // Whether it's in stock in its location right now.
   available?: boolean | null
 }
 
-// One of the user's running on-demand CloudNativeGIS servers (GeoHosting's
-// HetznerServer) a conversion can run on.
+// One of the user's running on-demand CloudNativeGIS servers (GeoHosting's)
+// a conversion can run on.
 export interface CloudNativeGISInstanceServer {
   instanceId: string
   // Only provisioning/ready ones are listed to run a conversion on; a
