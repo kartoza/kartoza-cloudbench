@@ -19,17 +19,13 @@ def hide_specification(specification):
     if not isinstance(specification, dict):
         return specification
     return {
-        key: value
-        for key, value in specification.items()
-        if key not in HIDDEN_SPECIFICATION_KEYS
+        key: value for key, value in specification.items() if key not in HIDDEN_SPECIFICATION_KEYS
     }
 
 
 def hide_server_type(server_type):
     """GeoHosting's `server_type` as the user may see it: without its type name."""
-    shown = {
-        key: value for key, value in server_type.items() if key not in HIDDEN_SERVER_TYPE_KEYS
-    }
+    shown = {key: value for key, value in server_type.items() if key not in HIDDEN_SERVER_TYPE_KEYS}
     if "specifications" in shown:
         shown["specifications"] = hide_specification(shown["specifications"])
     return shown
