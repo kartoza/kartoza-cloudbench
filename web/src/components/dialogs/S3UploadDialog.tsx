@@ -49,14 +49,15 @@ const LICENSE_CHOICES = [
 ]
 
 // Helper to format file size
-// e.g. "cx23 · fsn1 · 2 vCPU / 4 GB · 40 GB disk · 0.0060 EUR/h"
+// e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk · 0.0060 EUR/h" - not its type
+// name, which the user isn't told.
 function serverLabel(server: CloudNativeGISServerType): string {
   const { cores, memory, disk } = server.specifications as {
     cores?: number; memory?: number; disk?: number
   }
   const spec = cores && memory ? ` · ${cores} vCPU / ${memory} GB` : ''
   const storage = disk ? ` · ${disk} GB disk` : ''
-  return `${server.type} · ${server.location}${spec}${storage} · ${server.price} ${server.currency}/h`
+  return `${server.location}${spec}${storage} · ${server.price} ${server.currency}/h`
 }
 
 function formatFileSize(bytes: number): string {
@@ -222,9 +223,9 @@ export default function S3UploadDialog() {
   // out of stock is listed, but can't be picked: starting it would fail.
   const onDemandServers = toolStatus?.cloudnativegis?.onDemand ? toolStatus.cloudnativegis.servers ?? [] : []
   const inStockServers = onDemandServers.filter((server) => server.available !== false)
-  const [hetznerServerId, setHetznerServerId] = useState<number>()
-  const pickedServerId = inStockServers.some((server) => server.id === hetznerServerId)
-    ? hetznerServerId
+  const [serverTypeId, setServerTypeId] = useState<number>()
+  const pickedServerId = inStockServers.some((server) => server.id === serverTypeId)
+    ? serverTypeId
     : inStockServers[0]?.id
   // On demand: whether the conversion's server is deleted once it's done,
   // or kept running (and billed) after it.
@@ -245,7 +246,7 @@ export default function S3UploadDialog() {
     ? instanceServerId
     : ''
   const isNewServer = !pickedInstanceId
-  const requestedHetznerServerId = isNewServer ? pickedServerId : undefined
+  const requestedServerTypeId = isNewServer ? pickedServerId : undefined
   const requestedAutoDestroy = isOnDemand && isNewServer ? autoDestroy : undefined
   const requestedInstanceServerId = pickedInstanceId || undefined
   const showPMTiles = (isShapefile || isGpkgFile || isVectorFile) && cngLiteConnected
@@ -467,7 +468,7 @@ export default function S3UploadDialog() {
       try {
         const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
           connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
-          requestedHetznerServerId, requestedAutoDestroy, requestedInstanceServerId
+          requestedServerTypeId, requestedAutoDestroy, requestedInstanceServerId
         )
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
@@ -520,7 +521,7 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            requestedHetznerServerId,
+            requestedServerTypeId,
             requestedAutoDestroy,
             requestedInstanceServerId
           )
@@ -539,7 +540,7 @@ export default function S3UploadDialog() {
             license,
             requestedLicenseUrl,
             replace,
-            convertToCloudNative ? requestedHetznerServerId : undefined,
+            convertToCloudNative ? requestedServerTypeId : undefined,
             convertToCloudNative ? requestedAutoDestroy : undefined,
             convertToCloudNative ? requestedInstanceServerId : undefined
           )
@@ -964,7 +965,7 @@ export default function S3UploadDialog() {
                       <Select
                         value={pickedServerId}
                         isDisabled={isUploading || isConverting || isInspecting}
-                        onChange={(e) => setHetznerServerId(Number(e.target.value))}
+                        onChange={(e) => setServerTypeId(Number(e.target.value))}
                         size="sm"
                         borderRadius="lg"
                       >

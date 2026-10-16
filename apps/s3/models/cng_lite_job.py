@@ -12,7 +12,7 @@ from django.db.models import Q
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
-from .cng_lite_server import CngLiteServer
+from .cng_lite_server import CngLiteServer, hide_server_type
 from .s3_connection import S3Connection
 
 logger = logging.getLogger(__name__)
@@ -227,7 +227,8 @@ class CngLiteJob(models.Model):
         the Hetzner Cloud API, and has a snapshot to start them from) and
         has a server type enabled to start them as, even if none is in stock
         at Hetzner - `servers`, the enabled types, cheapest first, each with
-        whether it's in stock (`available`). On demand, `serversUrl` is
+        whether it's in stock (`available`), without its type name
+        (hide_server_type). On demand, `serversUrl` is
         GeoHosting's page of the user's servers, where a kept one is deleted.
         """
         if not settings.CLOUDNATIVEGIS_ON_DEMAND:
@@ -260,7 +261,7 @@ class CngLiteJob(models.Model):
         return {
             "available": bool(servers),
             "onDemand": True,
-            "servers": servers,
+            "servers": [hide_server_type(server) for server in servers],
             "serversUrl": GEOHOSTING_SERVERS_PAGE.format(
                 geohosting=settings.GEOHOSTING_URL.rstrip("/")
             ),

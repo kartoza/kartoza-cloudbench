@@ -194,12 +194,12 @@ export async function uploadToS3(
   replace?: boolean,
   // On-demand CloudNativeGIS: the server type (tools' cloudnativegis.servers
   // id) the conversion's server is started as. Required there.
-  hetznerServerId?: number,
+  serverTypeId?: number,
   // On-demand CloudNativeGIS: whether the server is deleted once the
   // conversion is done (the default), or kept running.
   autoDestroy?: boolean,
   // On-demand CloudNativeGIS: one of getConversionServers' instanceIds to
-  // run on, instead of a new server (hetznerServerId/autoDestroy).
+  // run on, instead of a new server (serverTypeId/autoDestroy).
   instanceServerId?: string
 ): Promise<S3UploadResult> {
   const formData = new FormData()
@@ -229,8 +229,8 @@ export async function uploadToS3(
   if (replace) {
     formData.append('replace', 'true')
   }
-  if (hetznerServerId !== undefined) {
-    formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) {
+    formData.append('serverTypeId', String(serverTypeId))
   }
   if (autoDestroy !== undefined) {
     formData.append('autoDestroy', String(autoDestroy))
@@ -297,7 +297,7 @@ export async function uploadMosaic(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number,
+  serverTypeId?: number,
   autoDestroy?: boolean,
   instanceServerId?: string
 ): Promise<S3UploadResult> {
@@ -308,7 +308,7 @@ export async function uploadMosaic(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
-  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) formData.append('serverTypeId', String(serverTypeId))
   if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
   if (instanceServerId) formData.append('instanceServerId', instanceServerId)
   return postWithProgress(`${API_BASE}/s3/mosaic/${encodeURIComponent(connectionId)}`, formData, onProgress)
@@ -334,7 +334,7 @@ export async function inspectGeoPackage(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number,
+  serverTypeId?: number,
   autoDestroy?: boolean,
   instanceServerId?: string
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
@@ -344,7 +344,7 @@ export async function inspectGeoPackage(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
-  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) formData.append('serverTypeId', String(serverTypeId))
   if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
   if (instanceServerId) formData.append('instanceServerId', instanceServerId)
   const response = await fetch(

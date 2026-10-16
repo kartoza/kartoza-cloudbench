@@ -7,6 +7,29 @@ from django.utils.dateparse import parse_datetime
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
+# What would tell the user which server it is (Hetzner's type name, e.g.
+# "cx23", and the specifications' "description", the type name again): never
+# shown to them.
+HIDDEN_SERVER_TYPE_KEYS = ("type",)
+HIDDEN_SPECIFICATION_KEYS = ("description",)
+
+
+def hide_specification(specification):
+    """`specification` without what names the server type (HIDDEN_SPECIFICATION_KEYS)."""
+    if not isinstance(specification, dict):
+        return specification
+    return {
+        key: value for key, value in specification.items() if key not in HIDDEN_SPECIFICATION_KEYS
+    }
+
+
+def hide_server_type(server_type):
+    """GeoHosting's `server_type` as the user may see it: without its type name."""
+    shown = {key: value for key, value in server_type.items() if key not in HIDDEN_SERVER_TYPE_KEYS}
+    if "specifications" in shown:
+        shown["specifications"] = hide_specification(shown["specifications"])
+    return shown
+
 
 class CngLiteServer(models.Model):
     """A GeoHosting HetznerServer: a CloudNativeGIS server jobs run on.
@@ -130,7 +153,7 @@ class CngLiteServer(models.Model):
             "status": self.status,
             "autoDestroy": self.auto_destroy,
             "typeId": self.type_id,
-            "specification": self.specification,
+            "specification": hide_specification(self.specification),
             "created": self.created.isoformat() if self.created else None,
             "jobs": self.jobs.count(),
         }

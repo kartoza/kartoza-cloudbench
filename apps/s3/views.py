@@ -127,10 +127,10 @@ def _requested_license(data):
     return license_id, license_url
 
 
-def _requested_hetzner_server_id(data):
+def _requested_server_type_id(data):
     """The server type picked for a conversion's on-demand server.
 
-    Required with CLOUDNATIVEGIS_ON_DEMAND - `hetznerServerId`, the `id` of
+    Required with CLOUDNATIVEGIS_ON_DEMAND - `serverTypeId`, the `id` of
     one of the tools' cloudnativegis.servers - and ignored (None) without
     it. Raises ValueError if it's missing or not an id; whether it's one
     GeoHosting has enabled, GeoHosting checks.
@@ -138,12 +138,12 @@ def _requested_hetzner_server_id(data):
     if not settings.CLOUDNATIVEGIS_ON_DEMAND:
         return None
     try:
-        hetzner_server_id = int(data.get("hetznerServerId") or 0)
+        server_type_id = int(data.get("serverTypeId") or 0)
     except (TypeError, ValueError):
-        hetzner_server_id = 0
-    if hetzner_server_id <= 0:
+        server_type_id = 0
+    if server_type_id <= 0:
         raise ValueError("Pick a server to run the conversion on.")
-    return hetzner_server_id
+    return server_type_id
 
 
 def _requested_server(data, user):
@@ -151,8 +151,8 @@ def _requested_server(data, user):
 
     With `instanceServerId`, one of `user`'s running servers that isn't
     auto_destroy (see S3ConversionServersView): the job runs on it, and
-    leaves it running. Otherwise a new one, started as `hetznerServerId`
-    (see _requested_hetzner_server_id), and deleted once it's done unless
+    leaves it running. Otherwise a new one, started as `serverTypeId`
+    (see _requested_server_type_id), and deleted once it's done unless
     `autoDestroy` is "false". Nothing without CLOUDNATIVEGIS_ON_DEMAND.
     Raises ValueError for a server that can't be had.
     """
@@ -182,7 +182,7 @@ def _requested_server(data, user):
             "auto_destroy": False,
         }
     return {
-        "hetzner_server_id": _requested_hetzner_server_id(data),
+        "hetzner_server_id": _requested_server_type_id(data),
         "auto_destroy": _requested_auto_destroy(data),
     }
 
