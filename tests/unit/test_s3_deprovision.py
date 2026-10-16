@@ -1,13 +1,21 @@
 """DEPROVISIONING: a finished job's on-demand server deleted before it ends."""
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from django.utils import timezone
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
-from apps.s3.cng_lite import CNGProcessingClient, finish_job, resume_interrupted_conversions
+from apps.s3.cng_lite import (
+    CNGProcessingClient,
+    _end_stalled_job_in_background,
+    expire_stalled_job,
+    finish_job,
+    resume_interrupted_conversions,
+)
 from apps.s3.models import CngLiteJob, CngLiteJobStatus, CngLiteServer
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
@@ -209,3 +217,74 @@ def test_a_restart_carries_on_deprovisioning_even_a_mosaic(on_demand, job):
     job.refresh_from_db()
     assert job.status == CngLiteJobStatus.COMPLETED
     assert job.error == ""
+
+
+def stall(settings, job, status, **fields):
+    """Make `job` an active one (`status`) not updated for longer than it may be."""
+    settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 60
+    CngLiteJob.objects.filter(pk=job.pk).update(
+        status=status, updated_at=timezone.now() - timedelta(hours=1), **fields
+    )
+    job.refresh_from_db()
+
+
+def expire_and_end(job):
+    """expire_stalled_job(job), then what it left to the background; returns deprovision's mock."""
+    with patch("apps.s3.cng_lite.threading.Thread") as thread:
+        expire_stalled_job(job)
+    thread.assert_called_once_with(
+        target=_end_stalled_job_in_background, args=(job.id,), daemon=True
+    )
+    with (
+        patch.object(CngLiteJob, "deprovision") as deprovision,
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        _end_stalled_job_in_background(job.id)
+    job.refresh_from_db()
+    return deprovision
+
+
+@pytest.mark.django_db
+def test_a_stalled_job_has_its_server_deleted_then_fails(settings, on_demand, job):
+    stall(settings, job, CngLiteJobStatus.POLLING, outcome="")
+
+    deprovision = expire_and_end(job)
+
+    deprovision.assert_called_once()
+    assert job.status == CngLiteJobStatus.FAILED
+    assert "interrupted" in job.error
+    assert job.completed_at is not None
+
+
+@pytest.mark.django_db
+def test_stalled_deleting_its_server_ends_as_it_was_going_to(settings, on_demand, job):
+    stall(settings, job, CngLiteJobStatus.DEPROVISIONING)
+
+    deprovision = expire_and_end(job)
+
+    deprovision.assert_called_once()
+    assert (job.status, job.error) == (CngLiteJobStatus.COMPLETED, "")
+
+
+@pytest.mark.django_db
+def test_stalled_while_cancelling_has_its_server_deleted_then_ends_cancelled(
+    settings, on_demand, job
+):
+    stall(settings, job, CngLiteJobStatus.CANCELLING, outcome="")
+
+    deprovision = expire_and_end(job)
+
+    deprovision.assert_called_once()
+    assert (job.status, job.error) == (CngLiteJobStatus.CANCELLED, "")
+
+
+@pytest.mark.django_db
+def test_a_stalled_job_is_ended_by_one_request_only(settings, on_demand, job):
+    stall(settings, job, CngLiteJobStatus.POLLING)
+    stale_copy = CngLiteJob.objects.get(pk=job.pk)
+
+    with patch("apps.s3.cng_lite.threading.Thread") as thread:
+        expire_stalled_job(job)
+        expire_stalled_job(stale_copy)
+
+    thread.assert_called_once()
