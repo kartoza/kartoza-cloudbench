@@ -586,30 +586,21 @@ def test_job_status_is_scoped_to_owner(conversion_job, owner, django_user_model)
 def gpkg_inspect_job(settings, tmp_path, owner, connection):
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
-
-    def respond(request):
-        assert request.url.path == "/api/v1/gpkg/layers"
-        return httpx.Response(
-            200,
-            json={
-                "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
-                "rasterTables": [],
-            },
-        )
-
-    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+    contents = {
+        "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
+        "rasterTables": [],
+    }
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
-        patch("apps.s3.pmtiles.httpx.Client", return_value=client),
+        patch("apps.s3.pmtiles.read_contents", return_value=contents) as read,
     ):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
-        get_client.return_value.generate_presigned_url.return_value = (
-            "http://cloudnativegis/presigned"
-        )
+        get_client.return_value.generate_presigned_url.return_value = "http://s3/presigned"
         job, layers, raster_tables = inspect_geopackage(
             gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner
         )
+    read.assert_called_once_with(str(tmp_path / "pmtiles" / str(job.id) / "source.gpkg"))
     return job, layers, raster_tables
 
 
