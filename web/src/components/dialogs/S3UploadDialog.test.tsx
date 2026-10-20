@@ -114,7 +114,7 @@ describe('S3UploadDialog', () => {
   describe('on demand', () => {
     const cx23 = {
       id: 72, location: 'hel1', specifications: { cores: 2, memory: 4, disk: 40 },
-      currency: 'EUR', price: '0.0106',
+      label: 'hel1 · 2 vCPU / 4 GB · 40 GB disk', currency: 'EUR', price: '0.0106',
     }
 
     async function uploadButton(servers: object[], instanceServers: object[] = []) {
@@ -201,16 +201,17 @@ describe('S3UploadDialog', () => {
 
     const kept = {
       instanceId: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'ready', autoDestroy: false,
-      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 }, created: null, jobs: 1,
+      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 },
+      label: 'hel1 · 2 vCPU / 4 GB · 40 GB disk', created: null, jobs: 1,
     }
     const destroyed = { ...kept, instanceId: 'bbbbbbbb-1111-2222-3333-444444444444', autoDestroy: true }
 
     it('lists running servers, an auto destroy one disabled', async () => {
       await uploadButton([{ ...cx23, available: true }], [kept, destroyed])
-      await screen.findByRole('option', { name: 'aaaaaaaa · 2 vCPU / 4 GB · 40 GB disk · 1 job' })
+      await screen.findByRole('option', { name: 'aaaaaaaa · hel1 · 2 vCPU / 4 GB · 40 GB disk · 1 job' })
       expect(screen.getByRole('option', { name: 'Create new server' })).toBeInTheDocument()
       expect(
-        screen.getByRole('option', { name: 'bbbbbbbb · 2 vCPU / 4 GB · 40 GB disk · 1 job — auto destroy' })
+        screen.getByRole('option', { name: 'bbbbbbbb · hel1 · 2 vCPU / 4 GB · 40 GB disk · 1 job — auto destroy' })
       ).toBeDisabled()
     })
 

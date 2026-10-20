@@ -642,6 +642,8 @@ export interface CloudNativeGISServerType {
   id: number
   location: string
   specifications: Record<string, unknown>
+  // As GeoHosting shows it, e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk".
+  label: string
   currency: string
   // Per hour, excluding VAT, as a decimal string.
   price: string
@@ -661,6 +663,8 @@ export interface CloudNativeGISInstanceServer {
   // The CloudNativeGISServerType it was started as.
   typeId: number | null
   specification: Record<string, unknown> | null
+  // That type as GeoHosting shows it, e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk".
+  label: string
   created: string | null
   // How many conversions have run on it.
   jobs: number

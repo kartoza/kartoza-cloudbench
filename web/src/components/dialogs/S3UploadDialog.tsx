@@ -31,8 +31,8 @@ import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiCircle, FiLayers } fr
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
-import type { CloudNativeGISServerType, ConversionJob } from '../../types'
-import { instanceServerLabel, isActiveStatus, isCancellableJob } from '../../utils/conversionJobs'
+import type { ConversionJob } from '../../types'
+import { isActiveStatus, isCancellableJob } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
 import { CONVERSION_JOBS_QUERY_KEY } from '../JobsIndicator'
 import S3UploadDialogServerWarning from './S3UploadDialogServerWarning'
@@ -49,17 +49,6 @@ const LICENSE_CHOICES = [
 ]
 
 // Helper to format file size
-// e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk · 0.0060 EUR/h" - not its type
-// name, which the user isn't told.
-function serverLabel(server: CloudNativeGISServerType): string {
-  const { cores, memory, disk } = server.specifications as {
-    cores?: number; memory?: number; disk?: number
-  }
-  const spec = cores && memory ? ` · ${cores} vCPU / ${memory} GB` : ''
-  const storage = disk ? ` · ${disk} GB disk` : ''
-  return `${server.location}${spec}${storage} · ${server.price} ${server.currency}/h`
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -949,7 +938,8 @@ export default function S3UploadDialog() {
                       <option value="">Create new server</option>
                       {instanceServers.map((server) => (
                         <option key={server.instanceId} value={server.instanceId} disabled={server.autoDestroy}>
-                          {instanceServerLabel(server)}
+                          {server.instanceId.slice(0, 8)} · {server.label}
+                          {' · '}{server.jobs} job{server.jobs === 1 ? '' : 's'}
                           {server.autoDestroy && ' — auto destroy'}
                         </option>
                       ))}
@@ -974,7 +964,7 @@ export default function S3UploadDialog() {
                       >
                         {onDemandServers.map((server) => (
                           <option key={server.id} value={server.id} disabled={server.available === false}>
-                            {serverLabel(server)}
+                            {server.label} · {server.price} {server.currency}/h
                             {server.available === false && ' — out of stock'}
                           </option>
                         ))}
