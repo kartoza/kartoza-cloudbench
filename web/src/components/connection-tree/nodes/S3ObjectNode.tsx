@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Box, Text, useToast } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTreeStore, generateNodeId } from '../../../stores/treeStore'
@@ -6,7 +7,8 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
 import type { S3ObjectNodeProps } from '../types'
-import { isMapExplorerFormat, isMapPreviewable, isQueryable } from '../../../utils/s3ObjectFormat'
+import { isDefaultStyleKey, isMapExplorerFormat, isMapPreviewable, isQueryable } from '../../../utils/s3ObjectFormat'
+import StyleJsonDialog from '../../dialogs/StyleJsonDialog'
 import { TREE_PLACEHOLDER_PL } from '../utils'
 import { TreeChildren } from '../TreeChildren'
 
@@ -28,6 +30,7 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
   const clearPreviews = useUIStore((state) => state.clearPreviews)
   const toast = useToast()
   const queryClient = useQueryClient()
+  const [isEditingStyle, setIsEditingStyle] = useState(false)
 
   // If this is a folder, fetch children when expanded
   const { data: children, isLoading } = useQuery({
@@ -149,6 +152,11 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
     queryClient.invalidateQueries({ queryKey: ['s3objects', connectionId, object.key] })
   }
 
+  const handleEditStyle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setIsEditingStyle(true)
+  }
+
   const handleQuery = (e: React.MouseEvent) => {
     e.stopPropagation()
     setDuckDBQuery({
@@ -167,6 +175,7 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
         isSelected={isSelected}
         isLoading={isLoading}
         onClick={handleClick}
+        onEdit={!object.isFolder && isDefaultStyleKey(object.key) ? handleEditStyle : undefined}
         onDelete={handleDelete}
         onQuery={!object.isFolder && isQueryable(object.key) ? handleQuery : undefined}
         onDownloadData={!object.isFolder ? handleDownloadData : undefined}
@@ -176,6 +185,16 @@ export function S3ObjectNode({ connectionId, bucket, object, level = 3 }: S3Obje
         isLeaf={!object.isFolder}
         count={object.isFolder && children ? children.length : undefined}
       />
+      {isEditingStyle && (
+        <StyleJsonDialog
+          target={{ connectionId, styleKey: object.key, name: displayName }}
+          onClose={() => setIsEditingStyle(false)}
+          onSaved={() => {
+            // This file's open preview shows the old content.
+            if (useUIStore.getState().activeS3TextPreview?.objectKey === object.key) clearPreviews()
+          }}
+        />
+      )}
       {object.isFolder && isExpanded && children && (
         <TreeChildren>
           {children.length === 0 ? (
