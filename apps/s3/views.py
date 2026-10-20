@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
@@ -1437,11 +1436,6 @@ class S3GeoPackageInspectView(APIView):
             return _target_exists_response(exc)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except httpx.HTTPError as exc:
-            return Response(
-                {"error": f"Could not inspect the GeoPackage: {exc}"},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
         return Response(
             {
                 "jobId": str(job.id),

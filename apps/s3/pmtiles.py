@@ -8,7 +8,6 @@ import threading
 import zipfile
 from pathlib import PurePosixPath
 
-import httpx
 from django.conf import settings
 
 from . import portolan
@@ -16,16 +15,14 @@ from .client import get_s3_client
 from .cng_lite import (
     Converter,
     check_target,
-    cng_lite_headers,
     job_directory,
-    request_json,
     source_object_key,
     sources_directory_key,
 )
 from .cng_lite import (
     run_conversion as run_cng_lite_conversion,
 )
-from .geopackage import is_geopackage, prepare_geopackage
+from .geopackage import is_geopackage, prepare_geopackage, read_contents
 from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "pmtiles"
@@ -256,7 +253,7 @@ def inspect_geopackage(
     auto_destroy=True,
     instance_server=None,
 ):
-    """Stage a GeoPackage in S3 and ask CloudNativeGIS Lite what it contains.
+    """Stage a GeoPackage in S3 and read what it contains (geopackage.read_contents).
 
     Creates the CngLiteJob now (so the eventual conversion reuses the same
     already-uploaded source), but leaves it "pending" — the caller is
@@ -299,6 +296,17 @@ def inspect_geopackage(
     try:
         source_path = directory / "source.gpkg"
         prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
+        # Read from the staged copy on disk, before uploading, so an
+        # unreadable GeoPackage isn't left in S3.
+        # TODO: Migrate to read directly from S3 - read_contents(f"/vsicurl/
+        # {presigned_url}") after the upload - ready for a GeoPackage uploaded
+        # to S3 directly, never staged on CloudBench's disk. Blocked: on
+        # DigitalOcean Spaces, GDAL's /vsicurl/ fails on a presigned GET URL
+        # ("Unable to open datasource"), even with CPL_VSIL_CURL_USE_HEAD=NO
+        # (a HEAD on it is 403; a ranged GET is 206). It worked on MinIO.
+        inspection = read_contents(str(source_path))
+        layers = inspection["layers"]
+        raster_tables = inspection["rasterTables"]
         job.source_key = source_object_key(
             job.output_key, job.id, PurePosixPath(uploaded_file.name).name
         )
@@ -310,17 +318,6 @@ def inspect_geopackage(
                 ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
             )
         job.save()
-        presigned_url = s3_client.generate_presigned_url(job.source_key, expiration=300)
-        with httpx.Client(
-            base_url=f"{settings.CLOUDNATIVEGIS_URL}/",
-            timeout=httpx.Timeout(30, connect=10),
-            headers=cng_lite_headers(),
-        ) as client:
-            inspection = request_json(
-                client, "POST", "api/v1/gpkg/layers", json={"source": presigned_url}
-            )
-        layers = inspection["layers"]
-        raster_tables = inspection.get("rasterTables", [])
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
         if job.pk:

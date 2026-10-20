@@ -148,5 +148,11 @@ Deferred:
 - Internal/private network to the cng servers (public IP for now).
 - A limit on how many servers (and how much cost) can run at once.
 - One server for both of a GeoPackage's jobs (vector + raster).
-- Inspecting a GeoPackage in on-demand mode.
+- Reading a GeoPackage's layers straight from S3. The upload dialog's
+  inspection (`inspect_geopackage`) no longer asks CloudNativeGIS: CloudBench
+  reads the staged copy on disk itself (`geopackage.read_contents`, ogr2ogr),
+  so it works on demand too. The goal is GDAL `/vsicurl/<presigned URL>`
+  (only the gpkg_* tables are fetched), for uploads straight to S3; it works
+  on MinIO but fails on DigitalOcean Spaces ("Unable to open datasource",
+  even with `CPL_VSIL_CURL_USE_HEAD=NO`).
 - (Optional) listing `cryptography` in GeoHosting's `requirements.txt`.
