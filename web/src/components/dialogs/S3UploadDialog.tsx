@@ -231,20 +231,23 @@ export default function S3UploadDialog() {
   // or kept running (and billed) after it.
   const [autoDestroy, setAutoDestroy] = useState(true)
   // On demand: the user's running servers. Picking one runs the conversion
-  // on it instead of starting a new one ("Create new server", the default);
-  // an auto destroy one is listed, but can't be picked.
+  // on it instead of starting a new one ("Create new server"); the first
+  // that can be picked is the default. An auto destroy one is listed, but
+  // can't be picked.
   const isOnDemand = !!toolStatus?.cloudnativegis?.onDemand
   const { data: instanceServers = [] } = useQuery({
     queryKey: ['conversionServers'],
     queryFn: () => api.getConversionServers(),
     enabled: isOpen && isOnDemand,
   })
-  const [instanceServerId, setInstanceServerId] = useState('')
-  const pickedInstanceId = instanceServers.some(
-    (server) => server.instanceId === instanceServerId && !server.autoDestroy
-  )
-    ? instanceServerId
-    : ''
+  const pickableInstances = instanceServers.filter((server) => !server.autoDestroy)
+  // undefined until the user picks one ('' = "Create new server")
+  const [instanceServerId, setInstanceServerId] = useState<string>()
+  const pickedInstanceId = instanceServerId === undefined
+    ? pickableInstances[0]?.instanceId ?? ''
+    : pickableInstances.some((server) => server.instanceId === instanceServerId)
+      ? instanceServerId
+      : ''
   const isNewServer = !pickedInstanceId
   const requestedServerTypeId = isNewServer ? pickedServerId : undefined
   const requestedAutoDestroy = isOnDemand && isNewServer ? autoDestroy : undefined
@@ -933,7 +936,7 @@ export default function S3UploadDialog() {
                 {/* On-demand CloudNativeGIS: the server the conversion runs on - one
                     already running, or a new one (its type, and whether it's
                     deleted once the conversion is done) */}
-                {isOnDemand && instanceServers.length && (
+                {isOnDemand && instanceServers.length > 0 && (
                   <FormControl>
                     <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Existing Server</FormLabel>
                     <Select
