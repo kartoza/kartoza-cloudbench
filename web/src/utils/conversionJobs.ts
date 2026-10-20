@@ -1,7 +1,7 @@
 // Helpers for showing CloudNativeGIS conversion jobs (the upload dialog and
 // the header's Jobs panel).
 
-import type { CloudNativeGISInstanceServer, ConversionJob, ConversionJobStatus } from '../types'
+import type { ConversionJob, ConversionJobStatus } from '../types'
 
 export interface LayerProgressStatus {
   name: string
@@ -64,16 +64,4 @@ export function jobKindLabel(job: ConversionJob): string {
   if (job.targetFormat === 'mosaic') return 'COG mosaic'
   if (job.targetFormat === 'copc') return 'COPC point cloud'
   return job.targetFormat === 'cog' ? 'COG' : 'PMTiles + GeoParquet'
-}
-
-// An on-demand server, as listed to run a conversion on (the upload dialog)
-// or under the job that runs on it (the Jobs panel).
-export function instanceServerLabel(server: CloudNativeGISInstanceServer): string {
-  const { cores, memory, disk } = (server.specification ?? {}) as {
-    cores?: number; memory?: number; disk?: number
-  }
-  const spec = cores && memory ? ` · ${cores} vCPU / ${memory} GB` : ''
-  const storage = disk ? ` · ${disk} GB disk` : ''
-  const jobs = ` · ${server.jobs} job${server.jobs === 1 ? '' : 's'}`
-  return `${server.instanceId.slice(0, 8)}${spec}${storage}${jobs}`
 }

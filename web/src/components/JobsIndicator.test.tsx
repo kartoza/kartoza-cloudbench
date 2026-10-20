@@ -54,14 +54,15 @@ describe('JobsIndicator', () => {
   it('shows the server a job runs on, with its status', async () => {
     const server = {
       instanceId: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'ready' as const, autoDestroy: false,
-      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 }, created: null, jobs: 2,
+      typeId: 72, specification: { cores: 2, memory: 4, disk: 40 },
+      label: 'hel1 · 2 vCPU / 4 GB · 40 GB disk', created: null, jobs: 2,
     }
     getConversionJobs.mockResolvedValue([job('a', 'polling', { server }), job('b', 'completed')])
     renderIndicator(client)
     await screen.findByText('1')
     fireEvent.click(document.querySelector('button[aria-controls^="popover-content"]') as HTMLElement)
     expect(
-      await screen.findByText('aaaaaaaa · 2 vCPU / 4 GB · 40 GB disk · 2 jobs - ready')
+      await screen.findByText('aaaaaaaa · hel1 · 2 vCPU / 4 GB · 40 GB disk · 2 jobs - ready')
     ).toBeInTheDocument()
     // Only under the job that has one.
     expect(screen.getAllByText(/ - ready$/)).toHaveLength(1)

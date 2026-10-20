@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw, FiSquare, FiXCircle } from 'react-icons/fi'
 import * as api from '../api'
 import type { ConversionJob } from '../types'
-import { instanceServerLabel, isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
+import { isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
 
 // The header's list of conversions: they run on the server, so progress can
 // be followed from anywhere - after the upload dialog that started one is
@@ -113,7 +113,8 @@ function JobRow({ job }: { job: ConversionJob }) {
       )}
       {job.server && (
         <Text fontSize="xs" color="gray.500" mt={1} noOfLines={1}>
-          {instanceServerLabel(job.server)} - {job.server.status}
+          {job.server.instanceId.slice(0, 8)} · {job.server.label}
+          {' · '}{job.server.jobs} job{job.server.jobs === 1 ? '' : 's'} - {job.server.status}
         </Text>
       )}
     </Box>

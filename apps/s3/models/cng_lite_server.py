@@ -65,6 +65,8 @@ class CngLiteServer(models.Model):
     # started as, and its specifications (cores, memory, disk, ...).
     type_id = models.PositiveIntegerField(null=True, blank=True)
     specification = models.JSONField(null=True, blank=True)
+    # That type as GeoHosting shows it, e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk".
+    label = models.CharField(max_length=255, blank=True, default="")
     # Why it failed, if it did.
     error = models.TextField(blank=True, default="")
     # When Hetzner created it: it's billed from then until it's deleted.
@@ -100,6 +102,7 @@ class CngLiteServer(models.Model):
         if picked:
             values["type_id"] = picked.get("id")
             values["specification"] = picked.get("specifications")
+            values["label"] = picked.get("label") or ""
         server, _ = cls.objects.update_or_create(
             instance_id=answer["server_id"],
             defaults=values,
@@ -154,6 +157,7 @@ class CngLiteServer(models.Model):
             "autoDestroy": self.auto_destroy,
             "typeId": self.type_id,
             "specification": hide_specification(self.specification),
+            "label": self.label,
             "created": self.created.isoformat() if self.created else None,
             "jobs": self.jobs.count(),
         }
