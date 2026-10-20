@@ -8,7 +8,7 @@ import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import type { LidarControl } from 'maplibre-gl-lidar'
-import { type LayerFormat } from '../../api/mapExplorer'
+import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
 import type { LegendItem } from './types'
 
@@ -37,25 +37,49 @@ export async function addCopcLayer(
   return { pointCloudId: info.id, bounds: [minX, minY, maxX, maxY] }
 }
 
+/** How a COG's saved default style (styles/default.json) says to draw it. */
+export interface CogStyle {
+  /** The source URL's "#color:..." (or "#dem") part, which the cog:// protocol reads; includes the "#". */
+  hash: string
+  /** The raster layer's raster-* paint properties, bar raster-opacity (the layer's opacity slider owns that). */
+  paint: Record<string, unknown>
+}
+
+/** Picks what the map can use out of a COG's saved style; nothing if it has none. */
+export function cogStyleFrom(style: Record<string, unknown> | null): CogStyle {
+  const sources = Object.values((style?.sources ?? {}) as Record<string, { type?: string; url?: unknown }>)
+  const sourceUrl = sources.find((source) => source?.type === 'raster' && typeof source.url === 'string')?.url
+  const hashAt = typeof sourceUrl === 'string' ? sourceUrl.indexOf('#') : -1
+  const layers = Array.isArray(style?.layers) ? (style.layers as { type?: string; paint?: Record<string, unknown> }[]) : []
+  const paint = layers.find((layer) => layer.type === 'raster')?.paint ?? {}
+  return {
+    hash: hashAt >= 0 ? (sourceUrl as string).slice(hashAt) : '',
+    paint: Object.fromEntries(
+      Object.entries(paint).filter(([name]) => name.startsWith('raster-') && name !== 'raster-opacity')
+    ),
+  }
+}
+
 export async function addCogLayer(
   mapInstance: maplibregl.Map,
   layerId: string,
   url: string,
-  opacity: number
+  opacity: number,
+  style: CogStyle = { hash: '', paint: {} }
 ): Promise<[number, number, number, number]> {
   const metadata = await getCogMetadata(url)
   if (!metadata.bbox) throw new Error('COG has no readable bounding box.')
 
   mapInstance.addSource(layerId, {
     type: 'raster',
-    url: `cog://${url}`,
+    url: `cog://${url}${style.hash}`,
     tileSize: 256,
   })
   mapInstance.addLayer({
     id: layerId,
     type: 'raster',
     source: layerId,
-    paint: { 'raster-opacity': opacity / 100 },
+    paint: { ...style.paint, 'raster-opacity': opacity / 100 },
   })
 
   return metadata.bbox
@@ -216,7 +240,9 @@ export async function loadLayerOntoMap(
   const url = getS3ProxyURL(connectionId, layer.key)
 
   if (layer.format === 'cog') {
-    const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
+    // Drawn the way the layer's saved default style says (colour ramp, paint).
+    const style = cogStyleFrom(await getPmtilesStyle(connectionId, layer.key))
+    const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity, style)
     return { bounds, isVector: false }
   }
 

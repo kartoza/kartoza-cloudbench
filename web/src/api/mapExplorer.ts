@@ -8,7 +8,7 @@
 
 import { PMTiles } from 'pmtiles'
 import { API_BASE, handleResponse } from './common'
-import { getS3Connections, getS3ProxyURL } from './s3'
+import { getS3Connections, getS3ProxyURL, uploadToS3 } from './s3'
 
 // What Map Explorer renders: vector/raster PMTiles, an EPSG:3857 COG, or a
 // COPC point cloud (drawn by maplibre-gl-lidar).
@@ -235,16 +235,38 @@ export async function getPmtilesStyle(
   connectionId: string,
   pmtilesKey: string
 ): Promise<Record<string, unknown> | null> {
+  return getStyleFile(connectionId, styleKeyForPmtiles(pmtilesKey))
+}
+
+// Fetches a style file by its own key, if it exists.
+export async function getStyleFile(
+  connectionId: string,
+  styleKey: string
+): Promise<Record<string, unknown> | null> {
   try {
     // Same-origin proxy, not a presigned bucket URL: the saved style JSON is
     // fetched from the page, and the bucket's origin sends no CORS headers
     // (which blocked it, so the layer fell back to its default colouring).
-    const response = await fetch(getS3ProxyURL(connectionId, styleKeyForPmtiles(pmtilesKey)))
+    const response = await fetch(getS3ProxyURL(connectionId, styleKey))
     if (!response.ok) return null
     return await response.json()
   } catch {
     return null
   }
+}
+
+// Saves a style file. When it's a layer's styles/default.json the backend
+// keeps the checksum in the layer's collection.json in step
+// (apps.s3.portolan.record_style).
+export async function saveStyleFile(
+  connectionId: string,
+  styleKey: string,
+  style: Record<string, unknown>
+): Promise<void> {
+  const file = new File([JSON.stringify(style, null, 2)], styleKey.split('/').pop() ?? 'default.json', {
+    type: 'application/json',
+  })
+  await uploadToS3(connectionId, file, styleKey)
 }
 
 export async function openStyleEditor(

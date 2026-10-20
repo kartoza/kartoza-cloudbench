@@ -7,6 +7,7 @@ import '@testing-library/jest-dom/vitest'
 import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { setupServer } from 'msw/node'
+import { TypedEvent } from 'rettime'
 
 // Mock handlers for MSW (Mock Service Worker)
 import { handlers } from './mocks/handlers'
@@ -47,6 +48,17 @@ const makeFocusAssignable = () => {
 }
 makeFocusAssignable()
 beforeEach(makeFocusAssignable)
+
+const typedEventDefaultPrevented = Object.getOwnPropertyDescriptor(
+  TypedEvent.prototype,
+  'defaultPrevented'
+)
+if (typedEventDefaultPrevented?.get && !typedEventDefaultPrevented.set) {
+  Object.defineProperty(TypedEvent.prototype, 'defaultPrevented', {
+    ...typedEventDefaultPrevented,
+    set() {},
+  })
+}
 
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {

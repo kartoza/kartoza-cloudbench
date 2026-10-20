@@ -8,7 +8,7 @@
  * is covered by the backend tests.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as clientApi from './client'
 import * as connectionApi from './connection'
 import * as icebergApi from './iceberg'
@@ -18,6 +18,13 @@ import * as s3Api from './s3'
 import * as storesApi from './stores'
 import * as styleApi from './style'
 import * as workspaceApi from './workspace'
+
+// Some tests below swap window.location for a stub; tests share one fork
+// (vitest.config singleFork), so put the real one back for every file after.
+const realLocation = Object.getOwnPropertyDescriptor(window, 'location')
+afterAll(() => {
+  if (realLocation) Object.defineProperty(window, 'location', realLocation)
+})
 
 const modules: Record<string, Record<string, unknown>> = {
   client: clientApi,

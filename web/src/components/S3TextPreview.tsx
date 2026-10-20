@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Box, Card, CardBody, Flex, HStack, Heading, IconButton, Text, Tooltip, Spinner, Center, VStack, Icon, Code, useColorModeValue, useToast } from '@chakra-ui/react'
-import { FiX, FiDownload, FiFile } from 'react-icons/fi'
+import { FiX, FiDownload, FiEdit2, FiFile } from 'react-icons/fi'
 import * as api from '../api'
 import { MarkdownContent } from './MarkdownContent'
-import { formatFileSize } from '../utils/s3ObjectFormat'
+import { formatFileSize, isDefaultStyleKey } from '../utils/s3ObjectFormat'
+import StyleJsonDialog from './dialogs/StyleJsonDialog'
 import { resolveRelativeKey } from '../utils/s3Key'
 
 // Above this, don't try to render the content inline — just offer a download.
@@ -41,6 +42,9 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
   const cardBg = useColorModeValue('white', 'gray.800')
   const codeBg = useColorModeValue('gray.50', 'gray.900')
   const toast = useToast()
+  const [isEditing, setIsEditing] = useState(false)
+  // Bumped after a style is saved, to load the file again.
+  const [version, setVersion] = useState(0)
 
   const kind = kindFor(objectKey, size)
 
@@ -82,7 +86,7 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
         setError((err as Error).message || 'Failed to load file')
         setIsLoading(false)
       })
-  }, [connectionId, objectKey, kind])
+  }, [connectionId, objectKey, kind, version])
 
   const handleDownload = async () => {
     try {
@@ -155,6 +159,11 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
         <Flex align="center" justify="space-between" px={4} py={3} flexShrink={0} bg="surface.header" color="white">
           <Heading size="sm" color="white" noOfLines={1}>{title}</Heading>
           <HStack spacing={1}>
+            {isDefaultStyleKey(objectKey) && (
+              <Tooltip label="Edit style" fontSize="xs">
+                <IconButton aria-label="Edit style" icon={<FiEdit2 size={14} />} size="sm" variant="ghost" color="white" _hover={{ bg: 'whiteAlpha.200' }} onClick={() => setIsEditing(true)} />
+              </Tooltip>
+            )}
             <Tooltip label="Download" fontSize="xs">
               <IconButton aria-label="Download" icon={<FiDownload size={14} />} size="sm" variant="ghost" color="white" _hover={{ bg: 'whiteAlpha.200' }} onClick={handleDownload} />
             </Tooltip>
@@ -167,6 +176,11 @@ export default function S3TextPreview({ connectionId, objectKey, title, size, la
         </Flex>
         {renderBody()}
       </CardBody>
+      <StyleJsonDialog
+        target={isEditing ? { connectionId, styleKey: objectKey, name: title } : null}
+        onClose={() => setIsEditing(false)}
+        onSaved={() => setVersion((v) => v + 1)}
+      />
     </Card>
   )
 }
