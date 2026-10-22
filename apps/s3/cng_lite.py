@@ -133,6 +133,14 @@ def _publish_source(job, s3_client, catalog_folder):
                 "size": local.stat().st_size,
             }
         else:
+            # Uploaded straight to the bucket (apps.s3.multipart): hashed as
+            # it's streamed from there, never stored here.
+            digest, size = hashlib.sha256(), 0
+            body = s3_client.get_object_stream(job.source_key)
+            for chunk in iter(lambda: body.read(1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+            file = {"checksum": portolan.sha256_multihash(digest.digest()), "size": size}
             s3_client.client.copy(
                 {"Bucket": job.bucket, "Key": job.source_key}, job.bucket, dest_key
             )

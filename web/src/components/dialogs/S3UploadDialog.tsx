@@ -31,6 +31,12 @@ import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiCircle, FiLayers } fr
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
+import {
+  canUploadToS3Directly,
+  inspectGeoPackageDirectly,
+  uploadToS3Directly,
+  type S3DirectHandlers,
+} from '../../api/s3Multipart'
 import type { ConversionJob } from '../../types'
 import { isActiveStatus, isCancellableJob } from '../../utils/conversionJobs'
 import { checkShapefileParts, SHAPEFILE_PART } from '../../utils/shapefile'
@@ -125,6 +131,10 @@ export default function S3UploadDialog() {
   // Upload state
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  // While a chunk of a direct upload waits to be sent again.
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
+  // The running direct upload: closing the dialog cancels it.
+  const uploadRef = useRef<{ cancelled: boolean } | null>(null)
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null)
   const [conversionJobId, setConversionJobId] = useState<string | null>(null)
 
@@ -454,14 +464,39 @@ export default function S3UploadDialog() {
     // hold vector layers (-> PMTiles), raster tables (-> COG), or both;
     // only inspecting it tells us which, so the format picked so far is
     // just a guess. Stage it and ask what it actually contains.
+    // Straight into the bucket (and read there), chunk by chunk: closing the
+    // dialog cancels it.
+    const upload = { cancelled: false }
+    uploadRef.current = upload
+    const directHandlers: S3DirectHandlers = {
+      onProgress: (progress) => setUploadProgress(progress),
+      onRetry: (attempt, delay) =>
+        setUploadNotice(`Connection lost — retrying in ${delay}s (attempt ${attempt})`),
+      onRecovered: () => setUploadNotice(null),
+      isCancelled: () => upload.cancelled,
+    }
+
     if (isGpkgFile && convertToCloudNative && cngLiteConnected) {
       setIsInspecting(true)
+      setUploadProgress(0)
       setUploadResult(null)
       try {
-        const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
-          connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
-          requestedServerTypeId, requestedAutoDestroy, requestedInstanceServerId
+        const inspected = await inspectGeoPackageDirectly(
+          connectionId,
+          selectedFile,
+          {
+            key: customKey || undefined,
+            license,
+            licenseUrl: requestedLicenseUrl,
+            replace,
+            serverTypeId: requestedServerTypeId,
+            autoDestroy: requestedAutoDestroy,
+            instanceServerId: requestedInstanceServerId,
+          },
+          directHandlers
         )
+        if (!inspected) return // cancelled (the dialog was closed)
+        const { jobId, layers, rasterTables } = inspected
         if (layers.length === 0 && rasterTables.length === 0) {
           toast({
             title: 'Nothing to convert',
@@ -493,6 +528,7 @@ export default function S3UploadDialog() {
         })
       } finally {
         setIsInspecting(false)
+        setUploadNotice(null)
       }
       return
     }
@@ -503,7 +539,26 @@ export default function S3UploadDialog() {
     setConversionJobId(null)
 
     try {
-      const result = mosaicFiles
+      const directFormat = convertToCloudNative ? targetFormat || undefined : undefined
+      const result = !mosaicFiles && canUploadToS3Directly(selectedFile, companionFiles, directFormat)
+        // Straight into the bucket, chunk by chunk: nothing stored on CloudBench.
+        ? await uploadToS3Directly(
+            connectionId,
+            selectedFile,
+            {
+              key: customKey || undefined,
+              targetFormat: directFormat,
+              license,
+              licenseUrl: requestedLicenseUrl,
+              replace,
+              serverTypeId: directFormat ? requestedServerTypeId : undefined,
+              autoDestroy: directFormat ? requestedAutoDestroy : undefined,
+              instanceServerId: directFormat ? requestedInstanceServerId : undefined,
+            },
+            directHandlers,
+            companionFiles
+          )
+        : mosaicFiles
         ? await api.uploadMosaic(
             connectionId,
             mosaicFiles,
@@ -537,6 +592,7 @@ export default function S3UploadDialog() {
             convertToCloudNative ? requestedInstanceServerId : undefined
           )
 
+      if (!result) return // cancelled (the dialog was closed)
       setUploadResult({
         success: result.success,
         message: result.message,
@@ -572,6 +628,7 @@ export default function S3UploadDialog() {
       })
     } finally {
       setIsUploading(false)
+      setUploadNotice(null)
     }
   }
 
@@ -659,6 +716,8 @@ export default function S3UploadDialog() {
   }
 
   const handleClose = () => {
+    // A direct upload under way is aborted (S3 drops the parts it has).
+    if (uploadRef.current) uploadRef.current.cancelled = true
     // Cancelling the layer picker means the raw GeoPackage staged in S3
     // during inspection would otherwise be left behind — clean it up.
     if (inLayerPickerMode && gpkgJobId) {
@@ -1067,8 +1126,10 @@ export default function S3UploadDialog() {
           selectedLayerNames={selectedLayerNames}
           onSelectedLayerNamesChange={setSelectedLayerNames}
           inLayerPickerMode={inLayerPickerMode}
-          isUploading={isUploading}
+          // A GeoPackage is uploaded while it's being inspected.
+          isUploading={isUploading || isInspecting}
           uploadProgress={uploadProgress}
+          uploadNotice={uploadNotice}
           uploadResult={uploadResult}
           conversionJob={conversionJob}
           conversionJobError={conversionJobError}

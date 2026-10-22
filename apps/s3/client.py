@@ -11,9 +11,11 @@ requiring account-wide permissions like ListAllMyBuckets.
 import base64
 import hashlib
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from urllib.parse import urlparse
 
 import boto3
 from botocore.config import Config
@@ -93,6 +95,9 @@ class S3Client:
         self.endpoint = endpoint
         self.bucket = bucket
         self.region = region
+        # Kept for GDAL, which signs its own requests (see gdal_path).
+        self._access_key = access_key
+        self._secret_key = secret_key
 
         # Configure boto3 for S3-compatible storage
         config = Config(
@@ -357,6 +362,29 @@ class S3Client:
             self._delete_keys([marker for marker in markers if marker["Key"] not in versioned])
         except ClientError:
             logger.info("Couldn't clear delete markers under %s", prefix, exc_info=True)
+
+    def gdal_path(self, key: str) -> tuple[str, dict[str, str]]:
+        """(GDAL path, environment) to read object `key` with GDAL, in the bucket.
+
+        `/vsis3/` signs every request (HEAD and ranged GETs alike) with this
+        connection's keys, so GDAL reads only the parts of the file it needs.
+        A presigned URL through `/vsicurl/` doesn't work: it's signed for GET
+        only, and GDAL's HEAD on it is refused (403), on MinIO and
+        DigitalOcean Spaces alike. The keys go in the environment, not on
+        the command line, where any process could read them.
+        """
+        url = urlparse(self.endpoint_url)
+        env = {
+            **os.environ,
+            "AWS_ACCESS_KEY_ID": self._access_key,
+            "AWS_SECRET_ACCESS_KEY": self._secret_key,
+            "AWS_S3_ENDPOINT": url.netloc,
+            "AWS_HTTPS": "YES" if url.scheme == "https" else "NO",
+            "AWS_VIRTUAL_HOSTING": "FALSE" if self.path_style else "TRUE",
+            "AWS_REGION": self.region or "us-east-1",
+        }
+        env.pop("AWS_SESSION_TOKEN", None)
+        return f"/vsis3/{self.bucket}/{key}", env
 
     def generate_presigned_url(
         self,

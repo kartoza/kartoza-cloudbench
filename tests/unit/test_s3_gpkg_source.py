@@ -1,6 +1,7 @@
 """A GeoPackage's original is kept once in its layer group and listed as a `source` asset."""
 
 import hashlib
+import io
 from unittest.mock import Mock
 
 import pytest
@@ -109,17 +110,22 @@ def test_source_is_moved_into_the_group_folder_from_the_local_copy(gpkg_job):
 
 @pytest.mark.django_db
 def test_source_is_copied_within_s3_when_no_local_copy_is_left(gpkg_job):
+    """Uploaded straight to the bucket: hashed as it's read from there, then copied."""
     client = Mock()
+    client.get_object_stream.return_value = io.BytesIO(b"SQLite format 3\x00gpkg")
 
     asset = _publish_source(gpkg_job, client, "maps/castelobranco")
 
+    client.get_object_stream.assert_called_once_with("maps/sources/job-1/CasteloBranco.gpkg")
     client.client.copy.assert_called_once_with(
         {"Bucket": "bucket", "Key": "maps/sources/job-1/CasteloBranco.gpkg"},
         "bucket",
         "maps/castelobranco/source/CasteloBranco.gpkg",
     )
-    # No local bytes to hash: listed without a checksum rather than a guessed one.
-    assert asset["file"] is None
+    assert asset["file"] == {
+        "checksum": portolan.sha256_multihash(hashlib.sha256(b"SQLite format 3\x00gpkg").digest()),
+        "size": 20,
+    }
     assert asset["filename"] == "../source/CasteloBranco.gpkg"
 
 

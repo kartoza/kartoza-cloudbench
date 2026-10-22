@@ -62,6 +62,20 @@ def _get_session(session_id: str) -> UploadSession | None:
         return None
 
 
+def _staged_session(request, session_id: str) -> UploadSession | None:
+    """The user's session `session_id` if it stages its chunks on disk.
+
+    Relayed and S3 multipart uploads keep nothing here: the staged-upload
+    endpoints must not write their chunks, assemble or delete them.
+    """
+    session = _own_session(request, session_id)
+    if not session or not session.upload_dir:
+        return None
+    if Path(session.upload_dir).parent != get_cache_dir() / "uploads":
+        return None
+    return session
+
+
 def _assemble_file(session: UploadSession) -> Path:
     if not session.is_complete():
         missing = set(range(session.total_chunks)) - set(session.received_chunks)
@@ -187,7 +201,7 @@ class UploadChunkView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -228,9 +242,9 @@ class UploadChunkView(APIView):
 class UploadProgressView(APIView):
     """Get upload progress for a session."""
 
-    def get(self, _request, session_id):
+    def get(self, request, session_id):
         """Get upload progress."""
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -255,9 +269,9 @@ class UploadProgressView(APIView):
 class UploadCancelView(APIView):
     """Cancel an upload session."""
 
-    def delete(self, _request, session_id):
+    def delete(self, request, session_id):
         """Cancel and clean up an upload session."""
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},

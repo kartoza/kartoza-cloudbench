@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator, validate_email
@@ -34,8 +35,9 @@ from rest_framework.views import APIView
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 from apps.core.sso_auth import QueryTokenAuthentication, SignedSSOTokenAuthentication
+from apps.upload.views import _own_session
 
-from . import layer_groups, portolan, portolan_verify
+from . import layer_groups, multipart, portolan, portolan_verify
 from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import (
     TargetExists,
@@ -1361,6 +1363,227 @@ class S3UploadView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+def _multipart_session(request, conn_id, session_id):
+    """The user's multipart upload `session_id` to connection `conn_id`, or None."""
+    session = _own_session(request, session_id)
+    if not session or not multipart.is_multipart(session) or session.connection_id != conn_id:
+        return None
+    return session
+
+
+def _session_reply(session) -> dict:
+    return {
+        "sessionId": str(session.session_id),
+        "filename": session.filename,
+        "chunkSize": session.chunk_size,
+        "totalChunks": session.total_chunks,
+    }
+
+
+def _multipart_error(exc: multipart.MultipartError) -> Response:
+    return Response({"error": exc.message}, status=exc.status)
+
+
+# What a bucket failing, or not being reached, raises.
+BUCKET_ERRORS = (BotoCoreError, ClientError)
+
+
+def _bucket_error(exc: Exception) -> Response:
+    """The bucket failed or couldn't be reached: worth trying again."""
+    return Response(
+        {"error": f"The bucket refused or failed: {exc}"}, status=status.HTTP_502_BAD_GATEWAY
+    )
+
+
+def _job_fields(data, user) -> dict:
+    """A conversion's CngLiteJob fields from an upload request; raises ValueError."""
+    license_id, license_url = _requested_license(data)
+    if license_url is None:
+        raise ValueError("License URL must be a valid http(s) URL")
+    return {
+        "license": license_id,
+        "license_url": license_url,
+        "replace_existing": _wants_replace(data),
+        **_requested_server(data, user),
+    }
+
+
+class S3MultipartStartView(APIView):
+    """Start an upload straight into the bucket (see apps.s3.multipart).
+
+    JSON body: filename, fileSize, key (defaults to the filename),
+    companions (a .shp's other parts: [{filename, fileSize}]), and for a
+    conversion convert=true with targetFormat (cog, copc, pmtiles, or
+    inspect for a GeoPackage to read before converting) and the
+    conversion's license/licenseUrl/replace/server fields, as for
+    S3UploadView. Everything that can be checked before the files are sent
+    is: the connection, the sizes, the file types (and a shapefile's
+    parts), the license and server, and whether the conversion's layer
+    folder exists (409, as for uploads). Answers the session to send each
+    file's chunks to, and their size.
+    """
+
+    def post(self, request, conn_id):
+        data = request.data
+        converting = str(data.get("convert", "false")).lower() == "true"
+        target_format = data.get("targetFormat") if converting else None
+        try:
+            if target_format:
+                _job_fields(data, request.user)
+            file_size = int(data.get("fileSize") or 0)
+        except (TypeError, ValueError) as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        companions = data.get("companions") or []
+        if not isinstance(companions, list) or not all(isinstance(c, dict) for c in companions):
+            return Response(
+                {"error": "companions must be a list of {filename, fileSize}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            session, parts = multipart.start(
+                request.user,
+                conn_id,
+                data.get("filename", ""),
+                file_size,
+                data.get("key", ""),
+                target_format,
+                _wants_replace(data),
+                companions,
+            )
+        except multipart.MultipartError as exc:
+            return _multipart_error(exc)
+        except TargetExists as exc:
+            return _target_exists_response(exc)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except BUCKET_ERRORS as exc:
+            return _bucket_error(exc)
+        return Response(
+            {
+                **_session_reply(session),
+                "key": session.store_name,
+                "companions": [_session_reply(part) for part in parts],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class S3MultipartPartView(APIView):
+    """Send chunk `index` (the raw bytes as the body), passed on to the bucket as a part."""
+
+    def put(self, request, conn_id, session_id, index):
+        session = _multipart_session(request, conn_id, session_id)
+        if not session:
+            return Response({"error": "Upload not found"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            length = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            length = 0
+        if length > session.chunk_size:
+            return Response(
+                {"error": f"A chunk is at most {session.chunk_size} bytes"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        # Read the stream, not request.body/data: no size cap, nothing spooled to disk.
+        data = request._request.read(length) if length else b""
+        try:
+            received = multipart.send_part(request.user, session, index, data)
+        except multipart.MultipartError as exc:
+            return _multipart_error(exc)
+        except BUCKET_ERRORS as exc:
+            return _bucket_error(exc)
+        return Response({"received": received, "totalChunks": session.total_chunks})
+
+
+class S3MultipartDetailView(APIView):
+    """An upload's chunks received (to resume it), or abort it."""
+
+    def get(self, request, conn_id, session_id):
+        session = _multipart_session(request, conn_id, session_id)
+        if not session:
+            return Response({"error": "Upload not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {
+                "received": session.received_chunks,
+                "totalChunks": session.total_chunks,
+                "chunkSize": session.chunk_size,
+                "completed": session.completed,
+                "error": session.error,
+            }
+        )
+
+    def delete(self, request, conn_id, session_id):
+        session = _multipart_session(request, conn_id, session_id)
+        if not session:
+            return Response({"error": "Upload not found"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            multipart.abort(request.user, session)
+        except multipart.MultipartError as exc:
+            return _multipart_error(exc)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class S3MultipartCompleteView(APIView):
+    """Join the chunks into the object; for a conversion, start it.
+
+    JSON body: the key, and a conversion's fields, as the upload started
+    with. For a .shp, completes its parts too. Answers as S3UploadView
+    does: 201 for a plain upload, 202 with the conversionJobId for a
+    conversion; and for a GeoPackage to inspect, as S3GeoPackageInspectView
+    does (jobId, layers, rasterTables, key).
+    """
+
+    def post(self, request, conn_id, session_id):
+        session = _multipart_session(request, conn_id, session_id)
+        if not session:
+            return Response({"error": "Upload not found"}, status=status.HTTP_404_NOT_FOUND)
+        converting = session.workspace not in (multipart.PLAIN, multipart.SHAPEFILE)
+        try:
+            job_fields = _job_fields(request.data, request.user) if converting else {}
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            done = multipart.complete(
+                request.user, session, request.data.get("key", ""), job_fields
+            )
+        except multipart.MultipartError as exc:
+            return _multipart_error(exc)
+        except TargetExists as exc:
+            return _target_exists_response(exc)
+        except BUCKET_ERRORS as exc:
+            return _bucket_error(exc)
+        if done.inspection is not None:
+            return Response(
+                {
+                    "jobId": str(done.job.id),
+                    "layers": done.inspection["layers"],
+                    "rasterTables": done.inspection["rasterTables"],
+                    "key": done.key,
+                }
+            )
+        if done.job is None:
+            return Response(
+                {
+                    "key": done.key,
+                    "bucket": get_s3_client(conn_id, request.user).bucket,
+                    "success": True,
+                    "message": "File uploaded to S3",
+                    "size": done.size,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(
+            {
+                "success": True,
+                "message": "File accepted for CloudNativeGIS conversion",
+                "key": done.key,
+                "size": done.size,
+                "conversionJobId": str(done.job.id),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class S3MosaicUploadView(APIView):

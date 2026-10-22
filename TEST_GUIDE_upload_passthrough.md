@@ -327,6 +327,62 @@ Then **set the limit back** to its old value.
 Before this check, GeoServer took the GeoPackage into the shapefile store: it replaced the
 store's files but kept its type, and the `pts` layer broke ("pts.shp: No such file").
 
+### L. S3: a plain upload goes straight into the bucket
+
+Branch `feat/s3-upload-passthrough` only. Use an S3 connection (MinIO, or a bucket you may
+write to). On GeoHosting's staging S3, **don't delete anything afterwards**, not even these
+test files: the bucket holds other people's data.
+
+1. Open the S3 connection, click **Upload**, pick `dem.tif`, leave **Convert** off, and
+   upload it to a test folder (e.g. `cloudbench-test/dem.tif`).
+
+| Expect | Result |
+|---|---|
+| Progress goes up to 100%, then "File uploaded to S3" | |
+| CloudBench log: `PUT /api/s3/multipart/<conn>/<id>/parts/0` and `/parts/1`, then `POST …/complete`, all `2xx` | |
+| The file is in the bucket, the same size as `dem.tif` | |
+| The data folder (second terminal) doesn't grow | |
+
+### M. S3: a dropped connection carries on for minutes
+
+As D, but for an S3 upload of `dem.tif` (to `cloudbench-test/dem_resume.tif`), and stay
+**Offline** for about **2 minutes**.
+
+| Expect | Result |
+|---|---|
+| While offline: "Connection lost — retrying in Ns (attempt n)" under the progress bar | |
+| Back online: the upload carries on and completes (the bucket kept the parts) | |
+
+### N. S3: conversions of one file go straight to the bucket
+
+Needs CloudNativeGIS. Upload `dem.tif` with **Convert** on (COG) to
+`cloudbench-test/dem_cog.tif`.
+
+| Expect | Result |
+|---|---|
+| CloudBench log: `/api/s3/multipart/…` lines, no `POST /api/s3/upload/…` | |
+| The conversion starts and completes, and the COG layer is published as with any conversion | |
+| A file named `.tif` that isn't a TIFF is refused: "The file is not a valid TIFF." | |
+| A mosaic still goes through `POST /api/s3/mosaic/…` as before | |
+
+Then a shapefile and a GeoPackage, to `cloudbench-test/`:
+
+| Do | Expect | Result |
+|---|---|---|
+| Upload `pts.shp` with `pts.shx`, `pts.dbf`, `pts.prj` selected, **Convert** off | `cloudbench-test/pts.zip` in the bucket, nothing else; log shows a session per file | |
+| The same with **Convert** on (PMTiles) | The conversion starts; the parts are kept under `cloudbench-test/sources/<job id>/` beside `pts.zip` | |
+| Upload `pts.zip` with **Convert** on | The conversion starts; only the rewritten `sources/<job id>/pts.zip` is left of the upload | |
+| Upload `pts.gpkg` with **Convert** on | The layer picker lists `pts`; log shows `/api/s3/multipart/…`, no `gpkg/inspect` | |
+
+### O. S3: closing the dialog cancels the upload
+
+Throttle to **Slow 3G**, start an S3 upload of `dem.tif`, and close the dialog halfway.
+
+| Expect | Result |
+|---|---|
+| CloudBench log: `DELETE /api/s3/multipart/<conn>/<id>` | |
+| No `dem.tif` object is created at that key | |
+
 ## 4. If something fails
 
 Note it in the **Result** column, with:
@@ -363,5 +419,6 @@ Note it in the **Result** column, with:
 | Resume / failure / cancel | D, E, F | |
 | GeoNode upload | G, H, I | |
 | Refused up front | J, K | |
+| S3 straight into the bucket | L, M, N, O | |
 
 **Tested on:** _(date)_ **by:** _(name)_ **GeoNode/GeoServer:** _(staging instance)_

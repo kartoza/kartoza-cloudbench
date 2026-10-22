@@ -91,6 +91,27 @@ urlpatterns = [
         views.S3UploadView.as_view(),
         name="s3-upload",
     ),
+    # Upload straight into the bucket, chunk by chunk (see apps.s3.multipart)
+    path(
+        "s3/multipart/<str:conn_id>",
+        views.S3MultipartStartView.as_view(),
+        name="s3-multipart-start",
+    ),
+    path(
+        "s3/multipart/<str:conn_id>/<str:session_id>",
+        views.S3MultipartDetailView.as_view(),
+        name="s3-multipart-detail",
+    ),
+    path(
+        "s3/multipart/<str:conn_id>/<str:session_id>/parts/<int:index>",
+        views.S3MultipartPartView.as_view(),
+        name="s3-multipart-part",
+    ),
+    path(
+        "s3/multipart/<str:conn_id>/<str:session_id>/complete",
+        views.S3MultipartCompleteView.as_view(),
+        name="s3-multipart-complete",
+    ),
     path(
         "s3/mosaic/<str:conn_id>",
         views.S3MosaicUploadView.as_view(),

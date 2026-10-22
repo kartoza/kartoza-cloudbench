@@ -45,6 +45,9 @@ class FakeS3:
     def get_object(self, key):
         return self.objects[key]
 
+    def get_object_stream(self, key, byte_range=None):
+        return io.BytesIO(self.objects[key])
+
     def delete_object(self, key):
         self.objects.pop(key, None)
 

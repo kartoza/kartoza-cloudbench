@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.config import GeoNodeConnection, get_config
-from apps.upload.views import _assemble_file, _own_session
+from apps.upload.views import _assemble_file, _staged_session
 
 from .client import GeoNodeClient, apply_metadata_later, get_geonode_client
 from .remote_service import get_remote_service
@@ -276,7 +276,7 @@ class GeoNodeUploadDetectLayersView(APIView):
     """
 
     def post(self, request):
-        session = _own_session(request, request.data.get("sessionId") or "")
+        session = _staged_session(request, request.data.get("sessionId") or "")
         if not session:
             return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
         if not session.is_complete():
@@ -307,7 +307,7 @@ class GeoNodeUploadCompleteView(APIView):
             return Response(
                 {"error": "connectionId is required"}, status=status.HTTP_400_BAD_REQUEST
             )
-        session = _own_session(request, request.data.get("sessionId") or "")
+        session = _staged_session(request, request.data.get("sessionId") or "")
         if not session:
             return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
         if not session.filename.lower().endswith(".gpkg"):

@@ -73,20 +73,17 @@ export class ChunkError extends Error {
 }
 
 // No answer, or a gateway between us and CloudBench gave up: worth retrying.
-const RETRYABLE_STATUSES = [0, 502, 503, 504]
+export const RETRYABLE_STATUSES = [0, 502, 503, 504]
 
-export function sendRelayChunk(
-  sessionId: string,
-  index: number,
+/** PUT one chunk's raw bytes to `url`; its JSON answer, or a ChunkError. */
+export function putChunk(
+  url: string,
   chunk: Blob,
   onProgress?: (pct: number) => void,
-): Promise<{ next: number }> {
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open(
-      'PUT',
-      `${API_BASE}/upload/relay/${encodeURIComponent(sessionId)}/chunks/${index}`,
-    )
+    xhr.open('PUT', url)
     setAuthHeader(xhr)
     xhr.setRequestHeader('X-CSRFToken', getCSRFToken())
     xhr.setRequestHeader('Content-Type', 'application/octet-stream')
@@ -95,18 +92,18 @@ export function sendRelayChunk(
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
     }
     xhr.onload = () => {
-      let body: { next?: number; error?: string } = {}
+      let body: Record<string, unknown> = {}
       try {
         body = JSON.parse(xhr.responseText)
       } catch {
         /* a gateway's HTML error page */
       }
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve({ next: body.next ?? index + 1 })
+        resolve(body)
       } else {
         reject(
           new ChunkError(
-            body.error || `HTTP ${xhr.status}`,
+            (body.error as string) || `HTTP ${xhr.status}`,
             RETRYABLE_STATUSES.includes(xhr.status),
           ),
         )
@@ -116,6 +113,20 @@ export function sendRelayChunk(
     xhr.ontimeout = () => reject(new ChunkError('Upload timed out', true))
     xhr.send(chunk)
   })
+}
+
+export async function sendRelayChunk(
+  sessionId: string,
+  index: number,
+  chunk: Blob,
+  onProgress?: (pct: number) => void,
+): Promise<{ next: number }> {
+  const body = await putChunk(
+    `${API_BASE}/upload/relay/${encodeURIComponent(sessionId)}/chunks/${index}`,
+    chunk,
+    onProgress,
+  )
+  return { next: (body.next as number | undefined) ?? index + 1 }
 }
 
 export interface ChunkLoopHandlers {
