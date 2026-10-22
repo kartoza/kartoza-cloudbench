@@ -167,13 +167,14 @@ def test_server_types_refused(geohosting):
         GeoHostingClient().cloudnative_gis_processing_server_types()
 
 
-# -- A job's on-demand server ----------------------------------------------------
+# -- On-demand servers -----------------------------------------------------------
 
 SERVERS = "http://geohosting/api/v1/cloudnative-gis-processing/servers/"
 JOB_ID = "11111111-2222-3333-4444-555555555555"
+SERVER_ID = "66666666-7777-8888-9999-000000000000"
 
 
-def server_call(geohosting, answer, method_name, *args):
+def server_call(geohosting, answer, method_name, *args, **kwargs):
     """Call `method_name` with GeoHosting answering `answer`; returns (result, request, log)."""
     logged = []
     with (
@@ -182,14 +183,14 @@ def server_call(geohosting, answer, method_name, *args):
     ):
         method = getattr(GeoHostingClient(), method_name)
         try:
-            result = method(*args, log=lambda **entry: logged.append(entry))
+            result = method(*args, log=lambda **entry: logged.append(entry), **kwargs)
         except GeoHostingError as exc:
             result = exc
     return result, request, logged
 
 
 def test_create_server_posts_the_job_its_owner_and_server_type(geohosting):
-    answer = {"job_id": JOB_ID, "status": "provisioning", "url": "", "token": ""}
+    answer = {"server_id": SERVER_ID, "status": "provisioning", "url": "", "token": ""}
     result, request, logged = server_call(
         geohosting, httpx.Response(202, json=answer), "create_server", JOB_ID, "tim", 7
     )
@@ -209,12 +210,28 @@ def test_create_server_posts_the_job_its_owner_and_server_type(geohosting):
     assert entry["error"] == ""
 
 
+def test_create_server_asks_for_a_server_by_its_id(geohosting):
+    answer = {"server_id": SERVER_ID, "status": "ready", "url": "http://10.0.0.5:8000"}
+    result, request, _ = server_call(
+        geohosting,
+        httpx.Response(200, json=answer),
+        "create_server",
+        JOB_ID,
+        "tim",
+        7,
+        server_id=SERVER_ID,
+    )
+    assert result == answer
+    assert request.call_args.kwargs["json"]["server_id"] == SERVER_ID
+
+
 @pytest.mark.parametrize(
     "status, detail",
     [
         (400, "No GeoHosting user 'tim'."),
         (400, "Server type 7 isn't enabled."),
-        (409, "still being deleted"),
+        (409, "That server is deleted; ask for a new one."),
+        (409, "That server belongs to another user."),
     ],
 )
 def test_create_server_refusals_carry_the_status(geohosting, status, detail):
@@ -232,27 +249,59 @@ def test_create_server_refusals_carry_the_status(geohosting, status, detail):
     assert logged[0]["status_code"] == status
 
 
-def test_get_server(geohosting):
-    answer = {"job_id": JOB_ID, "status": "ready", "url": "http://10.0.0.5:8000", "token": "t"}
+def test_list_servers(geohosting):
+    answer = [{"server_id": SERVER_ID, "status": "ready"}]
     result, request, _ = server_call(
-        geohosting, httpx.Response(200, json=answer), "get_server", JOB_ID
+        geohosting, httpx.Response(200, json=answer), "list_servers", "tim"
     )
     assert result == answer
-    assert request.call_args.args == ("GET", f"{SERVERS}{JOB_ID}/")
+    assert request.call_args.args == ("GET", SERVERS)
+    assert request.call_args.kwargs["params"] == {"username": "tim"}
+
+
+def test_list_servers_of_an_unknown_user(geohosting):
+    error, _, _ = server_call(
+        geohosting,
+        httpx.Response(400, json={"detail": "No GeoHosting user 'tim'."}),
+        "list_servers",
+        "tim",
+    )
+    assert isinstance(error, GeoHostingError)
+    assert error.status_code == 400
+
+
+def test_get_server(geohosting):
+    answer = {"server_id": SERVER_ID, "status": "ready", "url": "http://10.0.0.5:8000"}
+    result, request, _ = server_call(
+        geohosting, httpx.Response(200, json=answer), "get_server", SERVER_ID
+    )
+    assert result == answer
+    assert request.call_args.args == ("GET", f"{SERVERS}{SERVER_ID}/")
 
 
 def test_get_server_none(geohosting):
-    result, _, _ = server_call(geohosting, httpx.Response(404, json={}), "get_server", JOB_ID)
+    result, _, _ = server_call(geohosting, httpx.Response(404, json={}), "get_server", SERVER_ID)
     assert result is None
+
+
+def test_get_job_server(geohosting):
+    answer = {"server_id": SERVER_ID, "job_ids": [JOB_ID], "status": "ready"}
+    result, request, _ = server_call(
+        geohosting, httpx.Response(200, json=answer), "get_job_server", JOB_ID
+    )
+    assert result == answer
+    assert request.call_args.args == ("GET", f"{SERVERS}job/{JOB_ID}/")
+    none, _, _ = server_call(geohosting, httpx.Response(404, json={}), "get_job_server", JOB_ID)
+    assert none is None
 
 
 def test_delete_server(geohosting):
     deleting, request, _ = server_call(
-        geohosting, httpx.Response(202, json={"status": "deleting"}), "delete_server", JOB_ID
+        geohosting, httpx.Response(202, json={"status": "deleting"}), "delete_server", SERVER_ID
     )
     assert deleting == {"status": "deleting"}
-    assert request.call_args.args == ("DELETE", f"{SERVERS}{JOB_ID}/")
-    gone, _, logged = server_call(geohosting, httpx.Response(204), "delete_server", JOB_ID)
+    assert request.call_args.args == ("DELETE", f"{SERVERS}{SERVER_ID}/")
+    gone, _, logged = server_call(geohosting, httpx.Response(204), "delete_server", SERVER_ID)
     assert gone is None
     assert logged[0]["status_code"] == 204
 

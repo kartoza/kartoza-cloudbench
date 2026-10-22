@@ -5,6 +5,7 @@ import { useUIStore } from '../../../stores/uiStore'
 import type { TreeNode } from '../../../types'
 import * as api from '../../../api'
 import { TreeNodeRow } from '../TreeNodeRow'
+import { TreeChildren } from '../TreeChildren'
 import { WorkspaceNode } from './WorkspaceNode'
 import type { ConnectionNodeProps } from '../types'
 import { useOnlineStatus } from '../../../hooks/useOnlineStatus'
@@ -79,13 +80,17 @@ export function ConnectionNode({ connectionId, name, url, ableToEdit = true, abl
         ableToEdit={ableToEdit}
         ableToDelete={ableToDelete}
       />
-      {isExpanded && workspaces && workspaces.map((ws) => (
-        <WorkspaceNode
-          key={ws.name}
-          connectionId={connectionId}
-          workspace={ws.name}
-        />
-      ))}
+      {isExpanded && workspaces && (
+        <TreeChildren>
+          {workspaces.map((ws) => (
+            <WorkspaceNode
+              key={ws.name}
+              connectionId={connectionId}
+              workspace={ws.name}
+            />
+          ))}
+        </TreeChildren>
+      )}
     </Box>
   )
 }

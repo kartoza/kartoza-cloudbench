@@ -152,13 +152,21 @@ class TestGeoNodeClient:
         assert self.make().client.auth is None
 
     def test_test_connection(self, http_mock):
-        http_mock.add("GET", "/api/v2/$", json={})
+        # Probes /resources (what the app reads), not the /api/v2/ root, which
+        # 401s for credentials it rejects even on a working GeoNode.
+        http_mock.add("GET", "/resources", json={"resources": []})
         ok, msg = self.make().test_connection()
         assert ok and GN in msg
-        http_mock.add("GET", "/api/v2/$", status=403)
+        # Reached GeoNode but it rejected the credentials -> clear message.
+        http_mock.add("GET", "/resources", status=401)
+        ok, msg = self.make(username="u", password="p").test_connection()
+        assert not ok and "rejected" in msg.lower()
+        # Auth required but none was supplied.
+        http_mock.add("GET", "/resources", status=403)
         ok, msg = self.make().test_connection()
-        assert not ok and "403" in msg
-        http_mock.add("GET", "/api/v2/$", exc=httpx.ConnectError("down"))
+        assert not ok and "authentication" in msg.lower()
+        # Unreachable host.
+        http_mock.add("GET", "/resources", exc=httpx.ConnectError("down"))
         ok, msg = self.make().test_connection()
         assert not ok and "down" in msg
 
@@ -262,6 +270,49 @@ class TestGeoNodeClient:
         http_mock.add("POST", "/uploads/upload", json={})
         self.make().upload_dataset([b"x"], "a.unknown", 1, 60)
         assert b"application/octet-stream" in http_mock.calls[0].content
+
+    def test_get_execution(self, http_mock):
+        http_mock.add("GET", "/executionrequest/e1", json={"request": {"status": "running"}})
+        assert self.make().get_execution("e1") == {"status": "running"}
+
+    def test_apply_dataset_metadata_once_imported(self, http_mock, monkeypatch):
+        """GeoNode ignores the title sent with the upload: it is PATCHed afterwards."""
+        client = self.make()
+        polls = iter(
+            [
+                {"status": "running"},
+                {"status": "finished", "output_params": {"resources": [{"id": 3}]}},
+            ]
+        )
+        monkeypatch.setattr(client, "get_execution", lambda _id: next(polls))
+        http_mock.add("PATCH", "/datasets/3", json={})
+        assert client.apply_dataset_metadata("e1", title="T", abstract="A", interval=0) == [3]
+        patch = http_mock.requests("PATCH")[0]
+        assert patch.content == b'{"title":"T","abstract":"A"}'
+
+    def test_apply_dataset_metadata_falls_back_to_geonode_resource(self, http_mock, monkeypatch):
+        client = self.make()
+        finished = {"status": "finished", "output_params": {}, "geonode_resource": 7}
+        monkeypatch.setattr(client, "get_execution", lambda _id: finished)
+        http_mock.add("PATCH", "/datasets/7", json={})
+        assert client.apply_dataset_metadata("e1", title="T") == [7]
+
+    @pytest.mark.parametrize(
+        "execution, kwargs",
+        [
+            ({"status": "failed"}, {"title": "T"}),
+            ({"status": "running"}, {"title": "T", "timeout": 0}),
+            ({"status": "finished", "output_params": {"resources": [{"id": 3}]}}, {}),
+        ],
+        ids=["import failed", "never finished", "nothing to set"],
+    )
+    def test_apply_dataset_metadata_changes_nothing(
+        self, http_mock, monkeypatch, execution, kwargs
+    ):
+        client = self.make()
+        monkeypatch.setattr(client, "get_execution", lambda _id: execution)
+        assert client.apply_dataset_metadata("e1", interval=0, **kwargs) == []
+        assert not http_mock.requests("PATCH")
 
     def test_upload_document(self, http_mock):
         http_mock.add("POST", "/documents/", json={"ok": 1})

@@ -7,7 +7,8 @@ import type { TreeNode } from '../../../types'
 import * as api from '../../../api/client'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { MerginMapsConnectionNode } from './MerginMapsConnectionNode'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 export function MerginMapsRootNode() {
   const nodeId = 'merginmaps-root'
@@ -62,9 +63,9 @@ export function MerginMapsRootNode() {
         count={connections?.length}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {!connections || connections.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(2)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text color="gray.500" fontSize="sm">
                 No Mergin Maps connections. Click + to add one.
               </Text>
@@ -77,7 +78,7 @@ export function MerginMapsRootNode() {
               />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

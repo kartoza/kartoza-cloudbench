@@ -376,3 +376,10 @@ class TestClientManager:
     def test_unknown_connection_raises(self, config_manager):
         with pytest.raises(ValueError, match="not found"):
             GeoServerClientManager(config_manager._user).get_client("nope")
+
+    def test_get_geoserver_client_unknown_is_geoserver_error_404(self, config_manager):
+        # The views only catch GeoServerError, so a missing connection must be
+        # one (a 404), not a bare ValueError that becomes a 500.
+        with pytest.raises(GeoServerError) as exc:
+            get_geoserver_client("nope", config_manager._user)
+        assert exc.value.status_code == 404

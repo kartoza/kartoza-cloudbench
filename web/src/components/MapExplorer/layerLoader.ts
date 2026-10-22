@@ -8,7 +8,8 @@ import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
 import type { LidarControl } from 'maplibre-gl-lidar'
-import { getS3PresignedUrl, type LayerFormat } from '../../api/mapExplorer'
+import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
+import { getS3ProxyURL } from '../../api/s3'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -36,25 +37,49 @@ export async function addCopcLayer(
   return { pointCloudId: info.id, bounds: [minX, minY, maxX, maxY] }
 }
 
+/** How a COG's saved default style (styles/default.json) says to draw it. */
+export interface CogStyle {
+  /** The source URL's "#color:..." (or "#dem") part, which the cog:// protocol reads; includes the "#". */
+  hash: string
+  /** The raster layer's raster-* paint properties, bar raster-opacity (the layer's opacity slider owns that). */
+  paint: Record<string, unknown>
+}
+
+/** Picks what the map can use out of a COG's saved style; nothing if it has none. */
+export function cogStyleFrom(style: Record<string, unknown> | null): CogStyle {
+  const sources = Object.values((style?.sources ?? {}) as Record<string, { type?: string; url?: unknown }>)
+  const sourceUrl = sources.find((source) => source?.type === 'raster' && typeof source.url === 'string')?.url
+  const hashAt = typeof sourceUrl === 'string' ? sourceUrl.indexOf('#') : -1
+  const layers = Array.isArray(style?.layers) ? (style.layers as { type?: string; paint?: Record<string, unknown> }[]) : []
+  const paint = layers.find((layer) => layer.type === 'raster')?.paint ?? {}
+  return {
+    hash: hashAt >= 0 ? (sourceUrl as string).slice(hashAt) : '',
+    paint: Object.fromEntries(
+      Object.entries(paint).filter(([name]) => name.startsWith('raster-') && name !== 'raster-opacity')
+    ),
+  }
+}
+
 export async function addCogLayer(
   mapInstance: maplibregl.Map,
   layerId: string,
   url: string,
-  opacity: number
+  opacity: number,
+  style: CogStyle = { hash: '', paint: {} }
 ): Promise<[number, number, number, number]> {
   const metadata = await getCogMetadata(url)
   if (!metadata.bbox) throw new Error('COG has no readable bounding box.')
 
   mapInstance.addSource(layerId, {
     type: 'raster',
-    url: `cog://${url}`,
+    url: `cog://${url}${style.hash}`,
     tileSize: 256,
   })
   mapInstance.addLayer({
     id: layerId,
     type: 'raster',
     source: layerId,
-    paint: { 'raster-opacity': opacity / 100 },
+    paint: { ...style.paint, 'raster-opacity': opacity / 100 },
   })
 
   return metadata.bbox
@@ -190,16 +215,34 @@ export async function loadLayerOntoMap(
   // The map's point cloud control, created on first use (COPC only).
   getLidar?: () => LidarControl
 ): Promise<LoadedLayerInfo> {
-  const url = await getS3PresignedUrl(connectionId, layer.key)
-
+  // Everything streams through the same-origin proxy, never a presigned
+  // bucket URL (the bucket sends no CORS headers, so a page fetch of one
+  // fails "Request failed"). COG and PMTiles are fetched on the main thread,
+  // where the patched window.fetch (api/common.ts) adds the auth token. COPC
+  // is read in a Web Worker (maplibre-gl-lidar), which that patch can't reach
+  // and which can't set an Authorization header, so its proxy URL carries the
+  // token as a ?token= query parameter instead (QueryTokenAuthentication on
+  // the proxy view) — no bucket CORS needed.
   if (layer.format === 'copc') {
     if (!getLidar) throw new Error('This map cannot show point clouds.')
-    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), url, layer.opacity)
+    // The COPC reader parses the URL with `new URL(source)` (no base) and
+    // fetches it from its Worker, so it must be absolute, not the root-relative
+    // `/api/...` the proxy helper returns. Resolve it against this page's origin
+    // (same-origin, so no bucket CORS) and add the token the Worker can't send
+    // as a header.
+    const token = localStorage.getItem('token')
+    const url = new URL(getS3ProxyURL(connectionId, layer.key), window.location.origin)
+    if (token) url.searchParams.set('token', token)
+    const { pointCloudId, bounds } = await addCopcLayer(getLidar(), url.toString(), layer.opacity)
     return { bounds, isVector: false, pointCloudId }
   }
 
+  const url = getS3ProxyURL(connectionId, layer.key)
+
   if (layer.format === 'cog') {
-    const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity)
+    // Drawn the way the layer's saved default style says (colour ramp, paint).
+    const style = cogStyleFrom(await getPmtilesStyle(connectionId, layer.key))
+    const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity, style)
     return { bounds, isVector: false }
   }
 

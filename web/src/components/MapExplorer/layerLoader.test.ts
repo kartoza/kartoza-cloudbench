@@ -1,13 +1,15 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('../../api/mapExplorer', () => ({
-  getS3PresignedUrl: vi.fn().mockResolvedValue('https://minio/bucket/autzen.copc.laz?sig'),
-}))
-
-import { layerNameFromKey, loadLayerOntoMap } from './layerLoader'
+import { getS3ProxyURL } from '../../api/s3'
+import { cogStyleFrom, layerNameFromKey, loadLayerOntoMap } from './layerLoader'
 
 describe('layerLoader point clouds', () => {
-  it('streams a COPC through the map\'s LidarControl, with its WGS84 bounds', async () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('streams a COPC through the proxy (token in the URL for the worker), with its WGS84 bounds', async () => {
+    localStorage.setItem('token', 'sso-tok')
     const lidar = {
       loadPointCloud: vi.fn().mockResolvedValue({
         id: 'pc-1',
@@ -26,12 +28,39 @@ describe('layerLoader point clouds', () => {
       () => lidar as never
     )
 
-    expect(lidar.loadPointCloud).toHaveBeenCalledWith('https://minio/bucket/autzen.copc.laz?sig')
+    // Absolute (the COPC reader does new URL(source) and fetches from a Worker),
+    // same-origin, with the token the Worker can't send as a header.
+    const expected = new URL(getS3ProxyURL('conn-1', 'lidar/autzen.copc.laz'), window.location.origin)
+    expected.searchParams.set('token', 'sso-tok')
+    expect(lidar.loadPointCloud).toHaveBeenCalledWith(expected.toString())
     expect(lidar.setOpacity).toHaveBeenCalledWith(0.8)
     expect(info).toEqual({ bounds: [-123.07, 44.05, -123.06, 44.06], isVector: false, pointCloudId: 'pc-1' })
   })
 
   it('names a COPC layer without its double extension', () => {
     expect(layerNameFromKey('lidar/autzen.copc.laz', 'copc')).toBe('autzen')
+  })
+})
+
+describe('cogStyleFrom', () => {
+  it('takes the colour ramp and raster paint from a saved style', () => {
+    const style = {
+      sources: { data: { type: 'raster', url: 'cog://../pr.tif#color:BrewerYlGnBu9,0,3000,c' } },
+      layers: [{ type: 'raster', paint: { 'raster-opacity': 0.5, 'raster-saturation': -0.3, 'fill-color': 'red' } }],
+    }
+    expect(cogStyleFrom(style)).toEqual({
+      hash: '#color:BrewerYlGnBu9,0,3000,c',
+      paint: { 'raster-saturation': -0.3 },
+    })
+  })
+
+  it('has nothing to apply without a style, or for the plain default', () => {
+    expect(cogStyleFrom(null)).toEqual({ hash: '', paint: {} })
+    expect(
+      cogStyleFrom({
+        sources: { data: { type: 'raster', url: 'cog://../a.tif' } },
+        layers: [{ type: 'raster' }],
+      })
+    ).toEqual({ hash: '', paint: {} })
   })
 })

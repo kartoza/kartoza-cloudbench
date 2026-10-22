@@ -8,7 +8,8 @@ import { TreeNodeRow } from '../TreeNodeRow'
 import { DataStoreContentsNode } from './DataStoreContentsNode'
 import { CoverageStoreContentsNode } from './CoverageStoreContentsNode'
 import type { ItemNodeProps } from '../types'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 export function ItemNode({ connectionId, workspace, name, type, storeType }: ItemNodeProps) {
   const nodeId = generateNodeId(type, connectionId, workspace, name)
@@ -226,32 +227,36 @@ export function ItemNode({ connectionId, workspace, name, type, storeType }: Ite
         count={totalCount}
       />
       {isExpanded && type === 'datastore' && (
-        featureTypesError ? (
-          <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(6)}>
-            Error loading datasets: {(featureTypesError as Error).message}
-          </Text>
-        ) : (
-          <DataStoreContentsNode
-            connectionId={connectionId}
-            workspace={workspace}
-            storeName={name}
-            featureTypes={featureTypes || []}
-          />
-        )
+        <TreeChildren>
+          {featureTypesError ? (
+            <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
+              Error loading datasets: {(featureTypesError as Error).message}
+            </Text>
+          ) : (
+            <DataStoreContentsNode
+              connectionId={connectionId}
+              workspace={workspace}
+              storeName={name}
+              featureTypes={featureTypes || []}
+            />
+          )}
+        </TreeChildren>
       )}
       {isExpanded && type === 'coveragestore' && (
-        coveragesError ? (
-          <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(6)}>
-            Error loading coverages: {(coveragesError as Error).message}
-          </Text>
-        ) : (
-          <CoverageStoreContentsNode
-            connectionId={connectionId}
-            workspace={workspace}
-            storeName={name}
-            coverages={coverages || []}
-          />
-        )
+        <TreeChildren>
+          {coveragesError ? (
+            <Text fontSize="xs" color="red.500" px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
+              Error loading coverages: {(coveragesError as Error).message}
+            </Text>
+          ) : (
+            <CoverageStoreContentsNode
+              connectionId={connectionId}
+              workspace={workspace}
+              storeName={name}
+              coverages={coverages || []}
+            />
+          )}
+        </TreeChildren>
       )}
     </Box>
   )

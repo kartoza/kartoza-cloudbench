@@ -58,7 +58,7 @@ function JobRow({ job }: { job: ConversionJob }) {
     <Box py={2.5} borderBottom="1px solid" borderColor="gray.100" _last={{ borderBottom: 'none' }}>
       <HStack justify="space-between" align="start" spacing={2}>
         <Box minW={0}>
-          <Text fontSize="sm" fontWeight="600" noOfLines={1}>
+          <Text fontSize="sm" fontWeight="600" noOfLines={1} mb="6px">
             {job.sourcePath}
           </Text>
           <Text fontSize="xs" color="gray.500">
@@ -110,6 +110,12 @@ function JobRow({ job }: { job: ConversionJob }) {
             </HStack>
           ))}
         </VStack>
+      )}
+      {job.server && (
+        <Text fontSize="xs" color="gray.500" mt={1} noOfLines={1}>
+          {job.server.instanceId.slice(0, 8)} · {job.server.label}
+          {' · '}{job.server.jobs} job{job.server.jobs === 1 ? '' : 's'} - {job.server.status}
+        </Text>
       )}
     </Box>
   )

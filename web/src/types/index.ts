@@ -602,6 +602,8 @@ export interface ConversionJob {
   completedAt?: string
   inputSize: number
   outputSize?: number
+  // On-demand CloudNativeGIS: the server it runs (or ran) on.
+  server?: CloudNativeGISInstanceServer | null
 }
 
 // Conversion tool info
@@ -615,20 +617,44 @@ export interface ConversionToolInfo {
   // (started by GeoHosting), and the server types it may start as.
   onDemand?: boolean
   servers?: CloudNativeGISServerType[]
+  // On demand: GeoHosting's page of the user's servers ("Server on
+  // Demand"), where a server kept running is deleted.
+  serversUrl?: string
 }
 
-// A Hetzner server type GeoHosting may start an on-demand CloudNativeGIS server as.
+// A server type GeoHosting may start an on-demand CloudNativeGIS server as.
 export interface CloudNativeGISServerType {
-  // GeoHosting's HetznerServer id: what a conversion's server is started as.
+  // GeoHosting's server type id: what a conversion's server is started as.
+  // Not its type name: CloudBench doesn't pass it on.
   id: number
-  type: string
   location: string
   specifications: Record<string, unknown>
+  // As GeoHosting shows it, e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk".
+  label: string
   currency: string
   // Per hour, excluding VAT, as a decimal string.
   price: string
-  // Whether Hetzner has it in stock in its location right now.
+  // Whether it's in stock in its location right now.
   available?: boolean | null
+}
+
+// One of the user's running on-demand CloudNativeGIS servers (GeoHosting's)
+// a conversion can run on.
+export interface CloudNativeGISInstanceServer {
+  instanceId: string
+  // Only provisioning/ready ones are listed to run a conversion on; a
+  // job's server can be any.
+  status: 'provisioning' | 'ready' | 'deleting' | 'deleted' | 'failed'
+  // Deleted once the job it was started for is done: can't run another.
+  autoDestroy: boolean
+  // The CloudNativeGISServerType it was started as.
+  typeId: number | null
+  specification: Record<string, unknown> | null
+  // That type as GeoHosting shows it, e.g. "fsn1 · 2 vCPU / 4 GB · 40 GB disk".
+  label: string
+  created: string | null
+  // How many conversions have run on it.
+  jobs: number
 }
 
 export interface ConversionToolStatus {

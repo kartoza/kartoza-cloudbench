@@ -5,7 +5,10 @@ for managing geospatial data catalog and services.
 """
 
 import json
+import logging
 import mimetypes
+import threading
+import time
 import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -97,6 +100,9 @@ def _error_message(response: httpx.Response) -> str:
     return json.dumps(data)[:500]
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass
 class GeoNodeResource:
     """GeoNode resource information."""
@@ -170,18 +176,30 @@ class GeoNodeClient:
     def test_connection(self) -> tuple[bool, str]:
         """Test the connection.
 
+        Probes ``/api/v2/resources`` — the endpoint the app actually reads —
+        rather than the API root ``/api/v2/``. The root answers 401 whenever
+        credentials are present but rejected there, even for a GeoNode that
+        serves resources and accepts uploads fine, so testing it reported a
+        working connection as broken. This also tells "can't reach GeoNode"
+        apart from "GeoNode rejected these credentials".
+
         Returns:
             Tuple of (success, message)
         """
         try:
-            response = self.client.get("/")
-            response.raise_for_status()
+            response = self.client.get("/resources", params={"page_size": 1})
+        except Exception as e:
+            return False, f"Could not reach GeoNode at {self.url}: {e}"
 
-            return True, f"Connected to GeoNode at {self.url}"
+        if response.status_code in (401, 403):
+            if self.username or self.api_key:
+                return False, "Reached GeoNode, but it rejected the credentials."
+            return False, "GeoNode requires authentication; add a username/password or API token."
+        try:
+            response.raise_for_status()
         except httpx.HTTPStatusError as e:
             return False, f"HTTP error: {e.response.status_code}"
-        except Exception as e:
-            return False, str(e)
+        return True, f"Connected to GeoNode at {self.url}"
 
     def list_categories(self) -> list[dict[str, Any]]:
         """List resource categories.
@@ -368,6 +386,53 @@ class GeoNodeClient:
             return BASE_FILE
         return ZIP_FILE
 
+    def get_execution(self, execution_id: str) -> dict[str, Any]:
+        """The importer's execution request for an upload (status, resources)."""
+        response = self.client.get(f"/executionrequest/{execution_id}")
+        response.raise_for_status()
+        return response.json().get("request", {})
+
+    def update_dataset(self, dataset_id: int, fields: dict[str, Any]) -> None:
+        """Change a dataset's metadata (title, abstract…)."""
+        response = self.client.patch(f"/datasets/{dataset_id}", json=fields)
+        response.raise_for_status()
+
+    def apply_dataset_metadata(
+        self,
+        execution_id: str,
+        title: str | None = None,
+        abstract: str | None = None,
+        timeout: float = 600,
+        interval: float = 5,
+    ) -> list[int]:
+        """Give the datasets an upload created their title and abstract.
+
+        GeoNode's importer ignores the title and abstract sent with the
+        upload (the dataset is named after its file or layer), so set them
+        once the import has finished. Returns the datasets changed; none if
+        the import failed or didn't finish in ``timeout`` seconds.
+        """
+        fields = {k: v for k, v in (("title", title), ("abstract", abstract)) if v}
+        if not fields:
+            return []
+        deadline = time.monotonic() + timeout
+        while True:
+            execution = self.get_execution(execution_id)
+            status = execution.get("status")
+            if status == "finished":
+                break
+            if status == "failed" or time.monotonic() > deadline:
+                logger.warning("GeoNode import %s ended %s: metadata not set", execution_id, status)
+                return []
+            time.sleep(interval)
+        resources = (execution.get("output_params") or {}).get("resources") or []
+        ids = [r["id"] for r in resources if r.get("id")]
+        if not ids and execution.get("geonode_resource"):
+            ids = [execution["geonode_resource"]]
+        for dataset_id in ids:
+            self.update_dataset(dataset_id, fields)
+        return ids
+
     def upload_document(
         self,
         content: Iterable[bytes],
@@ -489,6 +554,22 @@ class GeoNodeClient:
             thumbnail_url=item.get("thumbnail_url", ""),
             detail_url=item.get("detail_url", ""),
         )
+
+
+def apply_metadata_later(client: GeoNodeClient, execution_id: str, title, abstract) -> None:
+    """Set the title/abstract once GeoNode has imported the dataset.
+
+    GeoNode ignores both on the upload itself, and its import runs on for a
+    while after the upload is answered, so this waits in a thread.
+    """
+
+    def run():
+        try:
+            client.apply_dataset_metadata(execution_id, title=title, abstract=abstract)
+        except Exception:
+            logger.exception("Setting the metadata of GeoNode import %s failed", execution_id)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def get_geonode_client(connection_id: str, user: "User") -> GeoNodeClient:

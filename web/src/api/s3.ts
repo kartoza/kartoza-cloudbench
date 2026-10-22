@@ -15,6 +15,7 @@ import type {
   DuckDBTableInfo,
   DuckDBQueryRequest,
   DuckDBQueryResponse,
+  CloudNativeGISInstanceServer,
 } from '../types'
 
 // S3 Connection API — each connection is scoped to exactly one bucket
@@ -193,7 +194,13 @@ export async function uploadToS3(
   replace?: boolean,
   // On-demand CloudNativeGIS: the server type (tools' cloudnativegis.servers
   // id) the conversion's server is started as. Required there.
-  hetznerServerId?: number
+  serverTypeId?: number,
+  // On-demand CloudNativeGIS: whether the server is deleted once the
+  // conversion is done (the default), or kept running.
+  autoDestroy?: boolean,
+  // On-demand CloudNativeGIS: one of getConversionServers' instanceIds to
+  // run on, instead of a new server (serverTypeId/autoDestroy).
+  instanceServerId?: string
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   formData.append('file', file)
@@ -222,8 +229,14 @@ export async function uploadToS3(
   if (replace) {
     formData.append('replace', 'true')
   }
-  if (hetznerServerId !== undefined) {
-    formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) {
+    formData.append('serverTypeId', String(serverTypeId))
+  }
+  if (autoDestroy !== undefined) {
+    formData.append('autoDestroy', String(autoDestroy))
+  }
+  if (instanceServerId) {
+    formData.append('instanceServerId', instanceServerId)
   }
 
   return postWithProgress(`${API_BASE}/s3/upload/${encodeURIComponent(connectionId)}`, formData, onProgress)
@@ -263,6 +276,14 @@ function postWithProgress(
   })
 }
 
+// On-demand CloudNativeGIS: the user's running servers a conversion can run
+// on, as GeoHosting has them now. The autoDestroy ones can't be picked.
+export async function getConversionServers(): Promise<CloudNativeGISInstanceServer[]> {
+  const response = await fetch(`${API_BASE}/s3/conversion/servers`)
+  const result = await handleResponse<{ servers: CloudNativeGISInstanceServer[] }>(response)
+  return result.servers
+}
+
 // Uploads several GeoTIFFs to publish as one mosaic: a collection with a STAC
 // item per tile, a merged web mosaic and a VRT (see apps.s3.mosaic). The tiles
 // must share CRS, bands, data types and nodata; the upload is refused (400)
@@ -276,7 +297,9 @@ export async function uploadMosaic(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number
+  serverTypeId?: number,
+  autoDestroy?: boolean,
+  instanceServerId?: string
 ): Promise<S3UploadResult> {
   const formData = new FormData()
   files.forEach((file) => formData.append('files', file))
@@ -285,7 +308,9 @@ export async function uploadMosaic(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
-  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) formData.append('serverTypeId', String(serverTypeId))
+  if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
+  if (instanceServerId) formData.append('instanceServerId', instanceServerId)
   return postWithProgress(`${API_BASE}/s3/mosaic/${encodeURIComponent(connectionId)}`, formData, onProgress)
 }
 
@@ -309,7 +334,9 @@ export async function inspectGeoPackage(
   license?: string,
   licenseUrl?: string,
   replace?: boolean,
-  hetznerServerId?: number
+  serverTypeId?: number,
+  autoDestroy?: boolean,
+  instanceServerId?: string
 ): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
@@ -317,7 +344,9 @@ export async function inspectGeoPackage(
   if (license) formData.append('license', license)
   if (licenseUrl) formData.append('licenseUrl', licenseUrl)
   if (replace) formData.append('replace', 'true')
-  if (hetznerServerId !== undefined) formData.append('hetznerServerId', String(hetznerServerId))
+  if (serverTypeId !== undefined) formData.append('serverTypeId', String(serverTypeId))
+  if (autoDestroy !== undefined) formData.append('autoDestroy', String(autoDestroy))
+  if (instanceServerId) formData.append('instanceServerId', instanceServerId)
   const response = await fetch(
     `${API_BASE}/s3/gpkg/inspect/${encodeURIComponent(connectionId)}`,
     { method: 'POST', body: formData }
@@ -348,6 +377,14 @@ export async function cancelGeoPackageInspection(jobId: string): Promise<void> {
     method: 'DELETE',
   })
   await handleResponse<void>(response)
+}
+
+// Same-origin proxy URL for an S3 object, streamed through the API. Unlike a
+// presigned URL (which points at the bucket's own origin and is blocked by
+// CORS when fetched from the app), this can be fetched from the page.
+export function getS3ProxyURL(connectionId: string, key: string): string {
+  const encodedKey = key.split('/').map(encodeURIComponent).join('/')
+  return `${API_BASE}/s3/proxy/${encodeURIComponent(connectionId)}/${encodedKey}`
 }
 
 // Get a presigned URL for an S3 object

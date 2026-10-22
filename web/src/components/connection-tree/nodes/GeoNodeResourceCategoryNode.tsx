@@ -3,7 +3,8 @@ import { useTreeStore } from '../../../stores/treeStore'
 import type { TreeNode, NodeType, GeoNodeResource } from '../../../types'
 import { TreeNodeRow } from '../TreeNodeRow'
 import { GeoNodeResourceNode } from './GeoNodeResourceNode'
-import { treeIndent, TREE_PLACEHOLDER_PL } from '../utils'
+import { TREE_PLACEHOLDER_PL } from '../utils'
+import { TreeChildren } from '../TreeChildren'
 
 type CategoryType = 'datasets' | 'maps' | 'documents' | 'geostories' | 'dashboards'
 
@@ -77,9 +78,9 @@ export function GeoNodeResourceCategoryNode({
         onUpload={onUpload}
       />
       {isExpanded && (
-        <>
+        <TreeChildren>
           {resources.length === 0 ? (
-            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5} ml={treeIndent(4)}>
+            <Box px={2} pl={TREE_PLACEHOLDER_PL} py={1.5}>
               <Text color="gray.500" fontSize="sm">
                 No {name.toLowerCase()} found
               </Text>
@@ -96,7 +97,7 @@ export function GeoNodeResourceCategoryNode({
               />
             ))
           )}
-        </>
+        </TreeChildren>
       )}
     </Box>
   )

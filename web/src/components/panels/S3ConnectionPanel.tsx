@@ -33,13 +33,15 @@ import {
   FiChevronRight,
   FiArrowLeft,
   FiShield,
+  FiEdit2,
 } from 'react-icons/fi'
 import { SiAmazons3 } from 'react-icons/si'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as api from '../../api'
 import { useUIStore } from '../../stores/uiStore'
 import type { S3Object } from '../../types'
-import { formatFileSize, isMapExplorerFormat } from '../../utils/s3ObjectFormat'
+import { formatFileSize, isDefaultStyleKey, isMapExplorerFormat } from '../../utils/s3ObjectFormat'
+import StyleJsonDialog, { type StyleJsonTarget } from '../dialogs/StyleJsonDialog'
 
 interface S3ConnectionPanelProps {
   connectionId: string
@@ -55,6 +57,7 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
   const queryClient = useQueryClient()
   const toast = useToast()
   const [prefix, setPrefix] = useState(initialPrefix)
+  const [editingStyle, setEditingStyle] = useState<StyleJsonTarget | null>(null)
 
   // Fetch connection details
   const { data: connection, isLoading: loadingConnection } = useQuery({
@@ -342,6 +345,20 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
                               />
                             </Tooltip>
                           )}
+                          {isDefaultStyleKey(object.key) && (
+                            <Tooltip label="Edit style" fontSize="xs">
+                              <IconButton
+                                aria-label="Edit style"
+                                icon={<FiEdit2 size={14} />}
+                                size="xs"
+                                variant="ghost"
+                                colorScheme="teal"
+                                onClick={() =>
+                                  setEditingStyle({ connectionId, styleKey: object.key, name: displayName })
+                                }
+                              />
+                            </Tooltip>
+                          )}
                           <Tooltip label="Download" fontSize="xs">
                             <IconButton
                               aria-label="Download"
@@ -387,6 +404,7 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
           )}
         </CardBody>
       </Card>
+      <StyleJsonDialog target={editingStyle} onClose={() => setEditingStyle(null)} onSaved={handleRefresh} />
     </VStack>
   )
 }

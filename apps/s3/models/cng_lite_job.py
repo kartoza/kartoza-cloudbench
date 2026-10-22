@@ -12,6 +12,7 @@ from django.db.models import Q
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
 
+from .cng_lite_server import CngLiteServer, hide_server_type
 from .s3_connection import S3Connection
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,10 @@ CONVERSION_FORMATS = {
     "copc": {"sourceFormat": "las", "targetFormat": "copc"},
     "mosaic": {"sourceFormat": "tiff", "targetFormat": "mosaic"},
 }
+
+
+# GeoHosting's page of a user's on-demand servers ("Server on Demand").
+GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/server-on-demand"
 
 
 def _is_healthy(url):
@@ -43,7 +48,8 @@ class CngLiteJobStatus(models.TextChoices):
     # raster job waiting for its vector job (see geopackage_convert).
     PENDING = "pending", "Pending"
     # Getting the CloudNativeGIS service the job will run on - its
-    # cloudnativegis_url/cloudnativegis_api_token (CLOUDNATIVEGIS_ON_DEMAND).
+    # cloudnativegis_url/cloudnativegis_api_token, or its instance_server
+    # (CLOUDNATIVEGIS_ON_DEMAND).
     PROVISIONING = "provisioning", "Provisioning"
     # Submitting the job to CloudNativeGIS; `cng_job_id` not known yet.
     PUSHING = "pushing", "Pushing"
@@ -134,19 +140,31 @@ class CngLiteJob(models.Model):
     depends_on = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="dependents"
     )
-    # The CloudNativeGIS service this job's conversion runs on, and its bearer
-    # token (encrypted at rest) - for CLOUDNATIVEGIS_ON_DEMAND, where each job
-    # gets its own instead of the fixed CLOUDNATIVEGIS_URL/API_TOKEN.
+    # The fixed CLOUDNATIVEGIS_URL/API_TOKEN this job's conversion runs on,
+    # its token encrypted at rest - without CLOUDNATIVEGIS_ON_DEMAND. On
+    # demand, its instance_server's are used instead (see server_url).
     cloudnativegis_url = models.URLField(max_length=2000, blank=True, default="")
     cloudnativegis_api_token = EncryptedCharField(blank=True, default="")
     # CLOUDNATIVEGIS_ON_DEMAND (required there): the id of the GeoHosting
-    # HetznerServer (a server type in a location) the user picked for the
+    # HetznerServerType (a server type in a location) the user picked for the
     # job's server, from the enabled ones (see availability). Null without
     # on demand.
     hetzner_server_id = models.PositiveIntegerField(null=True, blank=True)
-    # Its specifications (cores, memory, disk, ...), as GeoHosting reported
-    # them when asked for the job's server.
-    hetzner_server_specification = models.JSONField(null=True, blank=True)
+    # CLOUDNATIVEGIS_ON_DEMAND: the server it runs on - one of its owner's
+    # running servers picked for it when it was uploaded, or the one
+    # GeoHosting started for it, once GeoHosting has answered about it (see
+    # _provision_on_demand).
+    instance_server = models.ForeignKey(
+        CngLiteServer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="jobs",
+    )
+    # CLOUDNATIVEGIS_ON_DEMAND: whether GeoHosting is asked to delete its
+    # instance_server once it's done (see deprovision) - not, for a server
+    # kept for other jobs to run on.
+    auto_destroy = models.BooleanField(default=True)
     # The job's id on the CloudNativeGIS side, set once it has been submitted
     # there (see apps.s3.cng_lite.CNGProcessingClient.push) - what its status
     # is polled by.
@@ -207,9 +225,11 @@ class CngLiteJob(models.Model):
         CLOUDNATIVEGIS_URL answers its /health check; no servers. With it:
         available if GeoHosting, which starts the servers, can (it reaches
         the Hetzner Cloud API, and has a snapshot to start them from) and
-        has a server type enabled, and in stock at Hetzner, to start them as
-        - `servers`, the enabled types, cheapest first, each with whether
-        it's in stock (`available`).
+        has a server type enabled to start them as, even if none is in stock
+        at Hetzner - `servers`, the enabled types, cheapest first, each with
+        whether it's in stock (`available`), without its type name
+        (hide_server_type). On demand, `serversUrl` is
+        GeoHosting's page of the user's servers, where a kept one is deleted.
         """
         if not settings.CLOUDNATIVEGIS_ON_DEMAND:
             return {
@@ -236,10 +256,16 @@ class CngLiteJob(models.Model):
             return unavailable
         if not servers:
             logger.warning("GeoHosting has no server type enabled for CloudNativeGIS servers.")
-        in_stock = any(server.get("available") for server in servers)
-        if servers and not in_stock:
+        if servers and not any(server.get("available") for server in servers):
             logger.warning("None of GeoHosting's CloudNativeGIS server types is in stock.")
-        return {"available": in_stock, "onDemand": True, "servers": servers}
+        return {
+            "available": bool(servers),
+            "onDemand": True,
+            "servers": [hide_server_type(server) for server in servers],
+            "serversUrl": GEOHOSTING_SERVERS_PAGE.format(
+                geohosting=settings.GEOHOSTING_URL.rstrip("/")
+            ),
+        }
 
     # ---------------------------------
     # STEP 2
@@ -247,67 +273,95 @@ class CngLiteJob(models.Model):
     def provision(self):
         """Get the CloudNativeGIS service this job runs on, and wait until it's healthy.
 
-        Fills in cloudnativegis_url/cloudnativegis_api_token - without
-        CLOUDNATIVEGIS_ON_DEMAND, the fixed CLOUDNATIVEGIS_URL/API_TOKEN; with
-        it, those of a server GeoHosting starts for this job (see
-        _provision_on_demand) - then polls its /health. Raises ValueError if
+        Without CLOUDNATIVEGIS_ON_DEMAND, fills in cloudnativegis_url/
+        cloudnativegis_api_token from the fixed CLOUDNATIVEGIS_URL/API_TOKEN;
+        with it, has GeoHosting start its instance_server (see
+        _provision_on_demand). Then polls its /health. Raises ValueError if
         it can't be had, or isn't healthy within
         CLOUDNATIVEGIS_PROVISIONING_TIMEOUT.
         """
         if settings.CLOUDNATIVEGIS_ON_DEMAND:
-            url, token = self._provision_on_demand()
+            self._provision_on_demand()
         else:
-            url, token = settings.CLOUDNATIVEGIS_URL, settings.CLOUDNATIVEGIS_API_TOKEN
-        self.cloudnativegis_url = url.rstrip("/")
-        self.cloudnativegis_api_token = token
-        self.save(update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"])
+            self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
+            self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
+            self.save(
+                update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"]
+            )
         self.wait_until_healthy()
 
+    @property
+    def server_url(self):
+        """The CloudNativeGIS service it runs on: its instance_server's, on demand."""
+        if self.instance_server_id:
+            return self.instance_server.url
+        return self.cloudnativegis_url
+
+    @property
+    def server_api_token(self):
+        """That service's bearer token: its instance_server's, on demand."""
+        if self.instance_server_id:
+            return self.instance_server.api_token
+        return self.cloudnativegis_api_token
+
     def _provision_on_demand(self):
-        """Have GeoHosting start this job's server; returns its (url, token).
+        """Have GeoHosting start this job's instance_server, and wait until it's ready.
 
         Asks for it (owned by this job's owner, a GeoHosting user, as the
-        server type picked - hetzner_server_id), then polls
-        until it's ready or failed - GeoHosting decides when starting it has
-        failed (timeouts included), so there's no deadline here. Asking again
-        for the same job - e.g. resuming it - gives the same server, or a new
-        one if it was deleted meanwhile. Every request is logged
-        (CngLiteJobLog), but a poll only if it says something new. Raises
-        ValueError if GeoHosting refuses it or says it failed.
+        server type picked - hetzner_server_id), then polls until it's
+        ready or failed - GeoHosting decides when starting it has failed
+        (timeouts included), so there's no deadline here. Asking again -
+        e.g. resuming the job - gives the same server, or a new one if it
+        was deleted meanwhile. Every request is logged (CngLiteJobLog), but
+        a poll only if it says something new. Raises ValueError if
+        GeoHosting refuses it or says it failed.
         """
-        if not self.hetzner_server_id:
+        if not self.hetzner_server_id and not self.instance_server_id:
             raise ValueError("No server was picked to run this conversion on.")
         geohosting = GeoHostingClient()
         log = self._geohosting_log()
         self._set_message("Starting a CloudNativeGIS server")
 
         server = self._ask_geohosting_for_server(geohosting, log)
-        while server["status"] != "ready":
-            if server["status"] == "failed":
+        while server.status != CngLiteServer.Status.READY:
+            if server.status == CngLiteServer.Status.FAILED:
                 raise ValueError(
                     "GeoHosting couldn't start a CloudNativeGIS server: "
-                    f"{server.get('error') or 'unknown error'}"
+                    f"{server.error or 'unknown error'}"
                 )
             self.raise_if_cancelling()
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
-            server = geohosting.get_server(self.id, log=log)
-            if server is None or server["status"] == "deleted":
+            answer = geohosting.get_server(server.instance_id, log=log)
+            if answer is None:
+                server.forget()
+            else:
+                server = self._keep_server(answer)
+            if server.status in (
+                CngLiteServer.Status.DELETING,
+                CngLiteServer.Status.DELETED,
+            ):
                 # Gone meanwhile (e.g. cleaned up): ask for a new one.
                 server = self._ask_geohosting_for_server(geohosting, log)
-        return server["url"], server["token"]
 
     def _ask_geohosting_for_server(self, geohosting, log):
-        """POST for this job's server; waits out one still being deleted.
+        """POST for this job's server; returns it, linked as its instance_server.
 
-        Saves the specifications of the server type it's started as
-        (hetzner_server_specification), from GeoHosting's answer.
+        Asks for its instance_server again, if it has one - or, before it
+        has, for a server whose id is the job's own: asking again (e.g. the
+        job resumed before GeoHosting's answer was saved) then gives that
+        same server rather than starting another. One GeoHosting says is
+        gone (failed, deleted, deleting) is replaced by a new one - unless
+        it isn't auto_destroy (e.g. picked to run this job on): that fails
+        the job instead.
         """
+        server_id = self.instance_server.instance_id if self.instance_server_id else self.id
         while True:
             try:
-                server = geohosting.create_server(
+                answer = geohosting.create_server(
                     self.id,
                     self.owner.get_username(),
                     hetzner_server_id=self.hetzner_server_id,
+                    server_id=server_id,
                     log=log,
                 )
             except GeoHostingError as exc:
@@ -316,37 +370,58 @@ class CngLiteJob(models.Model):
                         f"This account isn't linked to GeoHosting, so it can't use on-demand "
                         f"CloudNativeGIS: {exc}"
                     ) from exc
-                still_deleting = exc.status_code == 409 and "being deleted" in str(exc)
-                if not still_deleting:
-                    raise ValueError(str(exc)) from exc
-                self.raise_if_cancelling()
-                time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
-                continue
-            specification = (server.get("server") or {}).get("specifications")
-            if specification is not None and specification != self.hetzner_server_specification:
-                self.hetzner_server_specification = specification
-                self.save(update_fields=["hetzner_server_specification", "updated_at"])
-            return server
+                gone = exc.status_code == 409 and "That server is" in str(exc)
+                if gone and self.instance_server_id and not self.instance_server.auto_destroy:
+                    raise ValueError(
+                        "The server picked for this conversion isn't running any more."
+                    ) from exc
+                if gone and server_id is not None:
+                    # A new one, its id picked by GeoHosting.
+                    server_id = None
+                    continue
+                raise ValueError(str(exc)) from exc
+            return self._keep_server(answer)
+
+    def _keep_server(self, answer):
+        """Save GeoHosting's `answer` about this job's server, linked as its instance_server."""
+        server = CngLiteServer.record(answer, self.owner, self.auto_destroy)
+        linked = self.instance_server_id == server.pk
+        self.instance_server = server
+        if not linked:
+            self.save(update_fields=["instance_server", "updated_at"])
+        return server
 
     def deprovision(self):
         """Have GeoHosting delete this job's on-demand server, and wait until it's gone.
 
-        Only with CLOUDNATIVEGIS_ON_DEMAND. GeoHosting decides when deleting
-        it has failed, so there's no deadline here. Forgets the server's
-        token once it's asked to delete it. Raises GeoHostingError if
-        GeoHosting refuses or can't be reached.
+        Only with CLOUDNATIVEGIS_ON_DEMAND, and for an auto_destroy job: any
+        other leaves its server running. GeoHosting decides when deleting
+        it has failed, so there's no deadline here. The server's token is
+        forgotten once it's asked to delete it (GeoHosting no longer gives
+        it out). A job without an instance_server asks for the server whose
+        id is its own (see _ask_geohosting_for_server) - none, if it never
+        got one. Raises GeoHostingError if GeoHosting refuses or can't be
+        reached.
         """
-        if not settings.CLOUDNATIVEGIS_ON_DEMAND:
+        if not self.deprovisions:
             return
         geohosting = GeoHostingClient()
         log = self._geohosting_log()
-        server = geohosting.delete_server(self.id, log=log)
-        if self.cloudnativegis_api_token:
-            self.cloudnativegis_api_token = ""
-            self.save(update_fields=["cloudnativegis_api_token", "updated_at"])
-        while server is not None and server["status"] != "deleted":
+        server_id = self.instance_server.instance_id if self.instance_server_id else self.id
+        answer = geohosting.delete_server(server_id, log=log)
+        while answer is not None:
+            server = self._keep_server(answer)
+            if server.status == CngLiteServer.Status.DELETED:
+                return
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
-            server = geohosting.get_server(self.id, log=log)
+            answer = geohosting.get_server(server_id, log=log)
+        if self.instance_server_id:
+            self.instance_server.forget()
+
+    @property
+    def deprovisions(self):
+        """Whether its server is deleted once it's done (see deprovision)."""
+        return settings.CLOUDNATIVEGIS_ON_DEMAND and self.auto_destroy
 
     def _geohosting_log(self):
         """A GeoHostingClient `log` callback recording into CngLiteJobLog.
@@ -385,10 +460,10 @@ class CngLiteJob(models.Model):
         """
         timeout = settings.CLOUDNATIVEGIS_PROVISIONING_TIMEOUT
         deadline = time.monotonic() + timeout
-        while not _is_healthy(self.cloudnativegis_url):
+        while not _is_healthy(self.server_url):
             if time.monotonic() >= deadline:
                 raise ValueError(
-                    f"CloudNativeGIS at {self.cloudnativegis_url} did not become healthy "
+                    f"CloudNativeGIS at {self.server_url} did not become healthy "
                     f"within {timeout}s."
                 )
             self.raise_if_cancelling()
@@ -397,9 +472,9 @@ class CngLiteJob(models.Model):
 
     def cloudnativegis_headers(self):
         """Auth header for requests to this job's CloudNativeGIS, if it has a token."""
-        if not self.cloudnativegis_api_token:
+        if not self.server_api_token:
             return {}
-        return {"Authorization": f"Bearer {self.cloudnativegis_api_token}"}
+        return {"Authorization": f"Bearer {self.server_api_token}"}
 
     def to_dict(self):
         formats = CONVERSION_FORMATS[self.kind]
@@ -427,4 +502,6 @@ class CngLiteJob(models.Model):
             "layers": self.layers,
             "startedAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+            # On demand: the server it runs (or ran) on.
+            "server": self.instance_server.to_dict() if self.instance_server_id else None,
         }

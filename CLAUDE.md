@@ -68,7 +68,7 @@ restart finishes a `CANCELLING` job as `CANCELLED`.
 | `is_valid()` | `CLOUDNATIVEGIS_URL` set | GeoHosting configured (`GEOHOSTING_URL`, client id/secret) |
 | `health()` / `availability()` | `GET {CLOUDNATIVEGIS_URL}/health` | GeoHosting's `/healthy/` OK **and** one of `/server-types/` in stock (`available`, from Hetzner's `server_types[].locations[].available`) |
 | Tools API `cloudnativegis` | `onDemand: false`, `servers: []` | `onDemand: true`, `servers`: the enabled types |
-| Server type | — | picked in the upload dialog (`hetznerServerId`, required); saved as `hetzner_server_id`, its specs in `hetzner_server_specification` |
+| Server type | — | picked in the upload dialog (`serverTypeId`, required); saved as `hetzner_server_id`, its specs in `hetzner_server_specification` |
 | Provisioning | URL/token from settings | POST, poll until `ready` |
 | `/health` wait | max 600s (`CLOUDNATIVEGIS_PROVISIONING_TIMEOUT`, hardcoded) | same (normally instant: GeoHosting already checked it) |
 | Finishing | straight to completed/failed | deprovisioning, then completed/failed |
@@ -92,7 +92,7 @@ GeoHosting side (`django_project/geohosting_controller/`):
 | # | Work | Status |
 |---|---|---|
 | G1 | `HetznerClient` as a service (`connections/hetzner.py`) | done |
-| G2 | `EncryptedCharField`, `HetznerServer` catalog (admin "Sync from Hetzner"), `HetznerServerInstance`, `CloudBenchLog`, admin | done |
+| G2 | `EncryptedCharField`, `HetznerServerType` catalog (admin "Sync from Hetzner"), `HetznerServer`, `CloudBenchLog`, admin | done |
 | G3 | `start()` / `remove()`, Celery tasks `spin_up_server` / `delete_server` | done |
 | G4 | API `POST /servers/`, `GET` / `DELETE /servers/<job_id>/` (OAuth scope `cloudbench` only) | done |
 | G5 | Reaper (Celery beat) for stuck/forgotten servers | deferred — **required before production** |
@@ -118,10 +118,10 @@ Decisions:
 - Asynchronous: POST answers 202, Celery spins the server up, CloudBench polls.
 - The cng-lite token is stored encrypted on both sides and cleared once the
   server is deleted.
-- Server type: the user picks one of GeoHosting's enabled x86 `HetznerServer`s
+- Server type: the user picks one of GeoHosting's enabled x86 `HetznerServerType`s
   (by id) in the upload dialog; it's required on demand. Only that one is
   started — out of stock fails the job, no fallback.
-- `HetznerServer` sync: a changed price/currency is a new row (no unique
+- `HetznerServerType` sync: a changed price/currency is a new row (no unique
   constraint), taking over `enable` from the old one; the old row is kept.
 - No CloudBench-side timeout for starting/deleting a server, and no stale
   handling there: GeoHosting handles it.
@@ -148,5 +148,11 @@ Deferred:
 - Internal/private network to the cng servers (public IP for now).
 - A limit on how many servers (and how much cost) can run at once.
 - One server for both of a GeoPackage's jobs (vector + raster).
-- Inspecting a GeoPackage in on-demand mode.
+- Reading a GeoPackage's layers straight from S3. The upload dialog's
+  inspection (`inspect_geopackage`) no longer asks CloudNativeGIS: CloudBench
+  reads the staged copy on disk itself (`geopackage.read_contents`, ogr2ogr),
+  so it works on demand too. The goal is GDAL `/vsicurl/<presigned URL>`
+  (only the gpkg_* tables are fetched), for uploads straight to S3; it works
+  on MinIO but fails on DigitalOcean Spaces ("Unable to open datasource",
+  even with `CPL_VSIL_CURL_USE_HEAD=NO`).
 - (Optional) listing `cryptography` in GeoHosting's `requirements.txt`.

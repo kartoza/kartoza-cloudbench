@@ -397,6 +397,32 @@ class TestPostgresImportCleanup:
         assert response.status_code == status.HTTP_200_OK
         assert not uploaded_gpkg.parent.exists()
 
+    def test_import_promotes_to_multi(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        """The ogr2ogr command promotes to multi geometry, so a layer that
+        mixes single and multi parts (e.g. a shapefile) doesn't fail on the
+        first multi feature against a single-type column.
+        """
+        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            response = authenticated_client.post(
+                "/api/pg/import",
+                {
+                    "serviceName": "test_service",
+                    "filePath": str(uploaded_gpkg),
+                    "tableName": "districts",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        cmd = mock_run.call_args[0][0]
+        assert "-nlt" in cmd and cmd[cmd.index("-nlt") + 1] == "PROMOTE_TO_MULTI"
+
     def test_multi_layer_import_sequence(
         self,
         authenticated_client: APIClient,

@@ -456,6 +456,10 @@ class PGImportView(APIView):
         pg_conn = f"PG:host={service.host} port={service.port} dbname={service.dbname} user={service.user} password={service.password}"
         cmd = ["ogr2ogr", "-f", "PostgreSQL", pg_conn, file_path]
         cmd.append("-overwrite" if overwrite else "-append")
+        # A layer whose features mix single and multi geometries (common in
+        # shapefiles) otherwise creates a single-type column and then fails on
+        # the first multi geometry; promoting to multi lets the import succeed.
+        cmd.extend(["-nlt", "PROMOTE_TO_MULTI"])
 
         if table_name:
             cmd.extend(["-nln", f"{target_schema}.{table_name}"])

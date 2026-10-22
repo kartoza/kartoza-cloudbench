@@ -383,21 +383,14 @@ def raster_gpkg_inspect_job(settings, tmp_path, owner, connection):
     """A GeoPackage inspection that finds only raster tables (no vector layers)."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
-
-    def respond(request):
-        assert request.url.path == "/api/v1/gpkg/layers"
-        return httpx.Response(200, json={"layers": [], "rasterTables": [{"name": "elevation"}]})
-
-    client = httpx.Client(base_url="http://cloudnativegis/", transport=httpx.MockTransport(respond))
+    contents = {"layers": [], "rasterTables": [{"name": "elevation"}]}
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
-        patch("apps.s3.pmtiles.httpx.Client", return_value=client),
+        patch("apps.s3.pmtiles.read_contents", return_value=contents),
     ):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
-        get_client.return_value.generate_presigned_url.return_value = (
-            "http://cloudnativegis/presigned"
-        )
+        get_client.return_value.generate_presigned_url.return_value = "http://s3/presigned"
         job, layers, raster_tables = inspect_geopackage(
             gpkg_file(), "folder/rasters.gpkg", str(connection.id), owner
         )

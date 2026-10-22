@@ -50,3 +50,9 @@ export function isMapExplorerFormat(key: string): boolean {
   if (['tif', 'tiff', 'cog', 'gtiff', 'geotiff'].includes(ext)) return isWebMercatorCog(key)
   return false
 }
+
+// A layer's default style: "<layer folder>/styles/default.json" (the one the
+// catalog records a checksum for, see apps.s3.portolan.layer_style).
+export function isDefaultStyleKey(key: string): boolean {
+  return key === 'styles/default.json' || key.endsWith('/styles/default.json')
+}

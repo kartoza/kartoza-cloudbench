@@ -8,7 +8,7 @@
  * is covered by the backend tests.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as clientApi from './client'
 import * as connectionApi from './connection'
 import * as icebergApi from './iceberg'
@@ -18,6 +18,13 @@ import * as s3Api from './s3'
 import * as storesApi from './stores'
 import * as styleApi from './style'
 import * as workspaceApi from './workspace'
+
+// Some tests below swap window.location for a stub; tests share one fork
+// (vitest.config singleFork), so put the real one back for every file after.
+const realLocation = Object.getOwnPropertyDescriptor(window, 'location')
+afterAll(() => {
+  if (realLocation) Object.defineProperty(window, 'location', realLocation)
+})
 
 const modules: Record<string, Record<string, unknown>> = {
   client: clientApi,
@@ -145,9 +152,11 @@ describe('API sweep', () => {
       await import('./common')
       localStorage.setItem('token', 'abc')
       await window.fetch('/api/probe', { headers: { 'X-Test': '1' } })
-      const init = spy.mock.calls[0][1] as { headers: Record<string, string> }
-      expect(init.headers.Authorization).toBe('Token abc')
-      expect(init.headers['X-Test']).toBe('1')
+      const init = spy.mock.calls[0][1] as RequestInit
+      // common.ts builds a Headers instance so a caller's Range/etc. survive.
+      const headers = new Headers(init.headers)
+      expect(headers.get('Authorization')).toBe('Token abc')
+      expect(headers.get('X-Test')).toBe('1')
       await window.fetch('https://other.test/x')
       expect(spy.mock.calls[1][1]).toBeUndefined()
     } finally {

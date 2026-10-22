@@ -6,18 +6,77 @@ Provides endpoints for:
 - Resource browsing
 """
 
+import logging
+import shutil
+import subprocess
 import uuid
+from pathlib import Path
 
 import httpx
+from django.conf import settings
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.config import GeoNodeConnection, get_config
+from apps.upload.views import _assemble_file, _own_session
 
-from .client import GeoNodeClient, get_geonode_client
+from .client import GeoNodeClient, apply_metadata_later, get_geonode_client
 from .remote_service import get_remote_service
 from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
+
+logger = logging.getLogger(__name__)
+
+
+def _api_key(data) -> str:
+    """The GeoNode API token from a request body.
+
+    The connection dialog sends it as ``token``; older callers sent ``apiKey``.
+    Accept either so the token isn't silently dropped (which left token auth
+    unauthenticated).
+    """
+    return data.get("apiKey") or data.get("token") or ""
+
+
+def _gpkg_layers(path: Path) -> list[str]:
+    """The layer names in a GeoPackage, in file order (empty for a non-gpkg)."""
+    if path.suffix.lower() != ".gpkg":
+        return []
+    result = subprocess.run(
+        ["ogrinfo", "-so", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or "ogrinfo failed to read the GeoPackage")
+    layers = []
+    for line in result.stdout.splitlines():
+        # ogrinfo lists layers as "1: name (Geometry Type)".
+        line = line.strip()
+        if line and line[0].isdigit() and ":" in line:
+            name = line.split(":", 1)[1].strip()
+            name = name.rsplit(" (", 1)[0].strip()
+            if name:
+                layers.append(name)
+    return layers
+
+
+def _extract_gpkg_layer(source: Path, layer: str, dest: Path) -> None:
+    """Write a single-layer GeoPackage holding just ``layer`` from ``source``.
+
+    GeoNode's importer takes a whole GeoPackage with no way to choose a layer,
+    and 500s when the layers disagree on CRS. Uploading one extracted layer at
+    a time keeps every upload single-layer and single-CRS.
+    """
+    result = subprocess.run(
+        ["ogr2ogr", "-f", "GPKG", str(dest), str(source), layer],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or f"Could not extract layer {layer!r}")
 
 
 class GeoNodeConnectionListView(APIView):
@@ -48,7 +107,7 @@ class GeoNodeConnectionListView(APIView):
             url=data.get("url", ""),
             username=data.get("username", ""),
             password=data.get("password", ""),
-            api_key=data.get("apiKey", ""),
+            api_key=_api_key(data),
         )
 
         config = get_config(request.user)
@@ -75,7 +134,7 @@ class GeoNodeConnectionTestView(APIView):
             url=data.get("url", ""),
             username=data.get("username"),
             password=data.get("password"),
-            api_key=data.get("apiKey"),
+            api_key=_api_key(data) or None,
         )
 
         success, message = client.test_connection()
@@ -128,8 +187,8 @@ class GeoNodeConnectionDetailView(APIView):
         conn.username = data.get("username", conn.username)
         if "password" in data:
             conn.password = data["password"]
-        if "apiKey" in data:
-            conn.api_key = data["apiKey"]
+        if "apiKey" in data or "token" in data:
+            conn.api_key = _api_key(data)
 
         config.update_geonode_connection(conn)
 
@@ -204,6 +263,133 @@ class GeoNodeResourceDetailView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class GeoNodeUploadDetectLayersView(APIView):
+    """List the layers of a GeoPackage staged for GeoNode, for the layer picker.
+
+    GeoPackage datasets are the one GeoNode upload staged on CloudBench's
+    disk (through /api/upload/init and /chunk) instead of relayed: reading
+    their layers and splitting them takes the whole file. Everything else
+    goes through /api/upload/relay. A single-layer GeoPackage returns its
+    one layer and needs no picker.
+    """
+
+    def post(self, request):
+        session = _own_session(request, request.data.get("sessionId") or "")
+        if not session:
+            return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not session.is_complete():
+            missing = session.total_chunks - len(session.received_chunks)
+            return Response(
+                {"error": f"Upload incomplete. Missing {missing} chunks."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            file_path = _assemble_file(session)
+            return Response({"filename": session.filename, "layers": _gpkg_layers(file_path)})
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GeoNodeUploadCompleteView(APIView):
+    """Publish a GeoPackage staged for GeoNode, one dataset per chosen layer.
+
+    Expected body: {"sessionId", "connectionId", "title"?, "abstract"?,
+    "sourceLayers"?: [...]} (all layers when not given).
+    """
+
+    def post(self, request):
+        conn_id = request.data.get("connectionId")
+        title = request.data.get("title") or None
+        abstract = request.data.get("abstract") or None
+        if not conn_id:
+            return Response(
+                {"error": "connectionId is required"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        session = _own_session(request, request.data.get("sessionId") or "")
+        if not session:
+            return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not session.filename.lower().endswith(".gpkg"):
+            return Response(
+                {"error": "Only GeoPackage datasets are staged; upload others through the relay"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not session.is_complete():
+            missing = session.total_chunks - len(session.received_chunks)
+            return Response(
+                {"error": f"Upload incomplete. Missing {missing} chunks."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            file_path = _assemble_file(session)
+            client = get_geonode_client(conn_id, request.user)
+            # GeoNode's importer takes no layer choice and 500s on layers of
+            # unlike CRS: a GeoPackage of several layers goes one extracted
+            # layer at a time.
+            layers = _gpkg_layers(file_path)
+            requested = request.data.get("sourceLayers") or request.data.get("sourceLayer")
+            if isinstance(requested, str):
+                requested = [requested]
+            if len(layers) <= 1:
+                datasets = [self._upload(client, file_path, title, abstract)]
+                chosen = layers
+            else:
+                chosen = [layer for layer in (requested or layers) if layer in layers]
+                if not chosen:
+                    return Response(
+                        {
+                            "error": "None of the requested layers are in the GeoPackage",
+                            "layers": layers,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                datasets = []
+                for layer in chosen:
+                    dest = file_path.parent / f"{file_path.stem}__{layer}.gpkg"
+                    _extract_gpkg_layer(file_path, layer, dest)
+                    one_title = title if len(chosen) == 1 else None
+                    datasets.append(
+                        {"layer": layer, **self._upload(client, dest, one_title, abstract)}
+                    )
+            return Response(
+                {
+                    "sessionId": str(session.session_id),
+                    "filename": session.filename,
+                    "fileSize": session.file_size,
+                    "published": True,
+                    "layers": chosen,
+                    "datasets": datasets,
+                    **datasets[0],
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to upload to GeoNode: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        finally:
+            shutil.rmtree(session.upload_dir, ignore_errors=True)
+
+    @staticmethod
+    def _upload(client, path: Path, title, abstract) -> dict:
+        """Send one GeoPackage to GeoNode, streamed from disk."""
+        with path.open("rb") as f:
+            result = client.upload_dataset(
+                iter(lambda: f.read(1024 * 1024), b""),
+                path.name,
+                path.stat().st_size,
+                settings.UPLOAD_RELAY_RESPONSE_TIMEOUT,
+                title=title,
+                abstract=abstract,
+            )
+        if (title or abstract) and result.get("execution_id"):
+            apply_metadata_later(client, result["execution_id"], title, abstract)
+        return result
 
 
 class GeoNodeRemoteServiceListView(APIView):

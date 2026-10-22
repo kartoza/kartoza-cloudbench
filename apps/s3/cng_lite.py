@@ -11,6 +11,7 @@ bucket (see apps.s3.direct_upload); CloudBench writes the Portolan metadata.
 import hashlib
 import logging
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -221,9 +222,9 @@ def raise_if_cancelling(job_id):
 def finish_job(job, outcome, **values):
     """End `job` as `outcome` (completed/failed/cancelled), saving `values` with it.
 
-    With CLOUDNATIVEGIS_ON_DEMAND it's DEPROVISIONING first - `outcome` and
-    `values` saved, so a restart can carry on with just this - while
-    GeoHosting deletes its server. A failure to delete it is only logged:
+    With CLOUDNATIVEGIS_ON_DEMAND, for an auto_destroy job, it's
+    DEPROVISIONING first - `outcome` and `values` saved, so a restart can
+    carry on with just this - while GeoHosting deletes its server. A failure to delete it is only logged:
     the job's outcome stands either way. A job failing while it was being
     cancelled ends cancelled. Saved even while CANCELLING (unlike
     update_job): this is what ends it.
@@ -240,7 +241,7 @@ def finish_job(job, outcome, **values):
         outcome = CngLiteJobStatus.CANCELLED
         values = {**values, "message": "Conversion cancelled", "error": ""}
 
-    if settings.CLOUDNATIVEGIS_ON_DEMAND:
+    if job.deprovisions:
         save(status=CngLiteJobStatus.DEPROVISIONING, outcome=outcome, **values)
         try:
             job.deprovision()
@@ -278,20 +279,51 @@ def cancel_job(job):
 
 
 def expire_stalled_job(job):
+    """Fail `job` if it's active but hasn't been updated for too long.
+
+    Ended through finish_job, like any failed job: on demand, its server is
+    deleted first. That waits for GeoHosting, so it's done in the
+    background; without a server to delete it's ended straight away.
+    """
     cutoff = timezone.now() - timedelta(seconds=settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT + 120)
-    expired = CngLiteJob.objects.filter(
+    # Claimed by this request only: any other sees it updated.
+    claimed = CngLiteJob.objects.filter(
         pk=job.pk,
         status__in=ACTIVE_CNG_LITE_JOB_STATUSES,
         updated_at__lt=cutoff,
-    ).update(
-        status=CngLiteJobStatus.FAILED,
-        error="Conversion was interrupted or stopped responding. Please retry the upload.",
-        message="CloudNativeGIS conversion interrupted",
-        completed_at=timezone.now(),
-    )
-    if expired:
-        shutil.rmtree(job_directory(job.kind, job.pk), ignore_errors=True)
-        job.refresh_from_db()
+    ).update(updated_at=timezone.now())
+    if not claimed:
+        return
+    shutil.rmtree(job_directory(job.kind, job.pk), ignore_errors=True)
+    job.refresh_from_db()
+    if job.deprovisions:
+        threading.Thread(target=_end_stalled_job_in_background, args=(job.id,), daemon=True).start()
+    else:
+        _end_stalled_job(job)
+
+
+def _end_stalled_job(job):
+    """End a job expire_stalled_job claimed: failed - or, if it had finished
+    and was only deleting its server, as it was going to."""
+    if job.status == CngLiteJobStatus.DEPROVISIONING:
+        finish_job(job, job.outcome or CngLiteJobStatus.FAILED)
+    else:
+        finish_job(
+            job,
+            CngLiteJobStatus.FAILED,
+            error="Conversion was interrupted or stopped responding. Please retry the upload.",
+            message="CloudNativeGIS conversion interrupted",
+        )
+
+
+def _end_stalled_job_in_background(job_id):
+    close_old_connections()
+    try:
+        _end_stalled_job(CngLiteJob.objects.get(pk=job_id))
+    except Exception:
+        logger.exception("Job %s: couldn't end it after it stalled", job_id)
+    finally:
+        close_old_connections()
 
 
 def request_json(client, method, path, **kwargs):
@@ -845,7 +877,7 @@ class CNGProcessingClient:
         """Client for the job's CloudNativeGIS (set by provision())."""
         if self._http is None:
             self._http = httpx.Client(
-                base_url=f"{self.job.cloudnativegis_url}/",
+                base_url=f"{self.job.server_url}/",
                 timeout=httpx.Timeout(60, connect=10),
                 follow_redirects=False,
                 headers=self.job.cloudnativegis_headers(),
@@ -862,7 +894,7 @@ class CNGProcessingClient:
             self.job,
             target=CngLiteJobLog.Target.CLOUDNATIVEGIS,
             method=method,
-            url=f"{self.job.cloudnativegis_url}/{path.lstrip('/')}",
+            url=f"{self.job.server_url}/{path.lstrip('/')}",
             request_payload=request_payload,
             status_code=response.status_code if response is not None else None,
             response_payload=_response_body(response) if response is not None else None,

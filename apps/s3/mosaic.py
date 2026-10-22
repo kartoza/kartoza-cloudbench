@@ -149,6 +149,8 @@ def start_mosaic(
     license_url="",
     replace=False,
     hetzner_server_id=None,
+    auto_destroy=True,
+    instance_server=None,
 ):
     """Check and stage an upload of several TIFFs, and start converting them as one mosaic.
 
@@ -182,6 +184,8 @@ def start_mosaic(
         license_url=license_url,
         replace_existing=replace,
         hetzner_server_id=hetzner_server_id,
+        auto_destroy=auto_destroy,
+        instance_server=instance_server,
         message=f"Waiting to convert {len(names)} tiles",
     )
     job.source_key = sources_directory_key(output_key, job.id)
@@ -323,7 +327,7 @@ def run_mosaic(job_id):
             },
         }
         with httpx.Client(
-            base_url=f"{job.cloudnativegis_url}/",
+            base_url=f"{job.server_url}/",
             timeout=httpx.Timeout(60, connect=10),
             follow_redirects=False,
             headers=job.cloudnativegis_headers(),

@@ -354,3 +354,29 @@ The PostgreSQL upload (`pg/upload/complete`) keeps the current disk-based flow
   GeoNode to test on.
 - **Document types** are GeoNode's: e.g. `.geojson` is refused as a document by
   GeoHosting's GeoNode ("not in the supported extensions list").
+- **GeoPackage datasets to GeoNode are staged on disk** (see below).
+
+## Open question: GeoPackage datasets to GeoNode
+
+`main` (#170) sends a multi-layer GeoPackage to GeoNode one layer at a time: GeoNode's
+importer takes no layer choice and fails (500) when the layers differ in CRS. Listing the
+layers (`ogrinfo`) and extracting each one (`ogr2ogr`) needs the whole file on disk: a
+GeoPackage is a SQLite database, read at random, not front to back.
+
+So GeoPackage datasets are the one GeoNode upload still staged on CloudBench: the dialog
+sends them through `/api/upload/init` and `/chunk`, then
+`POST /api/geonode/upload/detect-layers` (the layer picker) and
+`POST /api/geonode/upload/complete` (`sourceLayers`). The staged file is deleted once it's
+sent; each layer goes to GeoNode streamed from disk, not read into memory. Everything else
+(documents, other datasets) is relayed.
+
+**To discuss:** a GeoPackage can be big (vector data of a whole region), and while it's
+staged it takes up to twice its size on the data volume (the file and one extracted
+layer). Options:
+
+1. Keep it staged (as now), and document a size limit for GeoPackages to GeoNode.
+2. Relay a single-layer GeoPackage, and stage only one of several layers. The layer count
+   isn't known until the file is in, unless the browser reads it (a GeoPackage's
+   `gpkg_contents` table, with a SQLite library in the browser).
+3. Stage it in S3 instead of on disk, and have GDAL read it there (`/vsis3/`). This needs an
+   S3 bucket for CloudBench itself; the GeoHosting deployment has none for this yet.

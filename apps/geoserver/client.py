@@ -1098,4 +1098,9 @@ def get_geoserver_client(conn_id: str, user: "User") -> GeoServerClient:
         GeoServerError: If connection not found
     """
     manager = GeoServerClientManager(user)
-    return manager.get_client(conn_id)
+    try:
+        return manager.get_client(conn_id)
+    except ValueError as e:
+        # A missing connection is a 404, not an unhandled 500: the views only
+        # catch GeoServerError.
+        raise GeoServerError(str(e), status_code=404) from e

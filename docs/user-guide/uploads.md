@@ -63,6 +63,11 @@ When uploading shapefiles:
 
 ## S3 Cloud-Native Options
 
+> For the full picture of cloud-native conversion — every source/output pair,
+> the per-job **on-demand** servers, cost, job stages, and limits — see
+> [On-demand Conversions](on-demand-conversions.md). This section covers the
+> **fixed** (non-demand) CloudNativeGIS flow.
+
 For S3 uploads, selecting a `.shp` file or a zipped shapefile (`.zip`) shows
 **PMTiles** under **Convert to Cloud-Native** when CloudNativeGIS
 is reachable. Cloudbench checks the service from Django using
@@ -96,13 +101,15 @@ removed after processing. The created layer remains in CloudNativeGIS for inspec
 
 ## GeoPackage
 
-GeoPackage files can contain:
+A GeoPackage can hold several vector layers and raster tables in one file.
+When you upload one for cloud-native conversion, CloudBench **inspects** it and
+shows a picker so you choose which layers and tables to convert; the vector
+layers become PMTiles + GeoParquet and the raster tables become COGs, as one
+layer group.
 
-- Multiple vector layers
-- Raster tiles
-- Feature attributes
-
-All layers in the GeoPackage are published.
+Inspection is not available in **on-demand** mode — see the limits in
+[On-demand Conversions](on-demand-conversions.md). Use the fixed mode for
+GeoPackages, or convert their layers as separate files.
 
 ## GeoTIFF
 
