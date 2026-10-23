@@ -268,6 +268,16 @@ UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024  # 5MB chunks
 UPLOAD_TEMP_DIR = os.path.join(CLOUDBENCH_CACHE_DIR, "uploads")
 UPLOAD_MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10GB max
 
+# Uploads to GeoServer/GeoNode go straight through, never stored (apps/upload/relay.py).
+# Each one is relayed by one worker, reached by the others over a Unix socket
+# here - local to the container, shared by its gunicorn workers.
+UPLOAD_RELAY_SOCKET_DIR = os.environ.get("UPLOAD_RELAY_SOCKET_DIR", "/tmp/cloudbench-upload")
+# Seconds without a chunk before an upload fails (a dropped browser connection
+# can resume within it). Most targets' proxies drop an idle request after ~60s.
+UPLOAD_RELAY_IDLE_TIMEOUT = int(os.environ.get("UPLOAD_RELAY_IDLE_TIMEOUT", "60"))
+# Seconds to wait for GeoServer/GeoNode's answer once the whole file is sent.
+UPLOAD_RELAY_RESPONSE_TIMEOUT = int(os.environ.get("UPLOAD_RELAY_RESPONSE_TIMEOUT", "1800"))
+
 # Logging
 LOGGING = {
     "version": 1,

@@ -4,8 +4,13 @@ Provides a client for interacting with GeoNode REST API
 for managing geospatial data catalog and services.
 """
 
+import json
 import logging
+import mimetypes
+import threading
 import time
+import uuid
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +22,83 @@ from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
+
+# Where a GeoNode takes a zipped dataset (GeoNodeClient.zip_upload_field).
+ZIP_FILE = "zip_file"  # GeoNode 4.x
+BASE_FILE = "base_file"  # newer GeoNodes
+
+DATASET_MIME_TYPES = {
+    "zip": "application/zip",
+    "shp": "application/octet-stream",
+    "tif": "image/tiff",
+    "tiff": "image/tiff",
+    "gpkg": "application/geopackage+sqlite3",
+    "geojson": "application/geo+json",
+    "json": "application/geo+json",
+    "kml": "application/vnd.google-earth.kml+xml",
+    "csv": "text/csv",
+}
+
+
+class GeoNodeUploadError(Exception):
+    """GeoNode refused an upload."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# A form's file part: (field name, filename, content type).
+FilePart = tuple[str, str, str]
+
+
+def multipart_envelope(
+    fields: dict[str, str],
+    file: FilePart,
+    small_files: dict[FilePart, bytes] | None = None,
+) -> tuple[str, bytes, bytes]:
+    """(boundary, everything before the file's bytes, everything after) of a form.
+
+    The streamed `file` is the last part, so its bytes go in between; any
+    `small_files` (held whole) come before it.
+    """
+    boundary = uuid.uuid4().hex
+
+    def file_header(name: str, filename: str, content_type: str) -> bytes:
+        # A quote or line break would end the header early.
+        for c in '\\"\r\n':
+            filename = filename.replace(c, "_")
+        return (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode()
+
+    head = b"".join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n'.encode()
+        + value.encode()
+        + b"\r\n"
+        for key, value in fields.items()
+    )
+    for part, content in (small_files or {}).items():
+        head += file_header(*part) + content + b"\r\n"
+    head += file_header(*file)
+    return boundary, head, f"\r\n--{boundary}--\r\n".encode()
+
+
+def _error_message(response: httpx.Response) -> str:
+    """GeoNode's own explanation of an error, when it gives one."""
+    try:
+        data = response.json()
+    except ValueError:
+        return response.text[:500] or f"HTTP {response.status_code}"
+    if isinstance(data, dict):
+        for key in ("errors", "detail", "message", "error"):
+            if data.get(key):
+                value = data[key]
+                return value if isinstance(value, str) else json.dumps(value)
+    return json.dumps(data)[:500]
+
 
 logger = logging.getLogger(__name__)
 
@@ -224,56 +306,85 @@ class GeoNodeClient:
 
     def upload_dataset(
         self,
-        file: bytes,
+        content: Iterable[bytes],
         filename: str,
+        size: int,
+        response_timeout: float,
         charset: str = "UTF-8",
         title: str | None = None,
         abstract: str | None = None,
+        zip_field: str = ZIP_FILE,
     ) -> dict[str, Any]:
-        """Upload a dataset file to GeoNode.
+        """Upload a dataset file, streamed as it comes (never held whole).
 
         Args:
-            file: File content as bytes
+            content: The file's bytes, in pieces
             filename: Original filename (e.g. roads.zip, dem.tif)
+            size: The file's size
+            response_timeout: Seconds to wait for GeoNode once all is sent
             charset: Character encoding of the dataset
             title: Optional dataset title
             abstract: Optional dataset abstract/description
+            zip_field: Where this GeoNode takes a zip (zip_upload_field)
 
         Returns:
             Upload response dict with execution_id and redirect_to
         """
         ext = filename.rsplit(".", 1)[-1].lower()
-        mime_types = {
-            "zip": "application/zip",
-            "shp": "application/octet-stream",
-            "tif": "image/tiff",
-            "tiff": "image/tiff",
-            "gpkg": "application/geopackage+sqlite3",
-            "geojson": "application/geo+json",
-            "json": "application/geo+json",
-            "kml": "application/vnd.google-earth.kml+xml",
-            "csv": "text/csv",
-        }
-        mime = mime_types.get(ext, "application/octet-stream")
-
-        files = {"base_file": (filename, file, mime)}
-        data: dict[str, str] = {"charset": charset}
-        if ext == "zip":
-            data["store_spatial_files"] = "true"
-            files["zip_file"] = (filename, file, mime)
+        fields = {"charset": charset}
         if title:
-            data["dataset_title"] = title
+            fields["dataset_title"] = title
         if abstract:
-            data["abstract"] = abstract
-
-        response = self.client.post(
+            fields["abstract"] = abstract
+        mime = DATASET_MIME_TYPES.get(ext, "application/octet-stream")
+        if ext != "zip" or zip_field == BASE_FILE:
+            return self._post_file(
+                "/uploads/upload",
+                fields,
+                ("base_file", filename, mime),
+                content,
+                size,
+                response_timeout,
+            )
+        # GeoNode 4.x only unzips a zip sent as zip_file, then puts the .shp
+        # it finds in place of base_file - which must still be there and
+        # not empty, but isn't read. The zip can't be sent twice in one
+        # pass, so base_file is a 1-byte stand-in.
+        fields["store_spatial_files"] = "true"
+        return self._post_file(
             "/uploads/upload",
-            files=files,
-            data=data,
-            timeout=120.0,
+            fields,
+            ("zip_file", filename, mime),
+            content,
+            size,
+            response_timeout,
+            small_files={("base_file", filename, mime): b"\0"},
         )
-        response.raise_for_status()
-        return response.json()
+
+    def zip_upload_field(self) -> str:
+        """Where this GeoNode takes a zipped dataset: ZIP_FILE or BASE_FILE.
+
+        GeoNode 4.x unzips only a zip sent as zip_file; newer GeoNodes dropped
+        zip_file and take the zip as base_file. GeoNode publishes no version,
+        so ask it: a 1-byte "zip" as base_file is refused by 4.x as "No
+        handlers found" (it looks for a handler by extension first), and by a
+        newer GeoNode as an invalid zip (it checks zips first). Either way
+        nothing is created. When it can't tell, 4.x is assumed.
+        """
+        try:
+            response = self.client.post(
+                "/uploads/upload",
+                files={"base_file": ("cloudbench-probe.zip", b"\0", "application/zip")},
+            )
+        except httpx.HTTPError:
+            return ZIP_FILE
+        if response.status_code < 400:
+            return ZIP_FILE  # not expected: a refusal is what tells
+        if "no handlers found" in response.text.lower():
+            return ZIP_FILE
+        if response.status_code in (400, 422) and "zip" in response.text.lower():
+            return BASE_FILE
+        return ZIP_FILE
 
     def get_execution(self, execution_id: str) -> dict[str, Any]:
         """The importer's execution request for an upload (status, resources)."""
@@ -324,42 +435,92 @@ class GeoNodeClient:
 
     def upload_document(
         self,
-        file: bytes,
+        content: Iterable[bytes],
         filename: str,
+        size: int,
+        response_timeout: float,
         title: str | None = None,
         abstract: str | None = None,
     ) -> dict[str, Any]:
-        """Upload a document to GeoNode.
+        """Upload a document, streamed as it comes (never held whole).
 
         Args:
-            file: File content as bytes
+            content: The file's bytes, in pieces
             filename: Original filename (e.g. report.pdf, photo.jpg)
+            size: The file's size
+            response_timeout: Seconds to wait for GeoNode once all is sent
             title: Optional document title
             abstract: Optional document abstract/description
 
         Returns:
             Upload response dict from GeoNode documents API
         """
-        import mimetypes
-
-        mime, _ = mimetypes.guess_type(filename)
-        mime = mime or "application/octet-stream"
-
-        files = {"doc_file": (filename, file, mime)}
-        data: dict[str, str] = {}
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        fields = {}
         if title:
-            data["title"] = title
+            fields["title"] = title
         if abstract:
-            data["abstract"] = abstract
+            fields["abstract"] = abstract
+        return self._post_file(
+            "/documents/", fields, ("doc_file", filename, mime), content, size, response_timeout
+        )
+
+    def _post_file(
+        self,
+        path: str,
+        fields: dict[str, str],
+        file: FilePart,
+        content: Iterable[bytes],
+        size: int,
+        response_timeout: float,
+        small_files: dict[FilePart, bytes] | None = None,
+    ) -> dict[str, Any]:
+        """POST a multipart form whose one file part is streamed.
+
+        The form is built here rather than by httpx so its length is known
+        before the file has arrived: it's sent as Content-Length, since many
+        GeoNodes sit behind proxies that refuse chunked transfer encoding.
+        """
+        boundary, head, tail = multipart_envelope(fields, file, small_files)
+
+        def body() -> Iterator[bytes]:
+            yield head
+            yield from content
+            yield tail
 
         response = self.client.post(
-            "/documents/",
-            files=files,
-            data=data,
-            timeout=120.0,
+            path,
+            content=body(),
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(head) + size + len(tail)),
+            },
+            timeout=httpx.Timeout(30.0, connect=10.0, read=response_timeout),
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise GeoNodeUploadError(_error_message(response), response.status_code)
         return response.json()
+
+    def get_upload_size_limit(self, slug: str) -> int | None:
+        """GeoNode's upload size limit `slug` in bytes; None if it can't tell.
+
+        Slugs: dataset_upload_size, document_upload_size, file_upload_handler.
+        Older GeoNodes have no such API: the upload is tried anyway.
+        """
+        try:
+            response = self.client.get("/upload-size-limits/", params={"page_size": 100})
+            response.raise_for_status()
+            data = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        for items in data.values():
+            for item in items if isinstance(items, list) else []:
+                if isinstance(item, dict) and item.get("slug") == slug:
+                    max_size = item.get("max_size")
+                    return max_size if isinstance(max_size, int) else None
+        return None
 
     def get_resource(self, resource_type: str, resource_id: int) -> GeoNodeResource:
         """Get a specific resource.
@@ -393,6 +554,22 @@ class GeoNodeClient:
             thumbnail_url=item.get("thumbnail_url", ""),
             detail_url=item.get("detail_url", ""),
         )
+
+
+def apply_metadata_later(client: GeoNodeClient, execution_id: str, title, abstract) -> None:
+    """Set the title/abstract once GeoNode has imported the dataset.
+
+    GeoNode ignores both on the upload itself, and its import runs on for a
+    while after the upload is answered, so this waits in a thread.
+    """
+
+    def run():
+        try:
+            client.apply_dataset_metadata(execution_id, title=title, abstract=abstract)
+        except Exception:
+            logger.exception("Setting the metadata of GeoNode import %s failed", execution_id)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def get_geonode_client(connection_id: str, user: "User") -> GeoNodeClient:

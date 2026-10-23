@@ -70,50 +70,8 @@ import type {
   StartSyncRequest,
   SyncConfiguration,
   SyncTask,
-  UploadResult,
 } from '../types'
 import { getApiBase } from "../config/env.ts";
-
-// ============================================================================
-// Upload API
-// ============================================================================
-
-export async function uploadFile(
-  connId: string,
-  workspace: string,
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<UploadResult> {
-  const formData = new FormData()
-  formData.append('file', file)
-
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && onProgress) {
-        const progress = Math.round((event.loaded / event.total) * 100)
-        onProgress(progress)
-      }
-    })
-
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(JSON.parse(xhr.responseText))
-      } else {
-        reject(new Error(JSON.parse(xhr.responseText).error || 'Upload failed'))
-      }
-    })
-
-    xhr.addEventListener('error', () => {
-      reject(new Error('Network error'))
-    })
-
-    xhr.open('POST', `${API_BASE}/upload?connId=${encodeURIComponent(connId)}&workspace=${encodeURIComponent(workspace)}`)
-    setAuthHeader(xhr)
-    xhr.send(formData)
-  })
-}
 
 // ============================================================================
 // Preview API
@@ -811,44 +769,6 @@ export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
 }
 
 // ============================================================================
-// GeoServer Background Upload API
-// ============================================================================
-
-export interface GeoServerJob {
-  id: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  storeName?: string
-  storeType?: string
-  error?: string
-}
-
-export async function startGeoServerUpload(
-  connId: string,
-  workspace: string,
-  filePath: string,
-  storeName: string,
-): Promise<{ status: string; storeName?: string; storeType?: string; error?: string }> {
-  const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? ''
-  const response = await fetch(
-    `${API_BASE}/upload/start/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-      credentials: 'include',
-      body: JSON.stringify({ filePath, storeName }),
-    },
-  )
-  return handleResponse<{ status: string; storeName?: string; storeType?: string; error?: string }>(response)
-}
-
-export async function getGeoServerJobStatus(jobId: string): Promise<GeoServerJob> {
-  const response = await fetch(`${API_BASE}/upload/status/${encodeURIComponent(jobId)}`, {
-    credentials: 'include',
-  })
-  return handleResponse<GeoServerJob>(response)
-}
-
-// ============================================================================
 // Query Execution API
 // ============================================================================
 
@@ -1263,30 +1183,6 @@ export async function importGeoNodeRemoteServiceResources(
     }
   )
   return handleResponse<{ resources: Array<{ id: string }> }>(response)
-}
-
-export async function uploadGeoNodeDataset(
-  connectionId: string,
-  file: File,
-  title?: string,
-  abstract?: string
-): Promise<{
-  success: boolean;
-  id?: number;
-  status?: string;
-  message?: string;
-  error?: string
-}> {
-  const formData = new FormData()
-  formData.append('file', file)
-  if (title) formData.append('title', title)
-  if (abstract) formData.append('abstract', abstract)
-
-  const response = await fetch(`${API_BASE}/geonode/connections/${connectionId}/upload`, {
-    method: 'POST',
-    body: formData,
-  })
-  return handleResponse(response)
 }
 
 export async function downloadGeoNodeDataset(

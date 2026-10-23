@@ -1,5 +1,5 @@
 import { API_BASE, setAuthHeader } from './common'
-import type { UploadResult } from '../types'
+import { RETRY_DELAYS } from './relayUpload'
 
 declare global {
   interface Window {
@@ -87,23 +87,49 @@ export async function uploadChunk(
   })
 }
 
-export async function completeUpload(sessionId: string): Promise<UploadResult> {
-  const res = await fetch(`${API_BASE}/upload/complete`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCSRFToken(),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ sessionId }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(err.error || `HTTP ${res.status}`)
-  }
-  return res.json()
+export interface StageHandlers {
+  onStarted?: (sessionId: string, totalChunks: number) => void
+  onChunkProgress?: (pct: number) => void
+  onChunkSent?: (sentChunks: number, sentBytes: number) => void
+  onRetry?: (attempt: number, delaySeconds: number) => void
+  isCancelled?: () => boolean
+  sleep?: (ms: number) => Promise<void>
 }
 
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Stage a whole file on CloudBench, chunk by chunk; returns its session id,
+ * or null if cancelled. A failed chunk is sent again with backoff.
+ */
+export async function stageFile(file: File, handlers: StageHandlers = {}): Promise<string | null> {
+  const sleep = handlers.sleep ?? wait
+  const { sessionId, totalChunks } = await initUploadSession('', '', file.name, file.size, CHUNK_SIZE)
+  handlers.onStarted?.(sessionId, totalChunks)
+  for (let index = 0; index < totalChunks; index++) {
+    if (handlers.isCancelled?.()) {
+      await cancelUpload(sessionId)
+      return null
+    }
+    const chunk = file.slice(index * CHUNK_SIZE, Math.min((index + 1) * CHUNK_SIZE, file.size))
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await uploadChunk(sessionId, index, chunk, handlers.onChunkProgress)
+        break
+      } catch (err) {
+        if (attempt >= RETRY_DELAYS.length || handlers.isCancelled?.()) throw err
+        handlers.onRetry?.(attempt + 1, RETRY_DELAYS[attempt])
+        await sleep(RETRY_DELAYS[attempt] * 1000)
+      }
+    }
+    handlers.onChunkSent?.(index + 1, Math.min((index + 1) * CHUNK_SIZE, file.size))
+  }
+  return sessionId
+}
+
+// A GeoPackage dataset for GeoNode is staged on CloudBench (stageFile)
+// rather than relayed: its layers are read, and split one per dataset,
+// from the whole file.
 export async function detectGeoNodeLayers(
   sessionId: string,
 ): Promise<{ filename: string; layers: string[] }> {
@@ -128,7 +154,6 @@ export async function completeGeoNodeUpload(
   connectionId: string,
   title?: string,
   abstract?: string,
-  uploadType: 'dataset' | 'document' = 'dataset',
   sourceLayers?: string[],
 ): Promise<{ published: boolean; filename: string; fileSize: number; [key: string]: unknown }> {
   const res = await fetch(`${API_BASE}/geonode/upload/complete`, {
@@ -138,7 +163,7 @@ export async function completeGeoNodeUpload(
       'X-CSRFToken': getCSRFToken(),
     },
     credentials: 'include',
-    body: JSON.stringify({ sessionId, connectionId, title, abstract, uploadType, sourceLayers }),
+    body: JSON.stringify({ sessionId, connectionId, title, abstract, sourceLayers }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }))
@@ -166,28 +191,6 @@ export async function completePGUpload(
   return res.json()
 }
 
-export async function completeGeoServerUpload(
-  sessionId: string,
-  connId: string,
-  workspace: string,
-  storeName?: string,
-): Promise<{ path: string; filename: string; fileSize: number; sessionId: string; storeName: string }> {
-  const res = await fetch(`${API_BASE}/upload/complete/${encodeURIComponent(connId)}/${encodeURIComponent(workspace)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCSRFToken(),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ sessionId, storeName }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(err.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
 export async function cancelUpload(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/upload/session/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
@@ -196,16 +199,4 @@ export async function cancelUpload(sessionId: string): Promise<void> {
     },
     credentials: 'include',
   })
-}
-
-export interface GeoServerProgress {
-  sent: number
-  total: number
-  done: boolean
-}
-
-export async function getGeoServerProgress(sessionId: string): Promise<GeoServerProgress> {
-  const res = await fetch(`${API_BASE}/upload/session/${encodeURIComponent(sessionId)}/progress`)
-  if (!res.ok) return { sent: 0, total: 0, done: true }
-  return res.json()
 }

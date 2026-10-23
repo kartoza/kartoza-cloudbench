@@ -82,6 +82,7 @@ nav:
   - Developer Guide:
     - Architecture: dev-guide/architecture.md
     - API Reference: dev-guide/api.md
+    - Upload Passthrough: dev-guide/upload-passthrough.md
     - Testing: dev-guide/testing.md
     - Contributing: dev-guide/contributing.md
   - About:
