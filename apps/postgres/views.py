@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import PGService
-from apps.upload.views import _assemble_file, _get_session
+from apps.upload.views import _assemble_file, _staged_session
 
 from .client import (
     PGServiceClient,
@@ -706,7 +706,7 @@ class PGUploadCompleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},

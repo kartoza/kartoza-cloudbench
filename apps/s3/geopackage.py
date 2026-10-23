@@ -64,7 +64,7 @@ def prepare_geopackage(uploaded_file, destination, max_size):
             output.write(chunk)
 
 
-def _query(source, sql):
+def _query(source, sql, env=None):
     """Rows of `sql` run on GeoPackage `source` (any GDAL path), via ogr2ogr to CSV.
 
     The CLI rather than GDAL's Python bindings, which the image's Python
@@ -77,6 +77,7 @@ def _query(source, sql):
             text=True,
             timeout=INSPECT_TIMEOUT,
             check=False,
+            env=env,
         )
     except FileNotFoundError as exc:
         raise ValueError("ogr2ogr isn't installed on the CloudBench server.") from exc
@@ -89,7 +90,7 @@ def _query(source, sql):
     return list(csv.DictReader(io.StringIO(result.stdout)))
 
 
-def read_contents(source):
+def read_contents(source, env=None):
     """What GeoPackage `source` holds: {"layers": [...], "rasterTables": [...]}.
 
     The same shape as CloudNativeGIS's /api/v1/gpkg/layers: vector layers as
@@ -97,16 +98,15 @@ def read_contents(source):
     out), raster tables as {name}. Only a layer whose feature count isn't
     stored is counted, which reads all its rows.
 
-    `source` is a GDAL path: for now the staged copy on disk.
-    TODO: Migrate to read directly from S3, with `/vsicurl/<presigned URL>`,
-    which only fetches the pages holding the gpkg_* bookkeeping tables (range
-    requests; ~100 KB of a 200 MB GeoPackage), not the whole file. Works on
-    MinIO, but not yet on DigitalOcean Spaces (see inspect_geopackage).
+    `source` is a GDAL path, with `env` the environment GDAL needs for it:
+    a copy on disk, or the object in the bucket (S3Client.gdal_path), where
+    only the pages holding the gpkg_* tables are fetched (~120 KB of a 49 MB
+    GeoPackage, in range requests), not the whole file.
     """
     try:
-        rows = _query(source, CONTENTS_SQL.format(count=OGR_CONTENTS[0], join=OGR_CONTENTS[1]))
+        rows = _query(source, CONTENTS_SQL.format(count=OGR_CONTENTS[0], join=OGR_CONTENTS[1]), env)
     except ValueError:
-        rows = _query(source, CONTENTS_SQL.format(count="", join=""))
+        rows = _query(source, CONTENTS_SQL.format(count="", join=""), env)
     layers = []
     for row in rows:
         geometry_type = row.get("geometry_type")
@@ -115,7 +115,7 @@ def read_contents(source):
         count = row.get("feature_count")
         if not count:
             quoted = row["name"].replace('"', '""')
-            count = _query(source, f'SELECT COUNT(*) AS n FROM "{quoted}"')[0]["n"]
+            count = _query(source, f'SELECT COUNT(*) AS n FROM "{quoted}"', env)[0]["n"]
         layers.append(
             {
                 "name": row["name"],
