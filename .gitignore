@@ -75,5 +75,3 @@ site/
 .staging/
 .staging-token
 .local-token
-# DigitalOcean Spaces keys for the S3 read tests (docs/dev-guide/s3-upload-passthrough.md)
-.spaces.env

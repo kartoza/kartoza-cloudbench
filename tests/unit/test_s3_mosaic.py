@@ -363,6 +363,59 @@ def test_cloudnativegis_builds_the_mosaic_straight_into_the_bucket(owner, settin
 
 
 @pytest.mark.django_db
+def test_tiles_uploaded_straight_to_the_bucket_are_read_there(owner, settings, tmp_path):
+    """A mosaic from apps.s3.multipart: its tiles are in the bucket already, none on disk."""
+    settings.UPLOAD_TEMP_DIR = str(tmp_path / "staging")
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    s3 = FakeS3()
+    job = CngLiteJob.objects.create(
+        kind="mosaic",
+        owner=owner,
+        connection=make_connection(owner),
+        bucket="bucket",
+        source_name="Test Mosaic",
+        output_key="maps/test-mosaic",
+        input_size=14,
+        layers=["Tile 0.tif", "Tile 1.tif"],
+        license="CC-BY-4.0",
+    )
+    job.source_key = f"maps/sources/{job.id}"
+    job.save(update_fields=["source_key"])
+    for name in job.layers:
+        s3.put_object(f"{job.source_key}/{name}", b"II*\x00fixture", "image/tiff")
+    client, submitted = _cng(_outputs, s3)
+    with (
+        healthy(),
+        patch("apps.s3.mosaic.get_s3_client", return_value=s3),
+        patch(
+            "apps.s3.mosaic.read_header",
+            side_effect=[header(date="2021:05:01 00:00:00"), header()],
+        ) as read,
+        patch("apps.s3.mosaic._upload", wraps=mosaic._upload) as upload,
+        patch("apps.s3.mosaic.httpx.Client", return_value=client),
+        patch("apps.s3.mosaic.close_old_connections"),
+        patch("apps.s3.cng_lite.time.sleep"),
+    ):
+        mosaic.run_mosaic(job.id)
+    job.refresh_from_db()
+
+    assert job.status == "completed", job.error
+    # Each header read where the tile is, with the connection's GDAL settings.
+    assert [c.args for c in read.call_args_list] == [
+        (f"/vsis3/bucket/maps/sources/{job.id}/Tile 0.tif", {"AWS_S3_ENDPOINT": "minio:9000"}),
+        (f"/vsis3/bucket/maps/sources/{job.id}/Tile 1.tif", {"AWS_S3_ENDPOINT": "minio:9000"}),
+    ]
+    # No tile uploaded again: only the small items mirror went up from here.
+    assert [c.args[3] for c in upload.call_args_list] == ["maps/test-mosaic/items.parquet"]
+    [payload] = submitted
+    assert payload["tiles"][1]["source"] == (
+        f"http://minio:9000/bucket/maps/sources/{job.id}/Tile 1.tif?method=get_object"
+    )
+    item = s3.json("maps/test-mosaic/tile-0/tile-0.json")
+    assert item["properties"]["datetime"] == "2021-05-01T00:00:00Z"
+
+
+@pytest.mark.django_db
 def test_mosaic_over_the_merge_limit_renders_from_its_tiles(owner, settings, tmp_path):
     job, s3, submitted = _run(owner, settings, tmp_path, merge_limit=0)
 

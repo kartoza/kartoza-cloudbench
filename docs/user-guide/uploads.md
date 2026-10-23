@@ -42,13 +42,12 @@ than its disk.
 ### Large files to S3
 
 Files go up in chunks straight into the bucket - plain uploads, shapefiles (their parts
-are zipped in the bucket), GeoPackages (their layers are read in the bucket), and files
-converted to COG, COPC or PMTiles: nothing is stored on CloudBench, and files up to 10 GB
-work. If the connection drops, a chunk is sent again automatically for about 5 minutes
+are zipped in the bucket), GeoPackages (their layers are read in the bucket), mosaics, and
+files converted to COG, COPC or PMTiles: nothing is stored on CloudBench, and files up to
+10 GB work. If the connection drops, a chunk is sent again automatically for about 5 minutes
 ("Connection lost — retrying…"): the bucket keeps what already arrived. Closing the
 dialog cancels the upload.
 
-Mosaics are still uploaded through CloudBench, as before.
 
 ## Upload Process
 

@@ -7,9 +7,9 @@
  * can go on for minutes, unlike a relay to GeoServer/GeoNode.
  *
  * Covered (see canUploadToS3Directly): plain uploads, a shapefile's parts
- * (zipped in the bucket), conversions to COG/COPC/PMTiles, and a GeoPackage's
- * inspection (inspectGeoPackageDirectly, read in the bucket). Mosaics still
- * go through uploadMosaic.
+ * (zipped in the bucket), conversions to COG/COPC/PMTiles, mosaics (their
+ * tiles' headers read in the bucket), and a GeoPackage's inspection
+ * (inspectGeoPackageDirectly, read in the bucket).
  */
 
 import type { S3UploadResult } from '../types'
@@ -42,7 +42,10 @@ export function canUploadToS3Directly(
   companionFiles: File[],
   targetFormat?: string,
 ): boolean {
-  // Several files are a shapefile's parts, with the .shp first.
+  // Several files are a mosaic's GeoTIFFs, or a shapefile's parts with the .shp first.
+  if (targetFormat === 'mosaic') {
+    return companionFiles.length > 0 && [file, ...companionFiles].every((f) => /\.tiff?$/i.test(f.name))
+  }
   if (companionFiles.length > 0 && !/\.shp$/i.test(file.name)) return false
   if (!targetFormat) return true
   return DIRECT_CONVERSIONS[targetFormat]?.test(file.name) ?? false

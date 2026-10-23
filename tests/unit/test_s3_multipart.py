@@ -270,7 +270,7 @@ def test_a_conversion_checks_the_file_starts_as_its_type(api, bucket, settings):
     [
         ("cloud.las", "cog", "A COG conversion takes .tif, .tiff files."),
         ("roads.gpkg", "pmtiles", "A PMTILES conversion takes"),
-        ("dem.tif", "mosaic", "mosaic conversions aren't uploaded this way"),
+        ("dem.tif", "vrt", "vrt conversions aren't uploaded this way"),
     ],
 )
 def test_only_single_file_conversions_go_this_way(api, bucket, settings, filename, target, error):
@@ -526,9 +526,16 @@ def test_an_unreadable_geopackage_is_dropped(api, bucket, settings):
     data = b"SQLite format 3\x00" + b"\x00" * 100
     fields = {"convert": "true", "targetFormat": "inspect", "key": "bali.gpkg"}
     sid = api.send_all(api.start(filename="bali.gpkg", fileSize=len(data), **fields), data)
-    with patch("apps.s3.multipart.read_contents", side_effect=ValueError("Could not read it")):
+    gdal = (
+        "Could not read the GeoPackage: Warning 1: GPKG: bad application_id on "
+        "'/vsis3/bucket/sources/x/bali.gpkg'\nERROR 1: file is not a database\nFAILURE:\n"
+        "Unable to open datasource `/vsis3/bucket/sources/x/bali.gpkg'"
+    )
+    with patch("apps.s3.multipart.read_contents", side_effect=ValueError(gdal)):
         done = api.complete(sid, **fields)
-    assert done.status_code == 400 and done.json()["error"] == "Could not read it"
+    # GDAL's reason, without the bucket and key it names.
+    assert done.status_code == 400
+    assert done.json()["error"] == "Could not read the GeoPackage: file is not a database"
     assert bucket.client.objects == {} and not CngLiteJob.objects.exists()
 
 
@@ -553,3 +560,120 @@ def test_cancelling_a_shapefile_aborts_its_parts(api, bucket):
     assert api.cancel(started.json()["sessionId"]).status_code == 204
     assert sorted(bucket.client.aborted) == ["up-1", "up-2", "up-3"]
     assert bucket.client.uploads == {}
+
+
+# === Mosaics: every tile straight into the bucket, its header read there ===
+
+
+def tile_header(crs="EPSG:4326"):
+    return {
+        "coordinateSystem": {"wkt": f'GEOGCRS["x",ID["EPSG",{crs.split(":")[1]}]]'},
+        "bands": [{"type": "Float32", "noDataValue": None}],
+    }
+
+
+@pytest.mark.django_db
+def test_a_mosaic_uploads_every_tile_then_checks_them_in_the_bucket(api, bucket, settings):
+    settings.CLOUDNATIVEGIS_URL = "http://cng"
+    tiles = {"north.tif": b"II*\x00" + b"n" * 40, "south.tif": b"II*\x00" + b"s" * 60}
+    fields = {
+        "convert": "true",
+        "targetFormat": "mosaic",
+        "key": "maps/Bali.tif",
+        "license": "CC-BY-4.0",
+    }
+    started = api.start(
+        filename="north.tif",
+        fileSize=len(tiles["north.tif"]),
+        companions=[{"filename": "south.tif", "fileSize": len(tiles["south.tif"])}],
+        **fields,
+    )
+    assert started.status_code == 201, started.json()
+    sid = send_files(api, started, tiles)
+    with (
+        patch("apps.s3.mosaic.read_header", side_effect=[tile_header(), tile_header()]) as read,
+        patch("apps.s3.mosaic.run_mosaic") as run,
+    ):
+        done = api.complete(sid, **fields)
+    assert done.status_code == 202, done.json()
+    assert done.json()["message"] == "2 GeoTIFFs accepted for conversion into one mosaic"
+    job = CngLiteJob.objects.get(pk=sid)
+    assert (job.kind, job.output_key, job.source_name) == ("mosaic", "maps/bali", "Bali")
+    assert job.source_key == f"maps/sources/{sid}"
+    assert job.layers == ["north.tif", "south.tif"] and job.input_size == 108
+    # Each tile where run_mosaic reads it, and its header read there.
+    for name, data in tiles.items():
+        assert bucket.client.objects[f"maps/sources/{sid}/{name}"] == (data, "image/tiff")
+    assert [c.args[0] for c in read.call_args_list] == [
+        f"/vsis3/bucket/maps/sources/{sid}/north.tif",
+        f"/vsis3/bucket/maps/sources/{sid}/south.tif",
+    ]
+    run.assert_called_once_with(job.id)
+
+
+@pytest.mark.django_db
+def test_tiles_that_dont_agree_are_refused_and_dropped(api, bucket, settings):
+    settings.CLOUDNATIVEGIS_URL = "http://cng"
+    tiles = {"a.tif": b"II*\x00aaaa", "b.tif": b"II*\x00bbbb"}
+    fields = {"convert": "true", "targetFormat": "mosaic", "key": "m.tif"}
+    started = api.start(
+        filename="a.tif", fileSize=8, companions=[{"filename": "b.tif", "fileSize": 8}], **fields
+    )
+    sid = send_files(api, started, tiles)
+    with patch(
+        "apps.s3.mosaic.read_header", side_effect=[tile_header(), tile_header("EPSG:32750")]
+    ):
+        done = api.complete(sid, **fields)
+    assert done.status_code == 400
+    assert done.json()["error"].startswith("b.tif is in EPSG:32750, but a.tif is in EPSG:4326")
+    assert bucket.client.objects == {} and not CngLiteJob.objects.exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "names, error",
+    [
+        (["a.tif"], "A mosaic needs at least two GeoTIFFs."),
+        (["a.tif", "a.tif"], "Two of the files have the same name."),
+        (["a.tif", "b.png"], "A mosaic takes GeoTIFFs (.tif or .tiff) only."),
+    ],
+)
+def test_a_mosaics_tiles_are_checked_first(api, bucket, settings, names, error):
+    settings.CLOUDNATIVEGIS_URL = "http://cng"
+    started = api.start(
+        filename=names[0],
+        fileSize=10,
+        companions=[{"filename": n, "fileSize": 10} for n in names[1:]],
+        convert="true",
+        targetFormat="mosaic",
+    )
+    assert started.status_code == 400 and started.json()["error"] == error
+    assert bucket.client.uploads == {}
+
+
+@pytest.mark.django_db
+def test_every_tile_must_start_as_a_tiff(api, bucket, settings):
+    settings.CLOUDNATIVEGIS_URL = "http://cng"
+    started = api.start(
+        filename="a.tif",
+        fileSize=8,
+        companions=[{"filename": "b.tif", "fileSize": 8}],
+        convert="true",
+        targetFormat="mosaic",
+    ).json()
+    tile = started["companions"][0]["sessionId"]
+    sent = api.put(tile, 0, b"PNG!aaaa")
+    assert sent.status_code == 400 and sent.json()["error"] == "The file is not a valid TIFF."
+
+
+def test_gdals_reason_names_the_file_not_its_place_in_the_bucket():
+    exc = ValueError(
+        "gdalinfo failed: ERROR 4: `/vsis3/bkt/maps/sources/j/dem.tif' not recognized as a "
+        "supported file format."
+    )
+    assert multipart.gdal_reason(exc, "Could not read dem.tif", "dem.tif") == (
+        "Could not read dem.tif: dem.tif not recognized as a supported file format."
+    )
+    assert multipart.gdal_reason(ValueError("no errors"), "Could not read x", "x") == (
+        "Could not read x: GDAL couldn't open it."
+    )

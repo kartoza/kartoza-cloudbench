@@ -559,18 +559,23 @@ export default function S3UploadDialog() {
             companionFiles
           )
         : mosaicFiles
-        ? await api.uploadMosaic(
+        // Every tile straight into the bucket, its header read there.
+        ? await uploadToS3Directly(
             connectionId,
-            mosaicFiles,
-            mosaicName.trim(),
-            folderPrefix.replace(/\/+$/, ''),
-            (progress) => setUploadProgress(progress),
-            license,
-            requestedLicenseUrl,
-            replace,
-            requestedServerTypeId,
-            requestedAutoDestroy,
-            requestedInstanceServerId
+            mosaicFiles[0],
+            {
+              // The mosaic's folder is named after it, in the folder picked.
+              key: `${folderPrefix.replace(/\/*$/, folderPrefix ? '/' : '')}${mosaicName.trim()}.tif`,
+              targetFormat: 'mosaic',
+              license,
+              licenseUrl: requestedLicenseUrl,
+              replace,
+              serverTypeId: requestedServerTypeId,
+              autoDestroy: requestedAutoDestroy,
+              instanceServerId: requestedInstanceServerId,
+            },
+            directHandlers,
+            mosaicFiles.slice(1)
           )
         : await api.uploadToS3(
             connectionId,

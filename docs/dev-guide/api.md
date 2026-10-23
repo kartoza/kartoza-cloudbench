@@ -180,8 +180,8 @@ A plain upload, a shapefile's parts, a conversion (GeoTIFF → COG, LAS/LAZ → 
 GeoJSON/FlatGeobuf/KML or a shapefile → PMTiles) and a GeoPackage's inspection go up in
 chunks that CloudBench passes on to the bucket as the parts of S3 multipart uploads:
 nothing is stored on CloudBench (see [S3 upload passthrough](s3-upload-passthrough.md)).
-Mosaics still go through `POST /api/s3/mosaic/{connId}`; `POST /api/s3/upload/{connId}`
-and `/api/s3/gpkg/inspect/{connId}` still work, staging on disk.
+`POST /api/s3/upload/{connId}`, `/api/s3/gpkg/inspect/{connId}` and
+`/api/s3/mosaic/{connId}` still work, staging on disk.
 
 Start (checks the size, the file type, the license and server, and whether a conversion's
 layer folder exists, first):
@@ -203,7 +203,9 @@ Content-Type: application/json
 Plus `replace`, `licenseUrl` and the on-demand server fields (`serverTypeId`,
 `autoDestroy`, `instanceServerId`) as for `POST /api/s3/upload/{connId}`. A `.shp` takes
 its other parts as `"companions": [{"filename": "roads.dbf", "fileSize": 70}, ...]`;
-`"targetFormat": "inspect"` uploads a GeoPackage to read before converting. Answers `201`
+`"targetFormat": "inspect"` uploads a GeoPackage to read before converting; `"mosaic"`
+takes two GeoTIFFs or more (the first as the file, the others as `companions`), with the
+mosaic's key (`<folder>/<name>.tif`). Answers `201`
 with `sessionId`, `filename`, `chunkSize`, `totalChunks`, `key` (where the file goes) and
 `companions` (each part's own session, to send its chunks to); `409` when the layer
 folder exists and `replace` isn't set; `413` over `UPLOAD_MAX_FILE_SIZE`.

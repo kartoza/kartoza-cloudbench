@@ -1577,7 +1577,7 @@ class S3MultipartCompleteView(APIView):
         return Response(
             {
                 "success": True,
-                "message": "File accepted for CloudNativeGIS conversion",
+                "message": done.message,
                 "key": done.key,
                 "size": done.size,
                 "conversionJobId": str(done.job.id),

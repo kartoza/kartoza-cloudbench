@@ -14,17 +14,18 @@ chunks received. The parts' ETags are asked of S3 (ListParts) when it's
 completed.
 
 What has to be read or rewritten before it's published is, in the bucket,
-never on disk: a GeoPackage's layers are read where it landed (GDAL's
-/vsis3/, which fetches only the pages it needs), and a shapefile's ZIP is
-written straight into the bucket from its parts there (or from the ZIP
-uploaded, read with range requests). Still staged on disk (S3UploadView and
-friends): mosaics, and the style editor's saves.
+never on disk: a GeoPackage's layers and a mosaic's tile headers are read
+where they landed (GDAL's /vsis3/, which fetches only the bytes it needs),
+and a shapefile's ZIP is written straight into the bucket from its parts
+there (or from the ZIP uploaded, read with range requests). The style
+editor's small saves still go through S3UploadView.
 """
 
 import io
 import logging
 import math
 import mimetypes
+import re
 import threading
 import zipfile
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ from django.utils import timezone
 
 from apps.upload.models import UploadSession
 
-from . import cog, copc, pmtiles, portolan
+from . import cog, copc, mosaic, pmtiles, portolan
 from .client import get_s3_client
 from .cng_lite import check_target, source_object_key, sources_directory_key
 from .geopackage import GPKG_MAGIC, read_contents
@@ -61,6 +62,8 @@ SHAPEFILE = "shapefile"  # a .shp and its parts, zipped to the key's .zip
 PART = "part"  # one of a shapefile's other parts (completed with its .shp)
 INSPECT = "inspect"  # a GeoPackage, to read its contents before converting
 SHAPEFILE_PMTILES = "pmtiles-shapefile"  # a shapefile (parts or ZIP) -> PMTiles
+MOSAIC = "mosaic"  # the first of a mosaic's GeoTIFFs (completed with the others)
+TILE = "tile"  # one of a mosaic's other GeoTIFFs
 # Single files converted: kind -> (module, files taken, how they start).
 CONVERSIONS = {
     "cog": (cog, (".tif", ".tiff"), cog.TIFF_MAGIC),
@@ -72,6 +75,8 @@ _MAGIC = {
     "cog": (cog.TIFF_MAGIC, "The file is not a valid TIFF."),
     "copc": ((copc.LAS_MAGIC,), "The file is not a valid LAS/LAZ point cloud."),
     INSPECT: ((GPKG_MAGIC,), "The file is not a valid GeoPackage (not a SQLite database)."),
+    MOSAIC: (cog.TIFF_MAGIC, "The file is not a valid TIFF."),
+    TILE: (cog.TIFF_MAGIC, "The file is not a valid TIFF."),
 }
 ZIP_MAGIC = (b"PK\x03\x04",)
 
@@ -94,6 +99,7 @@ class Completed:
     job: CngLiteJob | None = None
     # A GeoPackage's contents (geopackage.read_contents), for INSPECT.
     inspection: dict | None = None
+    message: str = "File accepted for CloudNativeGIS conversion"
 
 
 def part_size(file_size: int) -> int:
@@ -111,6 +117,17 @@ def _is_shapefile(filename: str) -> bool:
 def kind_of(target_format: str | None, filename: str, companions: list[str]) -> str:
     """The kind of upload asked for (PLAIN, SHAPEFILE...); checks the files fit it."""
     lower = filename.lower()
+    if target_format == MOSAIC:
+        names = [filename, *companions]
+        if len(names) < mosaic.MIN_TILES:
+            raise MultipartError("A mosaic needs at least two GeoTIFFs.")
+        if len(set(names)) != len(names):
+            raise MultipartError("Two of the files have the same name.")
+        if not all(name.lower().endswith((".tif", ".tiff")) for name in names):
+            raise MultipartError("A mosaic takes GeoTIFFs (.tif or .tiff) only.")
+        if not CngLiteJob.is_valid():
+            raise MultipartError("CloudNativeGIS is not configured.")
+        return MOSAIC
     if companions and not lower.endswith(".shp"):
         raise MultipartError("Multiple files are supported only for matching shapefile components.")
     if not target_format:
@@ -156,6 +173,10 @@ def keys(kind: str, key: str, filename: str, session_id) -> tuple[str, str]:
     job's source key (the session id is the job's id).
     """
     module = _module(kind)
+    if kind == MOSAIC:
+        # Its tiles go to its sources folder, as a staged mosaic's did; it's
+        # published to the folder named after the key (as mosaic.start_mosaic).
+        return f"{sources_directory_key(key, session_id)}/{filename}", key
     if kind == SHAPEFILE:
         zipped = str(PurePosixPath(key).with_suffix(".zip"))
         return f"{sources_directory_key(zipped, session_id)}/{filename}", zipped
@@ -228,18 +249,24 @@ def start(
     if file_size > settings.UPLOAD_MAX_FILE_SIZE:
         raise MultipartError("The file exceeds the upload size limit.", status=413)
     kind = kind_of(target_format, filename, [c["filename"] for c in companions])
-    if companions or (kind == SHAPEFILE_PMTILES and filename.lower().endswith(".shp")):
+    if kind == MOSAIC:
+        if any(c["fileSize"] > settings.UPLOAD_MAX_FILE_SIZE for c in companions):
+            raise MultipartError("A tile exceeds the upload size limit.", status=413)
+    elif companions or (kind == SHAPEFILE_PMTILES and filename.lower().endswith(".shp")):
         _check_shapefile(filename, file_size, companions)
     key = (key or filename).lstrip("/")
     s3_client = get_s3_client(connection_id, user)
     module = _module(kind)
-    if module is not None:
+    if kind == MOSAIC:
+        check_target(s3_client, key, PurePosixPath(key).name, replace)
+    elif module is not None:
         check_target(s3_client, module.output_key(key), filename, replace)
     abort_stale(user)
 
+    others = TILE if kind == MOSAIC else PART
     files = [
         (filename, file_size, kind),
-        *((c["filename"], c["fileSize"], PART) for c in companions),
+        *((c["filename"], c["fileSize"], others) for c in companions),
     ]
     sessions = []
     main = None
@@ -262,7 +289,9 @@ def start(
         if len(session.store_name) > UploadSession._meta.get_field("store_name").max_length:
             raise MultipartError("The key is too long.")
         style = kind == PLAIN and portolan.layer_style(s3_client, key) is not None
-        if kind in (SHAPEFILE, SHAPEFILE_PMTILES) or file_kind == PART:
+        if kind == MOSAIC:
+            ctype = "image/tiff"
+        elif kind in (SHAPEFILE, SHAPEFILE_PMTILES) or file_kind == PART:
             ctype = (
                 "application/zip" if name.lower().endswith(".zip") else "application/octet-stream"
             )
@@ -329,17 +358,18 @@ def send_part(user, session: UploadSession, index: int, data: bytes) -> int:
 
 
 def companions_of(session: UploadSession) -> list[UploadSession]:
-    """The other parts of a shapefile `session` is the .shp of, in its folder."""
-    if session.workspace not in (SHAPEFILE, SHAPEFILE_PMTILES):
+    """The other files of an upload of several (a .shp's parts, a mosaic's tiles), in its folder."""
+    others = {SHAPEFILE: PART, SHAPEFILE_PMTILES: PART, MOSAIC: TILE}.get(session.workspace)
+    if others is None:
         return []
     return list(
         UploadSession.objects.filter(
             user_id=session.user_id,
             connection_id=session.connection_id,
-            workspace=PART,
+            workspace=others,
             upload_dir__startswith=UPLOAD_ID_PREFIX,
             store_name__startswith=f"{PurePosixPath(session.store_name).parent}/",
-        ).order_by("filename")
+        ).order_by("pk")
     )
 
 
@@ -396,8 +426,8 @@ def complete(user, session: UploadSession, key: str, job_fields: dict) -> Comple
     be picked (geopackage_convert.start_geopackage_conversion).
     """
     kind = session.workspace
-    if kind == PART:
-        raise MultipartError("Complete the upload of the .shp, which completes its parts")
+    if kind in (PART, TILE):
+        raise MultipartError("Complete the upload of its first file, which completes the others")
     if session.completed:
         raise MultipartError("This upload is already complete", status=409)
     if session.error:
@@ -417,9 +447,15 @@ def complete(user, session: UploadSession, key: str, job_fields: dict) -> Comple
         )
 
     companions = companions_of(session)
+    if kind == MOSAIC:
+        folder = check_target(
+            s3_client, key, PurePosixPath(key).name, job_fields.get("replace_existing", False)
+        )
     for each in (session, *companions):
         _join(s3_client, each)
     input_size = session.file_size + sum(c.file_size for c in companions)
+    if kind == MOSAIC:
+        return _start_mosaic(user, s3_client, session, companions, key, folder, job_fields)
 
     if kind in (SHAPEFILE, SHAPEFILE_PMTILES):
         # Named as the upload's (a plain one) or the job's (a conversion), as staged ones are.
@@ -468,8 +504,65 @@ def complete(user, session: UploadSession, key: str, job_fields: dict) -> Comple
         # Unreadable: nothing to convert, so nothing to keep.
         s3_client.delete_object(target_key)
         job.delete()
-        raise MultipartError(str(exc)) from exc
+        raise MultipartError(
+            gdal_reason(exc, "Could not read the GeoPackage", session.filename)
+        ) from exc
     return Completed(key=job.output_key, size=input_size, job=job, inspection=inspection)
+
+
+def gdal_reason(exc: Exception, what: str, filename: str) -> str:
+    """Why GDAL couldn't read a file in the bucket, naming it by `filename`.
+
+    GDAL's message names the bucket and the object's key (its /vsis3/
+    path), which the user has no use for: keep its errors ("file is not a
+    database"...).
+    """
+    errors = re.findall(r"ERROR \d+: ([^\n]+)", str(exc))
+    errors = [re.sub(r"[`']?/vsis3/[^\s`']+[`']?", filename, error) for error in errors]
+    return f"{what}: {'; '.join(errors)}" if errors else f"{what}: GDAL couldn't open it."
+
+
+def _start_mosaic(user, s3_client, session, companions, key, folder, job_fields) -> Completed:
+    """Check a mosaic's tiles agree, read in the bucket, and start converting them."""
+    tiles = [session, *companions]
+    headers, reading = [], None
+    try:
+        # Only the bytes holding each header are fetched.
+        for tile in tiles:
+            reading = tile.filename
+            headers.append(
+                (tile.filename, mosaic.read_header(*s3_client.gdal_path(tile.store_name)))
+            )
+        mosaic.check_tiles(headers)
+    except ValueError as exc:
+        # Not a mosaic it can make: nothing to keep.
+        for tile in tiles:
+            s3_client.delete_object(tile.store_name)
+        if isinstance(exc, mosaic.MosaicMismatch):
+            raise MultipartError(str(exc)) from exc
+        raise MultipartError(gdal_reason(exc, f"Could not read {reading}", reading)) from exc
+    names = [tile.filename for tile in tiles]
+    job = CngLiteJob.objects.create(
+        id=session.session_id,
+        kind=mosaic.KIND,
+        owner=user,
+        connection_id=session.connection_id,
+        bucket=s3_client.bucket,
+        source_name=PurePosixPath(key).stem,
+        output_key=folder,
+        source_key=sources_directory_key(key, session.session_id),
+        input_size=sum(tile.file_size for tile in tiles),
+        layers=names,
+        message=f"Waiting to convert {len(names)} tiles",
+        **job_fields,
+    )
+    threading.Thread(target=mosaic.run_mosaic, args=(job.id,), daemon=True).start()
+    return Completed(
+        key=folder,
+        size=job.input_size,
+        job=job,
+        message=f"{len(names)} GeoTIFFs accepted for conversion into one mosaic",
+    )
 
 
 class _ObjectReader(io.RawIOBase):

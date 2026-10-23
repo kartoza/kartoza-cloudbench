@@ -58,11 +58,17 @@ class MosaicMismatch(ValueError):
     """The tiles can't form one mosaic (different CRS, bands, types or nodata)."""
 
 
-def _gdal(*args: str, cwd: Path | None = None) -> str:
+def _gdal(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     """Run a GDAL command-line tool, returning its stdout; raise with its stderr."""
     try:
         result = subprocess.run(
-            args, cwd=cwd, capture_output=True, text=True, timeout=GDAL_TIMEOUT, check=False
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=GDAL_TIMEOUT,
+            check=False,
+            env=env,
         )
     except FileNotFoundError as exc:
         raise ValueError(f"{args[0]} isn't installed on the CloudBench server.") from exc
@@ -71,9 +77,14 @@ def _gdal(*args: str, cwd: Path | None = None) -> str:
     return result.stdout
 
 
-def read_header(path: Path) -> dict:
-    """A GeoTIFF's header (`gdalinfo -json`): CRS, bands, metadata. No pixels are read."""
-    header: dict = json.loads(_gdal("gdalinfo", "-json", str(path)))
+def read_header(path: Path | str, env: dict | None = None) -> dict:
+    """A GeoTIFF's header (`gdalinfo -json`): CRS, bands, metadata. No pixels are read.
+
+    `path` is a GDAL path, with `env` the environment GDAL needs for it: a
+    file on disk, or a tile in the bucket (S3Client.gdal_path), of which
+    only the bytes holding its header are fetched.
+    """
+    header: dict = json.loads(_gdal("gdalinfo", "-json", str(path), env=env))
     return header
 
 
@@ -279,10 +290,15 @@ def run_mosaic(job_id):
                 progress=5 + round(15 * index / len(names)),
                 message=f"Staging tile {index + 1} of {len(names)}: {name}",
             )
-            header = read_header(tiles_dir / name)
             source_key = f"{job.source_key}/{name}"
-            _upload(s3_client, job.bucket, tiles_dir / name, source_key, "image/tiff")
-            (tiles_dir / name).unlink()
+            staged = tiles_dir / name
+            if staged.exists():
+                header = read_header(staged)
+                _upload(s3_client, job.bucket, staged, source_key, "image/tiff")
+                staged.unlink()
+            else:
+                # Uploaded straight to the bucket (apps.s3.multipart): read there.
+                header = read_header(*s3_client.gdal_path(source_key))
             stem = PurePosixPath(name).stem
             tile_id = portolan.unique_layer_id(portolan.sanitize_layer_id(stem), taken)
             tiles.append(

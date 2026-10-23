@@ -72,6 +72,10 @@ describe('which uploads go straight to the bucket', () => {
     ['data.gpkg', [], 'pmtiles', false],
     ['data.gpkg', [], 'cog', false],
     ['a.tif', [file('b.tif')], undefined, false],
+    // A mosaic: two GeoTIFFs or more.
+    ['a.tif', [file('b.tiff')], 'mosaic', true],
+    ['a.tif', [], 'mosaic', false],
+    ['a.tif', [file('b.png')], 'mosaic', false],
   ])('%s (%s, %s) -> %s', (name, companions, format, expected) => {
     expect(canUploadToS3Directly(file(name), companions as File[], format)).toBe(expected)
   })

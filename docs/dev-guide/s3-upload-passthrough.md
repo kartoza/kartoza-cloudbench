@@ -12,13 +12,13 @@
   - plain uploads;
   - shapefiles (their ZIP is made in the bucket);
   - conversions to COG, COPC and PMTiles;
-  - GeoPackage inspection (its layers are read in the bucket with GDAL `/vsis3/`).
+  - mosaics (every tile's header is read in the bucket with GDAL `/vsis3/`);
+  - GeoPackage inspection (its layers are read in the bucket the same way).
 - **What users get:**
   - files up to 10 GB, no longer capped at 2 GB by the ingress;
   - a dropped connection is retried for about 5 minutes, since S3 keeps the parts;
   - closing the dialog cancels the upload.
 - **Still staged on disk:**
-  - mosaics;
   - the style editor's small saves;
   - GeoPackage datasets to GeoNode (see [Upload passthrough](upload-passthrough.md)).
 - **Tested:**
@@ -30,8 +30,8 @@
   PostGIS and GeoNode GeoPackage assemble) now take only the user's own sessions that
   stage on disk. Before, any user could send chunks to any session.
 - **To decide:** see [To discuss with the senior](#to-discuss-with-the-senior). The points
-  are mosaics, a model for the session state, a bucket lifecycle rule for abandoned
-  uploads, and GeoPackages to GeoNode.
+  are a model for the session state, a bucket lifecycle rule for abandoned uploads, and
+  GeoPackages to GeoNode.
 
 ## Problem
 
@@ -90,8 +90,18 @@ where the file landed, never on CloudBench's disk:
 - **A shapefile ZIP to convert** is read in the bucket with range requests (a seekable
   file over `GetObject` ranges), checked (`pmtiles.zip_sidecars`) and rewritten to its
   source key, its files named after the job; the ZIP uploaded is then dropped.
+- **A mosaic's tiles** are uploaded one multipart upload each, into the job's sources
+  folder, each checked to start as a TIFF. Completing the first tile completes the others.
+  Every tile's header is then read where it landed (`gdalinfo` on `/vsis3/`, the bytes of
+  the header only), and `mosaic.check_tiles` refuses tiles that don't agree (CRS, bands,
+  data types, nodata), naming the odd one out; the tiles are then deleted. `run_mosaic`
+  reads each header there again for the tile's date, and no longer stages the tiles: they
+  are already where CloudNativeGIS reads them. Only its small item mirror
+  (`items.parquet`, a few KB) is written to the job's folder and uploaded, as before.
 - **A GeoPackage's source asset** (`cng_lite._publish_source`) is hashed by streaming it
   from the bucket, for its `file:checksum` and `file:size`.
+- **GDAL's errors** reach the user without the `/vsis3/` path they name (the bucket and
+  the object's key): `multipart.gdal_reason` keeps the reason, naming the file.
 
 Memory stays bounded: a 5 MB part being written, and 1 MB reads.
 
@@ -143,7 +153,7 @@ more than a day later.
 | Shapefile parts (`.shp` + `.shx`, `.dbf`...), plain | straight into the bucket, zipped there |
 | Shapefile (parts, or a `.zip`) → PMTiles | straight into the bucket, zipped (or rewritten) there |
 | GeoPackage → PMTiles/COG | straight to its source key, its contents read there |
-| Mosaic (several GeoTIFFs) | staged: every tile's header is read and compared |
+| Mosaic (several GeoTIFFs) | straight into the bucket, every tile's header read there |
 | A layer style saved by the style editor | the old endpoint (small file) |
 
 ## Testing
@@ -154,7 +164,9 @@ more than a day later.
   limit, cancel, abandoned uploads, ownership, and the disk-staged endpoints refusing it;
   a shapefile's parts zipped (plain and converted), checked first, and cancelled together;
   a shapefile ZIP rewritten with range requests, or refused and dropped; a GeoPackage read
-  where it landed, an unreadable one dropped, a non-GeoPackage refused.
+  where it landed, an unreadable one dropped, a non-GeoPackage refused; a mosaic's tiles
+  checked in the bucket, refused and dropped when they don't agree; `run_mosaic` reading
+  tiles already in the bucket without staging them; GDAL's errors without their path.
 - Frontend tests: which uploads go straight to the bucket, retries, abort on cancel and
   on failure (`web/src/api/s3Multipart.test.ts`), and the dialog using it
   (`S3UploadDialog.test.tsx`).
@@ -170,8 +182,12 @@ more than a day later.
   `CompleteMultipartUpload`, then an abort) gave back the file byte for byte, and left no
   open upload. Then, through `apps.s3.multipart` itself: a GeoPackage's contents read in
   the bucket with the image's GDAL 3.6, and a shapefile's parts zipped there (the ZIP
-  opens in GDAL). Only flows that delete nothing were run there: the bucket holds others'
-  data. **AWS** itself is untested.
+  opens in GDAL). Then the whole set through the test stack, under a test folder
+  (`tests/upload-test/TEST_REPORT_s3_upload_passthrough.md`): plain, resume after 90 s, cancel, COG,
+  shapefile (parts, plain and to PMTiles, and ZIP), GeoJSON, GeoPackage (inspected,
+  converted, picker closed, unreadable), mosaic (and tiles that don't agree), and
+  replacing a layer. CloudBench's data folder grew only in `db.sqlite3` (job rows), and
+  `/tmp` not at all. **AWS** itself is untested.
 
 ### Reading in the bucket instead of on disk: what was tried first
 
@@ -189,15 +205,12 @@ requests), not the file.
 
 ## To discuss with the senior
 
-1. **Mosaics are still staged on disk**: every tile's header is read and compared before
-   converting. The same way would work: one multipart upload per tile, and `gdalinfo` on
-   `/vsis3/` for the headers.
-2. **The session row reuses `UploadSession` fields** (table above). A small model for S3
+1. **The session row reuses `UploadSession` fields** (table above). A small model for S3
    uploads would be clearer, but needs a migration from the maintainer.
-3. **Abandoned uploads** are aborted lazily (the user's next upload, after a day).
+2. **Abandoned uploads** are aborted lazily (the user's next upload, after a day).
    Suggest also a bucket lifecycle rule (`AbortIncompleteMultipartUpload`, e.g. 2 days),
    which aborts them whatever happens to CloudBench.
-4. **DigitalOcean Spaces** works for the multipart upload and for reading with `/vsis3/`
+3. **DigitalOcean Spaces** works for the multipart upload and for reading with `/vsis3/`
    (see Testing). The test files were left under `cloudbench-test/s3read/` in the bucket.
-5. **GeoPackage datasets to GeoNode** are still staged too: see
+4. **GeoPackage datasets to GeoNode** are still staged too: see
    [Upload passthrough](upload-passthrough.md#open-question-geopackage-datasets-to-geonode).
