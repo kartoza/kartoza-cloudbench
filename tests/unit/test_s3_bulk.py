@@ -1007,6 +1007,7 @@ def test_the_source_bucket_is_recorded_on_the_batch(owner, connection, s3, sandb
     batch = start_from(owner, connection, other, ["a.zip"])
 
     assert batch.is_cross_bucket
+    batch.refresh_from_db()
     assert (batch.connection_id, batch.source_connection_id) == (connection.id, other.id)
     data = batch.to_dict()
     assert (data["sourceConnectionId"], data["sourceName"]) == (str(other.id), "Sandbox")
@@ -1078,6 +1079,7 @@ def test_retry_keeps_a_cross_bucket_job_in_place(owner, connection, s3, sandbox,
     bulk.step_batch(batch.pk)
     set_status(batch, "a.zip", Status.FAILED, error="boom")
     bulk.step_batch(batch.pk)
+    batch.refresh_from_db()
 
     bulk.retry_failed(batch)
     bulk.step_batch(batch.pk)
