@@ -45,6 +45,8 @@ import {
 } from 'react-icons/fi'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
+import { getS3Connections } from '../../api/s3'
+import type { S3Connection } from '../../types'
 import {
   BULK_BATCHES_QUERY_KEY,
   cancelBulk,
@@ -102,23 +104,35 @@ function JobStatusIcon({ job }: { job: BulkJob }) {
   }
 }
 
-// Step 1: browse the connection's folders; the one you're in is converted.
+// The name of the connection `id`, to say where layers come from and go to.
+function connectionName(connections: S3Connection[], id: string): string {
+  return connections.find((connection) => connection.id === id)?.name ?? 'this bucket'
+}
+
+// Step 1: pick a bucket (one of the user's connections) and browse its folders; the one you're in is converted.
 function FolderStep({
+  connections,
   connectionId,
+  sourceId,
+  onSource,
   browsing,
   onBrowse,
   onNext,
   onClose,
 }: {
+  connections: S3Connection[]
+  // The connection the layers go to, and the one whose folders are browsed.
   connectionId: string
+  sourceId: string
+  onSource: (id: string) => void
   browsing: string
   onBrowse: (prefix: string) => void
   onNext: () => void
   onClose: () => void
 }) {
   const { data: folders = [], isLoading } = useQuery({
-    queryKey: ['bulkFolders', connectionId, browsing],
-    queryFn: () => listBulkFolders(connectionId, browsing),
+    queryKey: ['bulkFolders', sourceId, browsing],
+    queryFn: () => listBulkFolders(sourceId, browsing),
   })
   const crumbs = browsing.split('/').filter(Boolean)
 
@@ -130,6 +144,29 @@ function FolderStep({
             Pick the folder the layers were uploaded to. Every layer CloudBench can convert in it is processed; you
             review the list next.
           </Text>
+          {connections.length > 1 && (
+            <FormControl>
+              <FormLabel fontSize="sm">Read the layers from</FormLabel>
+              <Select
+                size="sm"
+                value={sourceId}
+                onChange={(e) => onSource(e.target.value)}
+                borderRadius="lg"
+                aria-label="Read the layers from"
+              >
+                {connections.map((connection) => (
+                  <option key={connection.id} value={connection.id}>
+                    {connection.name} ({connection.bucket})
+                  </option>
+                ))}
+              </Select>
+              <Text fontSize="xs" color="gray.500" mt={1}>
+                {sourceId === connectionId
+                  ? `The layers are published into ${connectionName(connections, connectionId)}, the bucket you opened this from.`
+                  : `The files are read from ${connectionName(connections, sourceId)}, where they are, and the layers published into ${connectionName(connections, connectionId)}.`}
+              </Text>
+            </FormControl>
+          )}
           <HStack spacing={1} fontSize="sm" wrap="wrap" data-testid="bulk-breadcrumb">
             <Button size="xs" variant="link" onClick={() => onBrowse('')}>
               bucket
@@ -196,14 +233,18 @@ function FolderStep({
 
 // Step 2: what was found, and how to process it.
 function ReviewStep({
+  connections,
   connectionId,
+  sourceId,
   prefix,
   onStart,
   isStarting,
   onBack,
   onClose,
 }: {
+  connections: S3Connection[]
   connectionId: string
+  sourceId: string
   prefix: string
   onStart: (options: BulkOptions) => void
   isStarting: boolean
@@ -219,8 +260,8 @@ function ReviewStep({
     isError,
     error,
   } = useQuery({
-    queryKey: ['bulkPreview', connectionId, prefix, applied.mode, applied.prefix],
-    queryFn: () => previewBulk(connectionId, prefix, applied.mode, applied.prefix),
+    queryKey: ['bulkPreview', connectionId, sourceId, prefix, applied.mode, applied.prefix],
+    queryFn: () => previewBulk(connectionId, prefix, applied.mode, applied.prefix, sourceId),
     placeholderData: keepPreviousData,
   })
   const [selected, setSelected] = useState<Set<string> | null>(null)
@@ -237,6 +278,8 @@ function ReviewStep({
   const chosen = selected ?? new Set(convertible.map((file) => file.key))
   const limits = preview?.limits
   const slots = Math.min(concurrency, Math.max(chosen.size, 1))
+  const acrossBuckets = sourceId !== connectionId
+  const sourceName = connectionName(connections, sourceId)
 
   const toggle = (key: string) => {
     const next = new Set(chosen)
@@ -257,6 +300,7 @@ function ReviewStep({
       destinationPrefix: destinationPrefix.trim(),
       onExists,
       concurrency: slots,
+      sourceConnectionId: sourceId,
     })
 
   if (isLoading) {
@@ -293,6 +337,7 @@ function ReviewStep({
           <Box>
             <HStack justify="space-between" mb={2}>
               <Text fontWeight="600" fontSize="sm">
+                {acrossBuckets && `${sourceName}: `}
                 {prefix} · {convertible.length} layer{convertible.length === 1 ? '' : 's'} found
               </Text>
               <Checkbox
@@ -389,7 +434,10 @@ function ReviewStep({
               </FormControl>
 
               <FormControl>
-                <FormLabel fontSize="sm">Where the layers go</FormLabel>
+                <FormLabel fontSize="sm">
+                  Where the layers go
+                  {acrossBuckets && ` in ${connectionName(connections, connectionId)}`}
+                </FormLabel>
                 <RadioGroup
                   value={destination}
                   onChange={(value) => {
@@ -414,7 +462,9 @@ function ReviewStep({
                         [
                           'beside',
                           'Beside each file',
-                          `Each layer in a folder next to its source file, inside ${prefix}, e.g. ${prefix}<name>/`,
+                          acrossBuckets
+                            ? `Each layer in a folder at the same path in ${connectionName(connections, connectionId)}, e.g. ${prefix}<name>/`
+                            : `Each layer in a folder next to its source file, inside ${prefix}, e.g. ${prefix}<name>/`,
                         ],
                         [
                           'folder',
@@ -593,6 +643,7 @@ function ProgressStep({ batchId, onClose }: { batchId: string; onClose: () => vo
           <Box>
             <HStack justify="space-between" mb={1}>
               <Text fontWeight="600" fontSize="sm">
+                {batch.sourceName && `${batch.sourceName}: `}
                 {batch.prefix}
               </Text>
               <Badge
@@ -703,18 +754,27 @@ export default function BulkUploadDialog() {
   const openedBatchId = dialogData?.data?.batchId as string | undefined
   const startFolder = (dialogData?.data?.prefix as string | undefined) ?? ''
 
+  // The bucket the folder is read from: the one the layers go to unless another is picked.
+  const [sourceId, setSourceId] = useState('')
   const [step, setStep] = useState<Step>('folder')
   const [browsing, setBrowsing] = useState('')
   const [batchId, setBatchId] = useState<string | null>(null)
   const [isStarting, setIsStarting] = useState(false)
 
+  const { data: connections = [] } = useQuery({
+    queryKey: ['s3connections'],
+    queryFn: getS3Connections,
+    enabled: isOpen && !!connectionId,
+  })
+
   useEffect(() => {
     if (!isOpen) return
+    setSourceId(connectionId ?? '')
     setBatchId(openedBatchId ?? null)
     setStep(openedBatchId ? 'progress' : 'folder')
     setBrowsing(folderPrefix(startFolder))
     setIsStarting(false)
-  }, [isOpen, openedBatchId, startFolder])
+  }, [isOpen, openedBatchId, startFolder, connectionId])
 
   const handleStart = async (options: BulkOptions) => {
     if (!connectionId) return
@@ -774,7 +834,14 @@ export default function BulkUploadDialog() {
         )}
         {connectionId && step === 'folder' && (
           <FolderStep
+            connections={connections}
             connectionId={connectionId}
+            sourceId={sourceId || connectionId}
+            onSource={(id) => {
+              setSourceId(id)
+              // Another bucket has other folders.
+              setBrowsing('')
+            }}
             browsing={browsing}
             onBrowse={setBrowsing}
             onNext={() => setStep('review')}
@@ -783,7 +850,9 @@ export default function BulkUploadDialog() {
         )}
         {connectionId && step === 'review' && (
           <ReviewStep
+            connections={connections}
             connectionId={connectionId}
+            sourceId={sourceId || connectionId}
             prefix={browsing}
             onStart={handleStart}
             isStarting={isStarting}

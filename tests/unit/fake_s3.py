@@ -69,12 +69,15 @@ class FakeS3:
         start, end = (int(n) for n in Range.removeprefix("bytes=").split("-"))
         return {"Body": io.BytesIO(self.objects[Key][start : end + 1])}
 
+    def get_object_stream(self, key, byte_range=None):
+        return io.BytesIO(self.objects[key])
+
     def get_object_info(self, key):
         return {"contentLength": len(self.objects[key]), "contentType": self.content_types[key]}
 
     def generate_presigned_url(self, key, expiration=3600, method="get_object", content_type=None):
         self.expirations.append(expiration)
-        url = f"http://minio:9000/bucket/{key}?method={method}"
+        url = f"http://minio:9000/{self.bucket}/{key}?method={method}"
         return f"{url}&type={quote(content_type)}" if content_type else url
 
     def presigned_put(self, url, body):

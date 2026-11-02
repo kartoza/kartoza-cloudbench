@@ -51,6 +51,9 @@ export interface BulkOptions {
   destinationPrefix: string
   onExists: OnExists
   concurrency: number
+  // The connection whose bucket the folder is in; the same as the one the layers go to
+  // (the default) when it is in their own.
+  sourceConnectionId?: string
 }
 
 export type BulkJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped'
@@ -69,7 +72,11 @@ export type BulkBatchStatus = 'running' | 'cancelling' | 'completed' | 'partial'
 
 export interface BulkBatch {
   id: string
+  // Where the layers go.
   connectionId: string | null
+  // Where the folder is read from, when that is another connection's bucket (else null).
+  sourceConnectionId?: string | null
+  sourceName?: string | null
   prefix: string
   status: BulkBatchStatus
   concurrency: number
@@ -101,19 +108,21 @@ export async function listBulkFolders(connectionId: string, prefix: string): Pro
   return data.folders
 }
 
-// What bulk upload would do with a folder; reads the bucket only. Where the layers
-// would go (`destination`, and `destinationPrefix` for a folder) decides which of
-// them already exist.
+// What bulk upload would do with a folder; reads the buckets only. The layers would go
+// into `connectionId`'s bucket; the folder is in `sourceConnectionId`'s (default: the
+// same). Where in it (`destination`, and `destinationPrefix` for a folder) decides which
+// of them already exist.
 export async function previewBulk(
   connectionId: string,
   prefix: string,
   destination: BulkDestination = 'beside',
-  destinationPrefix = ''
+  destinationPrefix = '',
+  sourceConnectionId?: string
 ): Promise<BulkPreview> {
   const response = await fetch(`${API_BASE}/s3/bulk/preview/${encodeURIComponent(connectionId)}`, {
     method: 'POST',
     headers: JSON_HEADERS,
-    body: JSON.stringify({ prefix, destination, destinationPrefix }),
+    body: JSON.stringify({ prefix, destination, destinationPrefix, sourceConnectionId }),
   })
   return handleResponse(response)
 }

@@ -9,8 +9,7 @@ from .s3_connection import S3Connection
 
 
 class CngLiteBatch(models.Model):
-    """The layers of one folder, as CngLiteJobs (`jobs`) run N at a time.
-    """
+    """The layers of one folder, as CngLiteJobs (`jobs`) run N at a time."""
 
     class Status(models.TextChoices):
         """Where the batch is, from its jobs."""
@@ -46,6 +45,14 @@ class CngLiteBatch(models.Model):
     connection = models.ForeignKey(
         S3Connection, null=True, on_delete=models.SET_NULL, related_name="cng_lite_batches"
     )
+    # Where the folder is read from, when that isn't `connection`'s bucket
+    # (which is where the layers go): its jobs convert each file where it
+    # is, only reading it. Null with a `source_bucket` means that connection
+    # was deleted since. Blank source_bucket: the same bucket.
+    source_connection = models.ForeignKey(
+        S3Connection, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    source_bucket = models.CharField(max_length=255, blank=True, default="")
     # The folder whose layers are converted ("incoming/", "" is never allowed).
     source_prefix = models.TextField()
     # Where the layers go: blank, beside each file (one folder per layer), or one folder.
@@ -65,6 +72,11 @@ class CngLiteBatch(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def is_cross_bucket(self):
+        """Whether the folder is read from another bucket than the layers go to."""
+        return bool(self.source_bucket)
 
     @property
     def is_active(self):
@@ -106,6 +118,10 @@ class CngLiteBatch(models.Model):
         return {
             "id": str(self.id),
             "connectionId": str(self.connection_id) if self.connection_id else None,
+            "sourceConnectionId": (
+                str(self.source_connection_id) if self.source_connection_id else None
+            ),
+            "sourceName": self.source_label,
             "prefix": self.source_prefix,
             "status": self.status,
             "concurrency": self.concurrency,
@@ -114,6 +130,13 @@ class CngLiteBatch(models.Model):
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
             "jobs": jobs,
         }
+
+    @property
+    def source_label(self):
+        """What the folder is read from, when not the destination's bucket (else None)."""
+        if not self.is_cross_bucket:
+            return None
+        return self.source_connection.name if self.source_connection_id else self.source_bucket
 
 
 _JOB_STATUS = {

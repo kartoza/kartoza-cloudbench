@@ -147,7 +147,7 @@ function BatchRow({ batch }: { batch: BulkBatch }) {
           <HStack spacing={1.5} mb="6px">
             <Icon as={FiLayers} color="orange.400" boxSize={3.5} />
             <Text fontSize="sm" fontWeight="600" noOfLines={1}>
-              Bulk upload: {batch.prefix}
+              Bulk upload: {batch.sourceName ? `${batch.sourceName}: ` : ''}{batch.prefix}
             </Text>
           </HStack>
           <Text fontSize="xs" color="gray.500">

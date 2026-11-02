@@ -150,11 +150,20 @@ class CngLiteJob(models.Model):
     )
     # The bulk upload this layer is part of, if any (see apps.s3.bulk), and
     # the original it was started from: a file already in the bucket, which
-    # is copied to source_key - the job's own staged copy - when it gets a slot.
+    # is copied to source_key - the job's own staged copy - when it gets a slot
+    # (or, from another bucket, read where it is: see source_in_place).
     batch = models.ForeignKey(
         "CngLiteBatch", null=True, blank=True, on_delete=models.SET_NULL, related_name="jobs"
     )
     origin_key = models.TextField(blank=True, default="")
+    # The file is converted where it is - `source_key` is its key in the bucket
+    # of `source_connection`, another than `connection`'s, which only reads
+    # it: the pipeline hands CloudNativeGIS a URL to it, and never moves or
+    # deletes it. Null once that connection is deleted: it can't run anymore.
+    source_in_place = models.BooleanField(default=False)
+    source_connection = models.ForeignKey(
+        S3Connection, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     # The fixed CLOUDNATIVEGIS_URL/API_TOKEN this job's conversion runs on,
     # its token encrypted at rest - without CLOUDNATIVEGIS_ON_DEMAND. On
     # demand, its instance_server's are used instead (see server_url).

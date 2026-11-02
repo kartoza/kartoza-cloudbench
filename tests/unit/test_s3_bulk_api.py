@@ -307,3 +307,46 @@ def test_a_bulk_uploads_layers_are_not_listed_as_jobs(api, connection, s3):
 
     assert CngLiteJob.objects.filter(status=CngLiteJobStatus.PENDING).count() == 2
     assert api.get("/api/s3/conversion/jobs").json() == []
+
+
+@pytest.fixture
+def sandbox(owner):
+    return S3Connection.objects.create(
+        owner=owner, name="Sandbox", endpoint="sandbox:9000", bucket="sandbox"
+    )
+
+
+@pytest.mark.django_db
+def test_a_folder_can_be_read_from_another_connection(api, connection, sandbox, s3):
+    preview = api.post(
+        f"{URL}/preview/{connection.id}",
+        {"prefix": "incoming/", "sourceConnectionId": str(sandbox.id)},
+        format="json",
+    )
+    started = start(api, connection, sourceConnectionId=str(sandbox.id))
+
+    assert preview.status_code == 200
+    assert started.status_code == 202
+    data = started.json()
+    assert data["connectionId"] == str(connection.id)
+    assert (data["sourceConnectionId"], data["sourceName"]) == (str(sandbox.id), "Sandbox")
+
+
+@pytest.mark.django_db
+def test_a_source_connection_that_is_not_the_users_is_not_found(
+    api, connection, s3, django_user_model
+):
+    other = django_user_model.objects.create(username="8")
+    foreign = S3Connection.objects.create(
+        owner=other, name="Theirs", endpoint="minio:9000", bucket="bucket"
+    )
+
+    preview = api.post(
+        f"{URL}/preview/{connection.id}",
+        {"prefix": "incoming/", "sourceConnectionId": str(foreign.id)},
+        format="json",
+    )
+    started = start(api, connection, sourceConnectionId=str(foreign.id))
+
+    assert preview.status_code == started.status_code == 404
+    assert CngLiteBatch.objects.count() == 0

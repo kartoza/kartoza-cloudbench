@@ -8,8 +8,10 @@ as any upload's does (CNGProcessingClient) - bulk only decides when, and from
 which file.
 
 A job's original is never handed to the pipeline, which moves and deletes
-the source it is given: it is copied (within S3, nothing is downloaded) to
-the job's own staging key first.
+the source it is given: it is copied to the job's own staging key first -
+within S3, nothing downloaded. A folder in another bucket than the layers
+go to (see start_batch) isn't copied: each job converts its file where it
+is, handing CloudNativeGIS a URL to it, and leaves it alone.
 """
 
 import contextlib
@@ -217,16 +219,18 @@ def _child_folders(s3_client, parent):
         token = page.get("nextContinuationToken")
 
 
-def _entries(s3_client, prefix, mode, destination_prefix, recursive):
+def _entries(source_client, destination_client, prefix, mode, destination_prefix, recursive):
     """The folder's files, each as {key, name, size, kind, exists, target, skipReason}.
 
+    The folder is read from `source_client`'s bucket; the layers go to
+    `destination_client`'s (the same one unless the batch crosses buckets).
     `target` is the layer folder a file would publish into, and `exists`
     whether that already holds data - found with one listing of each folder
     the layers go into, not a request per layer. Two files that would publish
     into the same folder (roads.zip and roads.geojson) can't both: the second
     is left alone.
     """
-    files, truncated, published = _list_files(s3_client, prefix, recursive)
+    files, truncated, published = _list_files(source_client, prefix, recursive)
     claimed = {}
     entries = []
     for key, size in files:
@@ -263,24 +267,53 @@ def _entries(s3_client, prefix, mode, destination_prefix, recursive):
         if entry["target"]:
             parent, _, name = entry["target"].rpartition("/")
             if parent not in existing:
-                existing[parent] = _child_folders(s3_client, parent)
+                existing[parent] = _child_folders(destination_client, parent)
             entry["exists"] = name in existing[parent]
     return entries, truncated
 
 
-def preview(user, connection_id, prefix, destination_prefix="", recursive=False, destination=None):
+def _source_connection_id(connection_id, source_connection_id):
+    """The connection the folder is read from, or None if that's `connection_id` (the same bucket)."""
+    if not source_connection_id or str(source_connection_id) == str(connection_id):
+        return None
+    return str(source_connection_id)
+
+
+def _clients(user, connection_id, source_connection_id):
+    """The clients for the layers' bucket and the folder's: (destination, source).
+
+    One and the same client when the folder is in the layers' own bucket.
+    """
+    destination_client = get_s3_client(connection_id, user)
+    source_id = _source_connection_id(connection_id, source_connection_id)
+    return destination_client, get_s3_client(source_id, user) if source_id else destination_client
+
+
+def preview(
+    user,
+    connection_id,
+    prefix,
+    destination_prefix="",
+    recursive=False,
+    destination=None,
+    source_connection_id=None,
+):
     """What bulk upload would do with a folder: {prefix, files, truncated, limits}.
 
-    Reads the bucket only. Each file says its conversion (`kind`), or why it is
-    left alone (`skipReason`), the folder its layer would be (`target`) - which
-    depends on `destination` (see destination_mode) - and whether that already exists.
+    Reads the buckets only. `prefix` is a folder of `source_connection_id`'s
+    bucket (default: the same as `connection_id`, where the layers go). Each
+    file says its conversion (`kind`), or why it is left alone (`skipReason`),
+    the folder its layer would be (`target`) - which depends on `destination`
+    (see destination_mode) - and whether that already exists.
     """
     prefix = _clean_prefix(prefix)
     if not prefix:
         raise ValueError("Pick a folder: bulk upload doesn't convert a whole bucket.")
-    s3_client = get_s3_client(connection_id, user)
+    destination_client, source_client = _clients(user, connection_id, source_connection_id)
     mode, destination_prefix = destination_mode(destination, destination_prefix)
-    entries, truncated = _entries(s3_client, prefix, mode, destination_prefix, recursive)
+    entries, truncated = _entries(
+        source_client, destination_client, prefix, mode, destination_prefix, recursive
+    )
     return {
         "prefix": prefix,
         "files": [{k: v for k, v in entry.items() if k != "output"} for entry in entries],
@@ -305,11 +338,15 @@ def start_batch(
     on_exists=CngLiteBatch.OnExists.SKIP,
     recursive=False,
     destination=None,
+    source_connection_id=None,
 ):
     """Start converting the chosen `files` (keys) of folder `prefix`, `concurrency` at a time.
 
-    `destination` says where the layers go: "beside" each file, the bucket's
-    "root" (where other uploads' layers are) or "folder" `destination_prefix`.
+    The layers go to `connection_id`'s bucket; the folder is in the same one,
+    or in `source_connection_id`'s - each file is then converted where it is,
+    and only read. `destination` says where in the bucket the layers go:
+    "beside" each file (the same path), its "root" (where other uploads'
+    layers are) or "folder" `destination_prefix`.
     The folder is read again, so what runs is what's in the bucket now.
     Every layer becomes a QUEUED job; a layer whose folder exists is
     skipped, replaced or - `stop` - fails when its turn comes, per
@@ -333,9 +370,12 @@ def start_batch(
     if CngLiteBatch.objects.filter(owner=user, status__in=CngLiteBatch.ACTIVE).exists():
         raise ValueError("A bulk upload is already running: wait for it, or cancel it.")
 
-    s3_client = get_s3_client(connection_id, user)
+    s3_client, source_client = _clients(user, connection_id, source_connection_id)
+    source_id = _source_connection_id(connection_id, source_connection_id)
     mode, destination_prefix = destination_mode(destination, destination_prefix)
-    entries, _truncated = _entries(s3_client, prefix, mode, destination_prefix, recursive)
+    entries, _truncated = _entries(
+        source_client, s3_client, prefix, mode, destination_prefix, recursive
+    )
     by_key = {entry["key"]: entry for entry in entries}
     chosen = []
     for key in dict.fromkeys(files):
@@ -352,6 +392,8 @@ def start_batch(
     batch = CngLiteBatch.objects.create(
         owner=user,
         connection_id=connection_id,
+        source_connection_id=source_id,
+        source_bucket=(source_client.bucket or source_id) if source_id else "",
         source_prefix=prefix,
         destination_prefix=destination_prefix,
         license=license_id,
@@ -379,6 +421,8 @@ def start_batch(
             bucket=s3_client.bucket,
             source_name=entry["name"],
             origin_key=entry["key"],
+            source_in_place=bool(source_id),
+            source_connection_id=source_id,
             output_key=entry["output"],
             input_size=entry["size"],
             license=batch.license,
@@ -471,18 +515,28 @@ def _stop(job):
 def _start_job(job):
     """Give a queued job its slot: stage its source, and run it in a thread of its own.
 
-    The original is copied (within S3) to the job's staging key, where the
-    pipeline may move or delete it. A layer that already exists fails the
-    job unless it replaces it (the batch's "stop" policy; see start_batch).
-    Anything that stops it starting fails the job, not the batch.
+    The original is copied to the job's staging key, where the pipeline may
+    move or delete it. One in another bucket than the layers go to isn't
+    copied at all: the job converts it where it is (see CngLiteJob.source_in_place),
+    its key already set. A layer that already exists fails the job unless
+    it replaces it (the batch's "stop" policy; see start_batch). Anything
+    that stops it starting fails the job, not the batch.
     """
+    batch = job.batch
     try:
         if not job.connection_id:
             raise ValueError("The S3 connection was deleted.")
+        if job.source_in_place and not job.source_connection_id:
+            raise ValueError(f'The connection to the "{batch.source_bucket}" bucket was deleted.')
         s3_client = get_s3_client(str(job.connection_id), job.owner)
         check_target(s3_client, job.output_key, job.source_name, job.replace_existing)
-        source_key = source_object_key(job.output_key, job.id, job.source_name)
-        s3_client.client.copy({"Bucket": job.bucket, "Key": job.origin_key}, job.bucket, source_key)
+        if job.source_in_place:
+            source_key = job.origin_key
+        else:
+            source_key = source_object_key(job.output_key, job.id, job.source_name)
+            s3_client.client.copy(
+                {"Bucket": job.bucket, "Key": job.origin_key}, job.bucket, source_key
+            )
     except TargetExists as exc:
         _fail(job, f'A layer already exists in "{exc.folder}".')
     except Exception as exc:

@@ -16,6 +16,9 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../api/bulk', () => api)
 
+const s3api = vi.hoisted(() => ({ getS3Connections: vi.fn() }))
+vi.mock('../../api/s3', () => s3api)
+
 import BulkUploadDialog from './BulkUploadDialog'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -90,6 +93,11 @@ describe('BulkUploadDialog', () => {
     Object.values(api).forEach(
       (fn) => typeof fn === 'function' && 'mockReset' in fn && (fn as ReturnType<typeof vi.fn>).mockReset()
     )
+    s3api.getS3Connections.mockReset()
+    s3api.getS3Connections.mockResolvedValue([
+      { id: 'c1', name: 'Kartoza', endpoint: 'minio:9000', bucket: 'kartoza', useSSL: false, pathStyle: true },
+      { id: 'c2', name: 'Sandbox', endpoint: 'minio:9000', bucket: 'sandbox', useSSL: false, pathStyle: true },
+    ])
     api.listBulkFolders.mockImplementation(async (_conn: string, prefix: string) =>
       prefix === '' ? [{ prefix: 'incoming/', name: 'incoming' }] : [{ prefix: 'incoming/2026/', name: '2026' }]
     )
@@ -111,7 +119,7 @@ describe('BulkUploadDialog', () => {
 
     expect(await screen.findByText('2 of 3 · Review and options')).toBeInTheDocument()
     // The layers go to the top level, like other uploads' (checked against what is there).
-    expect(api.previewBulk).toHaveBeenCalledWith('c1', 'incoming/', 'root', '')
+    expect(api.previewBulk).toHaveBeenCalledWith('c1', 'incoming/', 'root', '', 'c1')
     expect(await screen.findByText(/3 layers found/)).toBeInTheDocument()
     expect(screen.getByTestId('bulk-summary')).toHaveTextContent('3 layers, 2 at a time.')
     // Files bulk upload leaves alone are listed with why; existing layers are flagged.
@@ -147,12 +155,55 @@ describe('BulkUploadDialog', () => {
       destinationPrefix: '',
       onExists: 'skip',
       concurrency: 2,
+      sourceConnectionId: 'c1',
     })
     await waitFor(() => expect(screen.getByTestId('bulk-summary-line')).toHaveTextContent('0 of 2 done'))
     expect(screen.getByTestId('bulk-summary-line')).toHaveTextContent('1 running')
     expect(screen.getByText('districts.zip')).toBeInTheDocument()
     expect(screen.getByText(/keeps running, and shows in the Jobs panel/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cancel batch' })).toBeEnabled()
+  })
+
+  it('reads the folder from another registered bucket and publishes into the one opened from', async () => {
+    renderDialog()
+    const source = await screen.findByLabelText('Read the layers from')
+    expect(source).toHaveValue('c1')
+    expect(screen.getByText(/published into Kartoza, the bucket you opened this from/)).toBeInTheDocument()
+
+    fireEvent.change(source, { target: { value: 'c2' } })
+    await waitFor(() => expect(api.listBulkFolders).toHaveBeenCalledWith('c2', ''))
+    expect(
+      screen.getByText(/read from Sandbox, where they are, and the layers published into Kartoza/)
+    ).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Open incoming' }))
+    await waitFor(() => expect(api.listBulkFolders).toHaveBeenCalledWith('c2', 'incoming/'))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    await screen.findByText(/3 layers found/)
+    expect(api.previewBulk).toHaveBeenCalledWith('c1', 'incoming/', 'root', '', 'c2')
+    expect(screen.getByText(/Sandbox:\s*incoming\/\s*·/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
+    await screen.findByText('3 of 3 · Progress')
+    expect(api.startBulk).toHaveBeenCalledWith('c1', expect.objectContaining({ sourceConnectionId: 'c2' }))
+  })
+
+  it('changing the source bucket goes back to its top level', async () => {
+    renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
+    fireEvent.change(await screen.findByLabelText('Read the layers from'), { target: { value: 'c2' } })
+
+    await waitFor(() => expect(screen.getByTestId('bulk-breadcrumb')).not.toHaveTextContent('incoming'))
+    expect(api.listBulkFolders).toHaveBeenLastCalledWith('c2', '')
+  })
+
+  it('offers no other bucket when there is only one connection', async () => {
+    s3api.getS3Connections.mockResolvedValue([
+      { id: 'c1', name: 'Kartoza', endpoint: 'minio:9000', bucket: 'kartoza', useSSL: false, pathStyle: true },
+    ])
+    renderDialog()
+    await screen.findByRole('button', { name: 'Open incoming' })
+
+    expect(screen.queryByLabelText('Read the layers from')).not.toBeInTheDocument()
   })
 
   it('says why a folder cannot be read', async () => {
@@ -171,7 +222,7 @@ describe('BulkUploadDialog', () => {
 
     // Beside each file, the layers that exist are other folders' than at the top level.
     act(() => screen.getByLabelText('Beside each file').click())
-    await waitFor(() => expect(api.previewBulk).toHaveBeenLastCalledWith('c1', 'incoming/', 'beside', ''))
+    await waitFor(() => expect(api.previewBulk).toHaveBeenLastCalledWith('c1', 'incoming/', 'beside', '', 'c1'))
     api.previewBulk.mockClear()
     act(() => screen.getByLabelText('Into one folder').click())
     const input = await screen.findByLabelText('Destination folder')
@@ -180,7 +231,9 @@ describe('BulkUploadDialog', () => {
     expect(api.previewBulk).not.toHaveBeenCalled()
     fireEvent.blur(input)
 
-    await waitFor(() => expect(api.previewBulk).toHaveBeenLastCalledWith('c1', 'incoming/', 'folder', 'published/2026'))
+    await waitFor(() =>
+      expect(api.previewBulk).toHaveBeenLastCalledWith('c1', 'incoming/', 'folder', 'published/2026', 'c1')
+    )
   })
 
   it('says bulk upload is not available with on-demand servers', async () => {

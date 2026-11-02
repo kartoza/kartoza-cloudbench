@@ -938,3 +938,210 @@ def test_each_kind_runs_through_the_pipeline(
     [payload] = submitted
     assert payload["source"]
     assert batch.to_dict()["jobs"][0]["status"] == "completed"
+
+
+# -- from another bucket -------------------------------------------------------------
+
+
+@pytest.fixture
+def sandbox(owner, s3):
+    """A second connection and bucket: the layers' own is `s3` (the `connection`).
+
+    Yields (connection, bucket); get_s3_client gives each connection its bucket.
+    """
+    other = S3Connection.objects.create(
+        owner=owner, name="Sandbox", endpoint="sandbox:9000", bucket="sandbox"
+    )
+    bucket = FakeS3()
+    bucket.bucket = "sandbox"
+    buckets = {str(other.id): bucket}
+
+    def pick(connection_id, _user):
+        return buckets.get(str(connection_id), s3)
+
+    with (
+        patch("apps.s3.bulk.get_s3_client", side_effect=pick),
+        patch("apps.s3.cng_lite.get_s3_client", side_effect=pick),
+    ):
+        yield other, bucket
+
+
+def start_from(owner, connection, other, files, prefix="incoming/", **options):
+    options.setdefault("concurrency", 2)
+    return bulk.start_batch(
+        owner,
+        str(connection.id),
+        prefix=prefix,
+        files=[f"{prefix}{name}" for name in files],
+        source_connection_id=str(other.id),
+        **options,
+    )
+
+
+@pytest.mark.django_db
+def test_preview_reads_the_source_bucket_and_checks_the_destination(owner, connection, s3, sandbox):
+    other, bucket = sandbox
+    seed(bucket, ["a.zip", "b.zip"])
+    seed(s3, ["c.zip"])  # the layers' own bucket's folder isn't read
+    s3.objects["a/a.pmtiles"] = b"published already"
+
+    result = bulk.preview(
+        owner,
+        str(connection.id),
+        "incoming/",
+        destination="root",
+        source_connection_id=str(other.id),
+    )
+
+    files = {f["name"]: f for f in result["files"]}
+    assert sorted(files) == ["a.zip", "b.zip"]
+    assert (files["a.zip"]["target"], files["a.zip"]["exists"]) == ("a", True)
+    assert (files["b.zip"]["target"], files["b.zip"]["exists"]) == ("b", False)
+
+
+@pytest.mark.django_db
+def test_the_source_bucket_is_recorded_on_the_batch(owner, connection, s3, sandbox, manual):
+    other, bucket = sandbox
+    seed(bucket, ["a.zip"])
+
+    batch = start_from(owner, connection, other, ["a.zip"])
+
+    assert batch.is_cross_bucket
+    assert (batch.connection_id, batch.source_connection_id) == (connection.id, other.id)
+    data = batch.to_dict()
+    assert (data["sourceConnectionId"], data["sourceName"]) == (str(other.id), "Sandbox")
+    assert batch.jobs.get().bucket == "bucket"  # published into the layers' bucket
+    batch.source_connection.delete()
+    batch.refresh_from_db()
+    assert batch.to_dict()["sourceName"] == "sandbox"  # the bucket's name, once it's gone
+
+
+@pytest.mark.django_db
+def test_a_source_that_is_the_destination_is_the_same_bucket(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+
+    batch = start_from(owner, connection, connection, ["a.zip"])
+
+    assert not batch.is_cross_bucket
+    assert batch.source_connection_id is None
+    assert batch.to_dict()["sourceName"] is None
+
+
+@pytest.mark.django_db
+def test_a_cross_bucket_job_converts_its_file_where_it_is(owner, connection, s3, sandbox, manual):
+    other, bucket = sandbox
+    seed(bucket, ["a.zip"])
+    bucket.objects["incoming/a.zip"] = b"the original"
+    batch = start_from(owner, connection, other, ["a.zip"], concurrency=1)
+
+    job = batch.jobs.get()
+    assert (job.source_in_place, job.source_connection_id) == (True, other.id)
+
+    bulk.step_batch(batch.pk)
+
+    job.refresh_from_db()
+    assert job.status == Status.PENDING
+    assert job.source_key == "incoming/a.zip"  # the original's key, in the source bucket
+    assert not any(key.startswith("incoming/sources/") for key in s3.objects)  # nothing copied
+    assert conversions(manual) == [job.id]
+
+
+@pytest.mark.django_db
+def test_a_same_bucket_job_isnt_in_place(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+
+    job = start_from(owner, connection, connection, ["a.zip"]).jobs.get()
+
+    assert (job.source_in_place, job.source_connection_id) == (False, None)
+
+
+@pytest.mark.django_db
+def test_a_deleted_source_connection_fails_the_jobs(owner, connection, s3, sandbox, manual):
+    other, bucket = sandbox
+    seed(bucket, ["a.zip"])
+    batch = start_from(owner, connection, other, ["a.zip"])
+    other.delete()
+
+    bulk.step_batch(batch.pk)
+
+    job = batch.jobs.get()
+    assert job.status == Status.FAILED
+    assert "deleted" in job.error
+    assert conversions(manual) == []
+
+
+@pytest.mark.django_db
+def test_retry_keeps_a_cross_bucket_job_in_place(owner, connection, s3, sandbox, manual):
+    other, bucket = sandbox
+    seed(bucket, ["a.zip"])
+    batch = start_from(owner, connection, other, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    set_status(batch, "a.zip", Status.FAILED, error="boom")
+    bulk.step_batch(batch.pk)
+
+    bulk.retry_failed(batch)
+    bulk.step_batch(batch.pk)
+
+    job = batch.jobs.get()
+    assert (job.status, job.source_key, job.source_in_place) == (
+        Status.PENDING,
+        "incoming/a.zip",
+        True,
+    )
+    assert job.replace_existing  # it may have left files behind
+
+
+def run_cross_bucket(owner, connection, other, name, endpoint, results):
+    """Run `name` (in the other bucket) through the pipeline; returns (batch, submitted)."""
+    s3 = bulk.get_s3_client(str(connection.id), owner)
+    client, submitted = converting_cng(s3, endpoint, results)
+    with (
+        patch("apps.s3.bulk.threading", SimpleNamespace(Thread=Sync)),
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
+        patch("apps.s3.cng_lite.time.sleep"),
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        batch = start_from(owner, connection, other, [name], concurrency=1)
+    batch.refresh_from_db()
+    return batch, submitted
+
+
+@pytest.mark.django_db
+def test_a_cross_bucket_layer_runs_through_the_pipeline(owner, connection, s3, sandbox):
+    other, bucket = sandbox
+    bucket.objects["incoming/districts.zip"] = b"the original"
+
+    batch, submitted = run_cross_bucket(
+        owner, connection, other, "districts.zip", "pmtiles", vector_results()
+    )
+
+    job = batch.jobs.get()
+    assert job.status == "completed", job.error
+    assert batch.status == "completed"
+    assert "incoming/districts/districts.pmtiles" in s3.objects  # in the layers' bucket
+    assert not any(key.startswith("incoming/sources/") for key in s3.objects)
+    assert bucket.objects == {"incoming/districts.zip": b"the original"}  # only read
+    [payload] = submitted
+    # CloudNativeGIS reads it straight from the source bucket; the results go to the other.
+    assert payload["source"].startswith("http://minio:9000/sandbox/incoming/districts.zip?")
+    assert all(
+        file["url"].startswith("http://minio:9000/bucket/")
+        for upload in payload["uploads"]
+        for file in upload["files"].values()
+    )
+
+
+@pytest.mark.django_db
+def test_a_failed_cross_bucket_layer_leaves_its_original(owner, connection, s3, sandbox):
+    other, bucket = sandbox
+    bucket.objects["incoming/districts.zip"] = b"the original"
+
+    with patch("apps.s3.cng_lite.CNGProcessingClient.push", side_effect=RuntimeError("boom")):
+        batch, _ = run_cross_bucket(
+            owner, connection, other, "districts.zip", "pmtiles", vector_results()
+        )
+
+    assert batch.jobs.get().status == "failed"
+    assert batch.status == "failed"
+    assert bucket.objects == {"incoming/districts.zip": b"the original"}

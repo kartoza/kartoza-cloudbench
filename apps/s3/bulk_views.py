@@ -53,6 +53,20 @@ def _destination(data):
     }
 
 
+def _source_connection(request, data):
+    """The connection a request reads its folder from: (id or None, error response or None).
+
+    `sourceConnectionId` names another of the user's connections than the
+    URL's (where the layers go); left out, the folder is in the URL's own.
+    """
+    source_id = data.get("sourceConnectionId")
+    if not source_id:
+        return None, None
+    if _connection(request, source_id) is None:
+        return None, _error("Source S3 connection not found", status.HTTP_404_NOT_FOUND)
+    return str(source_id), None
+
+
 class S3BulkFoldersView(APIView):
     """The folders of a connection's bucket that bulk upload can convert."""
 
@@ -77,8 +91,10 @@ class S3BulkPreviewView(APIView):
     """What bulk upload would do with a folder of a connection's bucket."""
 
     def post(self, request, conn_id):
-        """POST {prefix, destination, destinationPrefix, recursive} -> the folder's files.
+        """POST {prefix, destination, destinationPrefix, recursive, sourceConnectionId} -> the folder's files.
 
+        The layers would go into the URL's connection; `prefix` is a folder of
+        `sourceConnectionId`'s bucket, if given (else of the same).
         `destination`: "beside", "root" or "folder" (see apps.s3.bulk.destination_mode).
 
         Each says its conversion (or why it's left alone) and whether its
@@ -87,6 +103,9 @@ class S3BulkPreviewView(APIView):
         if _connection(request, conn_id) is None:
             return _error("S3 connection not found", status.HTTP_404_NOT_FOUND)
         data = request.data
+        source_id, error = _source_connection(request, data)
+        if error:
+            return error
         try:
             return Response(
                 bulk.preview(
@@ -94,6 +113,7 @@ class S3BulkPreviewView(APIView):
                     conn_id,
                     str(data.get("prefix") or ""),
                     recursive=bool(data.get("recursive")),
+                    source_connection_id=source_id,
                     **_destination(data),
                 )
             )
@@ -111,12 +131,17 @@ class S3BulkStartView(APIView):
 
         {prefix, files: [keys from the preview], concurrency, license,
         licenseUrl, destination: "beside" | "root" | "folder", destinationPrefix,
-        onExists: "skip" | "replace" | "stop", recursive}. 400 for what
-        can't be started (see apps.s3.bulk.start_batch).
+        onExists: "skip" | "replace" | "stop", recursive, sourceConnectionId}.
+        The layers go into the URL's connection, from a folder of
+        `sourceConnectionId`'s bucket if given. 400 for what can't be
+        started (see apps.s3.bulk.start_batch).
         """
         if _connection(request, conn_id) is None:
             return _error("S3 connection not found", status.HTTP_404_NOT_FOUND)
         data = request.data
+        source_id, error = _source_connection(request, data)
+        if error:
+            return error
         files = data.get("files")
         if not isinstance(files, list) or not all(isinstance(key, str) for key in files):
             return _error("files must be a list of the folder's file keys.")
@@ -135,6 +160,7 @@ class S3BulkStartView(APIView):
                 license_url=str(data.get("licenseUrl") or ""),
                 on_exists=str(data.get("onExists") or CngLiteBatch.OnExists.SKIP),
                 recursive=bool(data.get("recursive")),
+                source_connection_id=source_id,
                 **_destination(data),
             )
         except ValueError as exc:
