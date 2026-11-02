@@ -43,6 +43,10 @@ def _is_healthy(url):
 
 
 class CngLiteJobStatus(models.TextChoices):
+    # A bulk upload's layer waiting for a free slot (see apps.s3.bulk): not
+    # active - nothing runs it, so it isn't resumed or expired as stalled -
+    # until the batch starts it, as PENDING.
+    QUEUED = "queued", "Queued"
     # Not started yet: just created (thread about to start), a GeoPackage
     # waiting for its layers to be picked (`layers` null), or a GeoPackage's
     # raster job waiting for its vector job (see geopackage_convert).
@@ -100,8 +104,12 @@ class JobCancelled(Exception):
 
 # A GeoPackage still waiting for the user to pick its layers (see
 # apps.s3.pmtiles.inspect_geopackage): pending, but not ready to run.
+# A bulk upload's GeoPackage is no such wait: it converts all its layers.
 AWAITING_LAYER_SELECTION = Q(
-    status=CngLiteJobStatus.PENDING, layers__isnull=True, source_name__iendswith=".gpkg"
+    status=CngLiteJobStatus.PENDING,
+    layers__isnull=True,
+    source_name__iendswith=".gpkg",
+    batch__isnull=True,
 )
 
 
@@ -140,6 +148,13 @@ class CngLiteJob(models.Model):
     depends_on = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="dependents"
     )
+    # The bulk upload this layer is part of, if any (see apps.s3.bulk), and
+    # the original it was started from: a file already in the bucket, which
+    # is copied to source_key - the job's own staged copy - when it gets a slot.
+    batch = models.ForeignKey(
+        "CngLiteBatch", null=True, blank=True, on_delete=models.SET_NULL, related_name="jobs"
+    )
+    origin_key = models.TextField(blank=True, default="")
     # The fixed CLOUDNATIVEGIS_URL/API_TOKEN this job's conversion runs on,
     # its token encrypted at rest - without CLOUDNATIVEGIS_ON_DEMAND. On
     # demand, its instance_server's are used instead (see server_url).

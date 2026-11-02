@@ -50,7 +50,20 @@ class FakeS3:
 
     def list_objects(self, prefix="", delimiter="/", max_keys=1000, continuation_token=None):
         keys = [key for key in self.objects if key.startswith(prefix)][:max_keys]
-        return {"objects": [{"key": key} for key in keys], "isTruncated": False}
+        # Objects are all of them, whatever the delimiter (callers filter); with
+        # "/" the folders below the prefix are listed too, as S3 does.
+        folders = sorted(
+            {
+                f"{prefix}{key[len(prefix) :].split('/', 1)[0]}/"
+                for key in keys
+                if "/" in key[len(prefix) :]
+            }
+        )
+        return {
+            "objects": [{"key": key, "size": len(self.objects[key])} for key in keys],
+            "prefixes": folders if delimiter == "/" else [],
+            "isTruncated": False,
+        }
 
     def _get_range(self, Bucket, Key, Range):
         start, end = (int(n) for n in Range.removeprefix("bytes=").split("-"))
