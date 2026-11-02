@@ -343,7 +343,8 @@ describe('BulkUploadDialog', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Next' }))
       await waitFor(() => expect(screen.getByLabelText('Server type')).toHaveValue('12'))
 
-      fireEvent.click(screen.getByLabelText('Auto destroy'))
+      // A native click, as for the other checkboxes: fireEvent doesn't toggle Chakra's in happy-dom.
+      act(() => screen.getByLabelText('Auto destroy').click())
       expect(await screen.findByText(/keep running \(and billed\)/)).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
 
