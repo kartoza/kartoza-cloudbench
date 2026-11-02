@@ -33,6 +33,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import * as api from '../../api'
 import { springs } from '../../utils/animations'
+import type { ConnectionPermission } from '../../types'
+import PermissionList from './PermissionList'
 
 // Sensible connectivity defaults inferred from the endpoint, so most users
 // never need to touch the advanced settings at all:
@@ -95,7 +97,11 @@ export default function S3ConnectionDialog() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    success: boolean
+    message: string
+    permissions?: ConnectionPermission[]
+  } | null>(null)
   // The settings the last passing test was run with.
   const [testedKey, setTestedKey] = useState<string | null>(null)
   // Editing: the saved connection's settings, which already work.
@@ -214,7 +220,7 @@ export default function S3ConnectionDialog() {
           ? { connectionId, ...typedCredentials }
           : { accessKey, secretKey }),
       })
-      setTestResult({...result, success: true})
+      setTestResult({ ...result, success: result.status === 'success' })
       setTestedKey(currentKey)
     } catch (err) {
       setTestResult({ success: false, message: (err as Error).message })
@@ -485,6 +491,7 @@ export default function S3ConnectionDialog() {
                           ? 'The connection settings changed since the last test. Test it again before saving.'
                           : testResult.message}
                       </Text>
+                      {!isTestStale && <PermissionList permissions={testResult.permissions} />}
                     </Box>
                   </Alert>
                 </motion.div>

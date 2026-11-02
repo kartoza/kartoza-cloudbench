@@ -4,6 +4,7 @@ Provides a comprehensive Python client for the GeoServer REST API.
 """
 
 import re
+import uuid
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
@@ -13,6 +14,7 @@ import httpx
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
 from apps.core.managers import make_client
+from apps.core.permissions import Permission
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -92,6 +94,40 @@ class GeoServerClient:
                 f"Request failed: {response.text}", status_code=response.status_code
             )
         return response.json()
+
+    # === Permissions ===
+
+    def check_permissions(self, workspace: str | None = None) -> list[Permission]:
+        """What this user may do through the REST API, of what CloudBench needs.
+
+        Nothing is changed: reading is a listing, and writing a DELETE of a
+        workspace (or, given `workspace`, a store in it) that isn't there -
+        GeoServer checks the user's REST permissions first, so it answers
+        404 when writing is allowed, 401/403 when it isn't.
+        """
+        absent = f"cloudbench-permission-check-{uuid.uuid4().hex[:12]}"
+        target = (
+            f"/rest/workspaces/{workspace}/datastores/{absent}"
+            if workspace
+            else f"/rest/workspaces/{absent}"
+        )
+        read = self._request("GET", "/rest/workspaces.json")
+        write = self._request("DELETE", target)
+        where = f" in {workspace}" if workspace else ""
+        return [
+            Permission(
+                "read",
+                "browsing workspaces, stores and layers",
+                read.status_code not in (401, 403),
+                str(read.status_code),
+            ),
+            Permission(
+                f"write{where}",
+                "uploads, and changing workspaces, stores, layers and styles",
+                write.status_code not in (401, 403),
+                str(write.status_code),
+            ),
+        ]
 
     # === Workspaces ===
 

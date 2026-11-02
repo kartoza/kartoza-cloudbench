@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
+from apps.core.permissions import Permission
 from apps.geonode.client import GeoNodeClient
 from apps.geoserver.client import GeoServerClient
 from apps.upload import relay
@@ -383,6 +384,49 @@ def test_upload_refused_before_it_starts(authenticated_api_client, geoserver, ch
     )
     assert response.status_code == 400
     assert error in response.json()["error"]
+
+
+@pytest.mark.django_db
+def test_a_geonode_user_who_may_not_upload_documents_is_refused(authenticated_api_client, geonode):
+    geonode.check_permissions.return_value = [
+        Permission("read", "browsing resources", True),
+        Permission("upload datasets", "uploading datasets", True),
+        Permission("upload documents", "uploading documents", False, "403"),
+    ]
+    response = authenticated_api_client.post(
+        "/api/upload/relay",
+        {
+            "target": "geonode",
+            "connectionId": "g1",
+            "uploadType": "document",
+            "filename": "notes.txt",
+            "fileSize": 6,
+        },
+        format="json",
+    )
+    assert response.status_code == 403
+    assert response.json()["error"] == (
+        "This GeoNode user may not: upload documents (needed for uploading documents)."
+    )
+    geonode.upload_document.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_upload_by_a_user_who_may_not_write_there_is_refused(authenticated_api_client, geoserver):
+    geoserver.check_permissions.return_value = [
+        Permission("read", "browsing workspaces, stores and layers", True),
+        Permission(
+            "write in ws", "uploads, and changing workspaces, stores, layers and styles", False
+        ),
+    ]
+    response = authenticated_api_client.post("/api/upload/relay", GEOSERVER_UPLOAD, format="json")
+    assert response.status_code == 403
+    assert response.json()["error"] == (
+        "This GeoServer user may not: write in ws (needed for uploads, and changing "
+        "workspaces, stores, layers and styles)."
+    )
+    geoserver.check_permissions.assert_called_once_with("ws")
+    assert not UploadSession.objects.exists()
 
 
 @pytest.mark.django_db

@@ -37,6 +37,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from apps.core.permissions import refusal
 from apps.upload.models import UploadSession
 
 from . import cog, copc, mosaic, pmtiles, portolan
@@ -220,6 +221,32 @@ def _check_shapefile(filename: str, file_size: int, companions: list[dict]) -> N
         raise MultipartError("The shapefile components exceed the upload size limit.", status=413)
 
 
+def needed_permissions(kind: str) -> set[str]:
+    """The permissions (S3Client.check_permissions names) an upload of `kind` needs.
+
+    Every upload writes, and aborts when cancelled. All but a plain one
+    also read in the bucket (GDAL, CloudNativeGIS) and delete there (the
+    parts of a zipped shapefile, a replaced layer, tiles or a GeoPackage
+    that are refused...).
+    """
+    if kind == PLAIN:
+        return {"write", "abort uploads"}
+    return {"list", "read", "write", "abort uploads", "delete"}
+
+
+def check_permissions_for(s3_client, kind: str) -> None:
+    """Refuse an upload the connection's key may not make, before anything is sent.
+
+    The key was checked when the connection was saved, but its policy can
+    change since: asked again, with nothing left behind (see
+    S3Client.check_permissions).
+    """
+    needed = needed_permissions(kind)
+    lacking = [p for p in s3_client.check_permissions() if p.name in needed and not p.allowed]
+    if lacking:
+        raise MultipartError(refusal("This connection's key", lacking), status=403)
+
+
 def start(
     user,
     connection_id: str,
@@ -256,6 +283,7 @@ def start(
         _check_shapefile(filename, file_size, companions)
     key = (key or filename).lstrip("/")
     s3_client = get_s3_client(connection_id, user)
+    check_permissions_for(s3_client, kind)
     module = _module(kind)
     if kind == MOSAIC:
         check_target(s3_client, key, PurePosixPath(key).name, replace)

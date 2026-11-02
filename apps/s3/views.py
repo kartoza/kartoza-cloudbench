@@ -212,11 +212,23 @@ _CONNECTIVITY_FIELDS = (
 )
 
 
-def _unreachable_response(conn: S3Connection) -> Response | None:
-    """A 400 if `conn`'s settings can't reach its bucket; None if they can.
+def _check(client: S3Client) -> Response:
+    """The answer to a connection test: the permissions checked, and 400 if it fails."""
+    success, message, permissions = client.check_connection()
+    body = {
+        "status": "success" if success else "error",
+        "message": message,
+        "permissions": [p.to_dict() for p in permissions],
+    }
+    return Response(body, status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST)
 
-    A connection is only saved once it works: one that can't connect would
-    just fail later, in every listing, upload and preview that uses it.
+
+def _unreachable_response(conn: S3Connection) -> Response | None:
+    """A 400 if `conn`'s settings can't reach its bucket, or may not do what CloudBench does.
+
+    A connection is only saved once it works: one that can't connect, or
+    whose key may not write or delete, would just fail later, in every
+    listing, upload, conversion and delete that uses it.
     """
     try:
         client = S3Client(
@@ -228,11 +240,16 @@ def _unreachable_response(conn: S3Connection) -> Response | None:
             use_ssl=conn.use_ssl,
             path_style=conn.path_style,
         )
-        success, message = client.test_connection()
+        success, message, permissions = client.check_connection()
     except Exception as e:  # e.g. an endpoint that isn't a valid URL
-        success, message = False, str(e)
+        success, message, permissions = False, str(e), []
     if success:
         return None
+    if permissions:  # reached it, but its key may not do everything
+        return Response(
+            {"error": message, "permissions": [p.to_dict() for p in permissions]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     return Response(
         {"error": f"Couldn't connect to the bucket: {message}"},
         status=status.HTTP_400_BAD_REQUEST,
@@ -344,15 +361,7 @@ class S3ConnectionTestView(APIView):
             use_ssl=data.get("useSSL", True),
             path_style=data.get("pathStyle", True),
         )
-
-        success, message = client.test_connection()
-
-        if success:
-            return Response({"status": "success", "message": message})
-        return Response(
-            {"status": "error", "message": message},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return _check(client)
 
 
 class S3ConnectionDetailView(APIView):
@@ -450,15 +459,7 @@ class S3ConnectionTestExistingView(APIView):
     def post(self, request, conn_id):
         """Test the connection."""
         try:
-            client = get_s3_client(conn_id, request.user)
-            success, message = client.test_connection()
-
-            if success:
-                return Response({"status": "success", "message": message})
-            return Response(
-                {"status": "error", "message": message},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _check(get_s3_client(conn_id, request.user))
         except ValueError as e:
             return Response(
                 {"error": str(e)},
@@ -1391,7 +1392,17 @@ BUCKET_ERRORS = (BotoCoreError, ClientError)
 
 
 def _bucket_error(exc: Exception) -> Response:
-    """The bucket failed or couldn't be reached: worth trying again."""
+    """The bucket failed or couldn't be reached (502: worth trying again), or refused (403)."""
+    if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") in (
+        "AccessDenied",
+        "Forbidden",
+        "403",
+    ):
+        # Not worth trying again: the key's policy changed since it was checked.
+        return Response(
+            {"error": f"The bucket refused this connection's key: {exc}"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     return Response(
         {"error": f"The bucket refused or failed: {exc}"}, status=status.HTTP_502_BAD_GATEWAY
     )

@@ -5,14 +5,22 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.config import get_config
+from apps.core.config import Connection, get_config
 from apps.core.managers import make_client
+from apps.core.permissions import missing, refusal
+from apps.geoserver.client import GeoServerClient
 
 from .serializers import ConnectionResponseSerializer, ConnectionSerializer
 
 
-def test_geoserver_connection(url: str, username: str, password: str) -> tuple[bool, str, dict]:
-    """Test a GeoServer connection.
+def test_geoserver_connection(
+    url: str, username: str, password: str, permissions: bool = True
+) -> tuple[bool, str, dict]:
+    """Test a GeoServer connection, and that its user may do what CloudBench does.
+
+    With `permissions`, a user who can log in but may not read or write
+    through the REST API is refused, saying which (GeoServerClient.
+    check_permissions); `info` then holds them as "permissions".
 
     Returns:
         Tuple of (success, message, server_info)
@@ -39,10 +47,17 @@ def test_geoserver_connection(url: str, username: str, password: str) -> tuple[b
                         geoserver_version = resource.get("Version", "Unknown")
                         break
 
-                return True, "Connection successful", {"version": geoserver_version}
+                info = {"version": geoserver_version}
+                if not permissions:
+                    return True, "Connection successful", info
+                return _with_permissions(base_url, username, password, info)
             elif response.status_code == 401:
                 return False, "Authentication failed - invalid credentials", {}
             elif response.status_code == 403:
+                # Logged in, but the REST API is for administrators only (by
+                # default): say which permissions this user lacks.
+                if permissions:
+                    return _with_permissions(base_url, username, password, {})
                 return False, "Access forbidden - check user permissions", {}
             elif response.status_code == 404:
                 return False, "GeoServer REST API not found at this URL", {}
@@ -62,6 +77,33 @@ def test_geoserver_connection(url: str, username: str, password: str) -> tuple[b
         return False, f"Connection error: {str(e)}", {}
 
 
+def _with_permissions(base_url, username, password, info) -> tuple[bool, str, dict]:
+    connection = Connection(
+        id="test", name="test", url=base_url, username=username, password=password
+    )
+    checked = GeoServerClient(connection).check_permissions()
+    info["permissions"] = [p.to_dict() for p in checked]
+    if missing(checked):
+        return False, refusal("This user", missing(checked)), info
+    return True, "Connection successful", info
+
+
+def _refused(url: str, username: str, password: str) -> Response | None:
+    """A 400 if these settings can't connect, or their user may not do what CloudBench does.
+
+    A connection is only saved once it works: one that can't, or can't
+    write through the REST API, would just fail later, in every upload,
+    workspace or style it's used for.
+    """
+    success, message, info = test_geoserver_connection(url, username, password)
+    if success:
+        return None
+    return Response(
+        {"error": message, "permissions": info.get("permissions", [])},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 class ConnectionListView(APIView):
     """List all connections or create a new one."""
 
@@ -78,6 +120,9 @@ class ConnectionListView(APIView):
         config_manager = get_config(request.user)
         if serializer.is_valid():
             conn = serializer.create(serializer.validated_data)
+            refused = _refused(conn.url, conn.username, conn.password)
+            if refused:
+                return refused
             config_manager.add_connection(conn)
 
             response_serializer = ConnectionResponseSerializer(conn)
@@ -140,9 +185,15 @@ class ConnectionDetailView(APIView):
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        saved = (conn.url, conn.username, conn.password)
         serializer = ConnectionSerializer(conn, data=request.data, partial=True)
         if serializer.is_valid():
             updated_conn = serializer.update(conn, serializer.validated_data)
+            # Renaming needs no re-test.
+            if (updated_conn.url, updated_conn.username, updated_conn.password) != saved:
+                refused = _refused(updated_conn.url, updated_conn.username, updated_conn.password)
+                if refused:
+                    return refused
             config_manager.update_connection(updated_conn)
 
             response_serializer = ConnectionResponseSerializer(updated_conn)
@@ -165,16 +216,19 @@ class ConnectionDetailView(APIView):
 class ConnectionTestExistingView(APIView):
     """Test an existing saved connection."""
 
-    def _test(self, request, conn_id):
+    def _test(self, request, conn_id, permissions=True):
         config_manager = get_config(request.user)
         conn = config_manager.get_connection(conn_id)
         if not conn:
             return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
-        success, message, info = test_geoserver_connection(conn.url, conn.username, conn.password)
+        success, message, info = test_geoserver_connection(
+            conn.url, conn.username, conn.password, permissions
+        )
         return success, message, info
 
     def get(self, request, conn_id):
-        success, message, info = self._test(request, conn_id)
+        # Whether it's reachable (the tree asks): its permissions are the POST's.
+        success, message, info = self._test(request, conn_id, permissions=False)
         if not success:
             return Response({"error": "Url can't be reached"}, status=status.HTTP_404_NOT_FOUND)
         else:

@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import threading
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 from urllib.parse import urlparse
@@ -21,6 +22,8 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from django.core.exceptions import ValidationError
+
+from apps.core.permissions import Permission, missing, refusal
 
 from .models import S3Connection
 
@@ -43,6 +46,18 @@ def _add_content_md5(request, **_kwargs) -> None:
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
+
+# Where check_permissions tries its keys: nothing is ever left there.
+PERMISSION_CHECK_PREFIX = ".cloudbench-permission-check"
+# What S3 answers when a key may not do something.
+_REFUSED = {"AccessDenied", "403", "Forbidden", "AllAccessDisabled", "InvalidAccessKeyId"}
+_NOT_FOUND = {"404", "NoSuchKey", "NotFound"}
+
+
+def _error_code(exc: ClientError) -> str:
+    error = exc.response.get("Error", {})
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return str(error.get("Code") or status or "")
 
 
 @dataclass
@@ -142,21 +157,97 @@ class S3Client:
         return f"{scheme}://{self.bucket}.{host}"
 
     def test_connection(self) -> tuple[bool, str]:
-        """Test that this client's bucket is reachable.
+        """Test that this client's bucket is reachable, and its key may do what CloudBench does.
 
         Uses head_bucket rather than list_buckets, since bucket-scoped
         credentials often can't call the account-wide ListAllMyBuckets.
+        Then check_permissions: a key that can't write or delete would
+        otherwise pass, and fail halfway through an upload.
 
         Returns:
             Tuple of (success, message)
         """
+        success, message, _permissions = self.check_connection()
+        return success, message
+
+    def check_connection(self) -> tuple[bool, str, list[Permission]]:
+        """(success, message, the permissions checked): see test_connection."""
         try:
             self.client.head_bucket(Bucket=self.bucket)
-            return True, "Connection successful"
-        except ClientError as e:
-            return False, str(e)
+            permissions = self.check_permissions()
         except Exception as e:
-            return False, str(e)
+            return False, str(e), []
+        if missing(permissions):
+            return False, refusal("This key", missing(permissions)), permissions
+        return True, "Connection successful", permissions
+
+    def check_permissions(self) -> list[Permission]:
+        """What this key may do in the bucket, of what CloudBench needs.
+
+        Nothing is left behind: writing is tried with a 1-byte multipart
+        upload that's aborted (no object is ever made), reading and deleting
+        on a key that isn't there - S3 answers 404/204 when they're allowed,
+        403 when they aren't. Raises for anything but a refusal (the bucket
+        unreachable...).
+        """
+        key = f"{PERMISSION_CHECK_PREFIX}/{uuid.uuid4().hex}"
+        bucket = self.bucket
+        permissions = []
+
+        def check(name, needed_for, call, allowed_codes=()):
+            try:
+                call()
+                permissions.append(Permission(name, needed_for, True))
+                return True
+            except ClientError as exc:
+                code = _error_code(exc)
+                if code in allowed_codes:
+                    permissions.append(Permission(name, needed_for, True))
+                    return True
+                if code not in _REFUSED:
+                    raise
+                permissions.append(Permission(name, needed_for, False, code))
+                return False
+
+        listed = check(
+            "list",
+            "browsing the bucket",
+            lambda: self.client.list_objects_v2(Bucket=bucket, MaxKeys=1),
+        )
+        if listed:
+            # Without listing, S3 answers 403 for a missing key either way.
+            check(
+                "read",
+                "previews, downloads and conversions",
+                lambda: self.client.head_object(Bucket=bucket, Key=key),
+                allowed_codes=_NOT_FOUND,
+            )
+        upload_id = None
+
+        def start_upload():
+            nonlocal upload_id
+            upload_id = self.client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+            self.client.upload_part(
+                Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=1, Body=b"x"
+            )
+            self.client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+
+        check("write", "uploads and conversions", start_upload)
+        if upload_id:
+            check(
+                "abort uploads",
+                "cancelling an upload",
+                lambda: self.client.abort_multipart_upload(
+                    Bucket=bucket, Key=key, UploadId=upload_id
+                ),
+            )
+        check(
+            "delete",
+            "deleting files and replacing layers",
+            lambda: self.client.delete_object(Bucket=bucket, Key=key),
+            allowed_codes=_NOT_FOUND,
+        )
+        return permissions
 
     def list_objects(
         self,

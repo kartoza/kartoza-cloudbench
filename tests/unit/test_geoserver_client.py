@@ -383,3 +383,37 @@ class TestClientManager:
         with pytest.raises(GeoServerError) as exc:
             get_geoserver_client("nope", config_manager._user)
         assert exc.value.status_code == 404
+
+
+# === Permissions: checked without changing anything ===
+
+
+@pytest.mark.parametrize(
+    "read_status, write_status, allowed",
+    [
+        (200, 404, {"read": True, "write": True}),
+        (200, 403, {"read": True, "write": False}),
+        (401, 401, {"read": False, "write": False}),
+    ],
+)
+def test_permissions_are_tried_on_what_isnt_there(
+    client, http_mock, read_status, write_status, allowed
+):
+    http_mock.add("GET", r"/rest/workspaces\.json", status=read_status, json={"workspaces": ""})
+    http_mock.add(
+        "DELETE", r"/rest/workspaces/cloudbench-permission-check-[0-9a-f]+$", status=write_status
+    )
+    permissions = client.check_permissions()
+    assert {p.name: p.allowed for p in permissions} == allowed
+    # The only write: a DELETE of a workspace that doesn't exist.
+    [delete] = http_mock.requests("DELETE")
+    assert "/rest/workspaces/cloudbench-permission-check-" in str(delete.url)
+
+
+def test_writing_in_a_workspace_is_tried_on_a_store_that_isnt_there(client, http_mock):
+    http_mock.add("GET", r"/rest/workspaces\.json", json={"workspaces": ""})
+    http_mock.add(
+        "DELETE", r"/rest/workspaces/topp/datastores/cloudbench-permission-check-", status=404
+    )
+    write = client.check_permissions("topp")[1]
+    assert (write.name, write.allowed) == ("write in topp", True)
