@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from apps.s3 import bulk
+from apps.s3 import bulk, bulk_servers
 from apps.s3.models import CngLiteBatch, CngLiteJob, CngLiteJobStatus, S3Connection
 from tests.unit.fake_s3 import FakeS3, converting_cng
 
@@ -494,21 +494,22 @@ def test_start_refuses_what_cant_run(owner, connection, s3, manual, options, fil
 
 
 @pytest.mark.django_db
-def test_start_refuses_on_demand_servers_and_an_unconfigured_cloudnativegis(
-    owner, connection, s3, manual, settings
-):
+def test_start_refuses_an_unconfigured_cloudnativegis(owner, connection, s3, manual, settings):
     seed(s3, ["a.zip"])
-    settings.CLOUDNATIVEGIS_ON_DEMAND = True
-    with (
-        patch("apps.s3.models.cng_lite_job.GeoHostingClient.is_configured", return_value=True),
-        pytest.raises(ValueError, match="on-demand"),
-    ):
-        start(owner, connection, ["a.zip"])
-
-    settings.CLOUDNATIVEGIS_ON_DEMAND = False
     settings.CLOUDNATIVEGIS_URL = ""
+
     with pytest.raises(ValueError, match="not configured"):
         start(owner, connection, ["a.zip"])
+
+
+@pytest.mark.django_db
+def test_on_demand_needs_geohosting_configured(owner, connection, s3, manual, settings):
+    seed(s3, ["a.zip"])
+    settings.CLOUDNATIVEGIS_ON_DEMAND = True
+    settings.GEOHOSTING_URL = ""
+
+    with pytest.raises(ValueError, match="not configured"):
+        start(owner, connection, ["a.zip"], server_type_id=7)
 
 
 @pytest.mark.django_db
@@ -1190,3 +1191,405 @@ def test_a_vrt_needs_two_rasters_and_a_name(owner, connection, s3, manual, files
         start(owner, connection, files, create_vrt=True, vrt_name=name)
 
     assert CngLiteBatch.objects.count() == 0
+
+
+# -- on-demand servers -------------------------------------------------------------------
+
+
+class FakeGeoHosting:
+    """GeoHosting's servers API, in memory: what the batch asks, and how it answers."""
+
+    def __init__(self):
+        self.servers = {}
+        self.created = []
+        self.deleted = []
+        self.create_error = None
+        self.delete_error = None
+
+    def __call__(self):  # patched in as the GeoHostingClient class
+        return self
+
+    def create_server(self, job_id, username, hetzner_server_id, server_id=None, log=None):
+        from apps.core.geohosting import GeoHostingError  # noqa: PLC0415
+
+        self.created.append((str(job_id), username, hetzner_server_id, str(server_id)))
+        if self.create_error:
+            raise GeoHostingError(self.create_error, status_code=409)
+        answer = {
+            "server_id": str(server_id),
+            "job_ids": [str(job_id)],
+            "status": "provisioning",
+            "url": "",
+            "token": "",
+        }
+        self.servers[str(server_id)] = answer
+        return dict(answer)
+
+    def get_server(self, server_id, log=None):
+        answer = self.servers.get(str(server_id))
+        return dict(answer) if answer else None
+
+    def delete_server(self, server_id, log=None):
+        from apps.core.geohosting import GeoHostingError  # noqa: PLC0415
+
+        if self.delete_error:
+            raise GeoHostingError(self.delete_error, status_code=500)
+        self.deleted.append(str(server_id))
+        answer = self.servers.get(str(server_id))
+        if answer is None:
+            return None
+        answer["status"] = "deleting"
+        return dict(answer)
+
+    # What GeoHosting's own background work does.
+    def ready(self, server_id=None):
+        """Finish starting `server_id` (default: every server being started)."""
+        for key, answer in self.servers.items():
+            if (server_id is None or key == str(server_id)) and answer["status"] == "provisioning":
+                answer.update(status="ready", url="http://10.0.0.5:8000", token="token")
+
+    def fail(self, server_id):
+        self.servers[str(server_id)].update(status="failed", error="out of stock")
+
+    def finish_deleting(self):
+        for key in [k for k, a in self.servers.items() if a["status"] == "deleting"]:
+            del self.servers[key]
+
+
+@pytest.fixture
+def geohosting(settings):
+    from cryptography.fernet import Fernet  # noqa: PLC0415
+
+    settings.CLOUDNATIVEGIS_ON_DEMAND = True
+    settings.CLOUDNATIVEGIS_BULK_MAX_SERVERS = 3
+    settings.GEOHOSTING_URL = "http://geohosting"
+    settings.GEOHOSTING_CLIENT_ID = "cloudbench"
+    settings.GEOHOSTING_CLIENT_SECRET = "secret"
+    settings.CLOUDBENCH_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    fake = FakeGeoHosting()
+    with (
+        patch("apps.s3.bulk_servers.GeoHostingClient", fake),
+        patch("apps.s3.models.cng_lite_server.GeoHostingClient", fake),
+    ):
+        yield fake
+
+
+def start_on_servers(owner, connection, names, **options):
+    options.setdefault("server_type_id", 7)
+    return start(owner, connection, names, **options)
+
+
+def server_of(batch, name):
+    return CngLiteJob.objects.get(batch=batch, source_name=name).instance_server
+
+
+def servers_of(batch):
+    return list(batch.servers.order_by("created_at"))
+
+
+@pytest.mark.django_db
+def test_an_on_demand_batch_needs_a_server_type_and_at_most_the_server_cap(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip"])
+
+    with pytest.raises(ValueError, match="Pick a server"):
+        start(owner, connection, ["a.zip", "b.zip"])
+    with pytest.raises(ValueError, match="between 1 and 3"):
+        start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=4)
+
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], auto_destroy=False)
+
+    assert (batch.on_demand, batch.hetzner_server_id, batch.auto_destroy) == (True, 7, False)
+    assert batch.to_dict()["servers"] == {"starting": 0, "ready": 0, "stopping": 0, "failed": 0}
+
+
+@pytest.mark.django_db
+def test_without_on_demand_there_are_no_servers(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+
+    batch = start(owner, connection, ["a.zip"], server_type_id=7)
+
+    assert (batch.on_demand, batch.to_dict()["servers"]) == (False, None)
+
+
+@pytest.mark.django_db
+def test_the_batch_starts_as_many_servers_as_it_has_slots_and_layers(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip", "c.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip", "c.zip"], concurrency=2)
+
+    bulk.step_batch(batch.pk)
+
+    created = geohosting.created
+    assert len(created) == 2  # N = 2, though there are three layers
+    assert {entry[1:3] for entry in created} == {(owner.get_username(), 7)}
+    assert all(entry[0] == str(batch.id) for entry in created)
+    assert len({entry[3] for entry in created}) == 2  # two servers, each with an id of its own
+    assert [(s.status, s.auto_destroy, s.batch_id) for s in servers_of(batch)] == [
+        ("provisioning", True, batch.id)
+    ] * 2
+    assert conversions(manual) == []  # nothing runs until a server is ready
+    assert set(statuses(batch).values()) == {Status.QUEUED}
+    assert batch.to_dict()["servers"]["starting"] == 2
+
+
+@pytest.mark.django_db
+def test_no_more_servers_than_layers(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=3)
+
+    bulk.step_batch(batch.pk)
+    bulk.step_batch(batch.pk)
+
+    assert len(geohosting.created) == 1  # asked once, not again while it starts
+
+
+@pytest.mark.django_db
+def test_a_layer_runs_on_a_server_once_it_is_ready(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=2)
+    bulk.step_batch(batch.pk)
+    first = geohosting.created[0][3]
+    geohosting.ready(first)
+
+    bulk.step_batch(batch.pk)
+
+    started = [job for job in batch.jobs.all() if job.status == Status.PENDING]
+    assert len(started) == 1  # the other server isn't ready yet
+    job = started[0]
+    assert str(job.instance_server.instance_id) == first
+    assert job.instance_server.status == "ready"
+    assert (job.hetzner_server_id, job.auto_destroy) == (7, False)  # the batch deletes servers
+    assert conversions(manual) == [job.id]
+
+
+@pytest.mark.django_db
+def test_a_server_runs_the_next_layer_when_its_layer_is_done(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip", "c.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip", "c.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    [first] = [j for j in batch.jobs.all() if j.status == Status.PENDING]
+
+    bulk.step_batch(batch.pk)  # its server is busy: nothing else starts
+    assert len(conversions(manual)) == 1
+    CngLiteJob.objects.filter(pk=first.pk).update(status=Status.COMPLETED)
+    bulk.step_batch(batch.pk)
+
+    second = [j for j in batch.jobs.all() if j.status == Status.PENDING]
+    assert len(second) == 1
+    assert second[0].instance_server_id == first.instance_server_id  # the same server
+    assert len(geohosting.created) == 1  # no second server was started
+
+
+@pytest.mark.django_db
+def test_servers_nothing_needs_any_more_are_deleted(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=2)
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)  # both layers have a server
+    CngLiteJob.objects.filter(batch=batch, source_name="a.zip").update(status=Status.COMPLETED)
+
+    bulk.step_batch(batch.pk)
+
+    # Nothing is waiting: a.zip's server, not running anything, is deleted - b.zip's isn't.
+    freed = server_of(batch, "a.zip")
+    assert geohosting.deleted == [str(freed.instance_id)]
+    busy = server_of(batch, "b.zip")
+    assert str(busy.instance_id) not in geohosting.deleted
+
+
+@pytest.mark.django_db
+def test_servers_the_user_keeps_are_not_deleted(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(
+        owner, connection, ["a.zip", "b.zip"], concurrency=2, auto_destroy=False
+    )
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    CngLiteJob.objects.filter(batch=batch).update(status=Status.COMPLETED)
+
+    assert bulk.step_batch(batch.pk) is False  # nothing to wait for
+
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+    assert geohosting.deleted == []
+    assert [s.status for s in servers_of(batch)] == ["ready", "ready"]
+    assert all(s.auto_destroy is False for s in servers_of(batch))
+
+
+@pytest.mark.django_db
+def test_the_batch_waits_for_its_servers_to_be_gone(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    CngLiteJob.objects.filter(batch=batch).update(status=Status.COMPLETED)
+
+    assert bulk.step_batch(batch.pk) is True  # asked GeoHosting to delete it, and waits
+    batch.refresh_from_db()
+    assert batch.status == "running"
+    assert batch.to_dict()["servers"]["stopping"] == 1
+    assert bulk.step_batch(batch.pk) is True  # still deleting
+    geohosting.finish_deleting()
+    assert bulk.step_batch(batch.pk) is False
+
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+    assert [s.status for s in servers_of(batch)] == ["deleted"]
+    assert len(geohosting.deleted) == 1  # asked once
+
+
+@pytest.mark.django_db
+def test_a_server_that_cant_be_deleted_doesnt_hold_the_batch_up(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    CngLiteJob.objects.filter(batch=batch).update(status=Status.COMPLETED)
+    geohosting.delete_error = "GeoHosting is down"
+
+    assert bulk.step_batch(batch.pk) is False
+
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+    assert "GeoHosting is down" in servers_of(batch)[0].error  # left for the reaper / the user
+
+
+@pytest.mark.django_db
+def test_a_server_that_fails_to_start_is_replaced(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    geohosting.fail(geohosting.created[0][3])
+
+    bulk.step_batch(batch.pk)  # sees it failed, asks for another
+
+    assert len(geohosting.created) == 2
+    assert [s.status for s in servers_of(batch)] == ["failed", "provisioning"]
+    assert batch.to_dict()["servers"]["failed"] == 1
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    assert len(conversions(manual)) == 1  # the replacement runs the layer
+
+
+@pytest.mark.django_db
+def test_the_waiting_layers_fail_when_no_server_can_be_had(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=1)
+    geohosting.create_error = "That server type is out of stock"
+
+    for _ in range(4):
+        bulk.step_batch(batch.pk)
+
+    batch.refresh_from_db()
+    assert batch.status == "failed"
+    jobs = list(batch.jobs.all())
+    assert {job.status for job in jobs} == {Status.FAILED}
+    assert "No server could be started: That server type is out of stock" in jobs[0].error
+    assert len(geohosting.created) == bulk_servers.MAX_FAILURES + 1  # then it stops asking
+
+
+@pytest.mark.django_db
+def test_with_a_server_running_the_batch_goes_on_with_fewer_when_others_fail(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip", "c.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip", "c.zip"], concurrency=2)
+    bulk.step_batch(batch.pk)
+    working, broken = (entry[3] for entry in geohosting.created)
+    geohosting.ready(working)
+    geohosting.fail(broken)
+    geohosting.create_error = "out of stock"  # replacements fail too
+
+    for _ in range(5):
+        bulk.step_batch(batch.pk)
+
+    # The one server runs the first layer; the others wait for it, not fail.
+    pending = [job for job in batch.jobs.all() if job.status == Status.PENDING]
+    queued = [job for job in batch.jobs.all() if job.status == Status.QUEUED]
+    assert (len(pending), len(queued)) == (1, 2)
+    CngLiteJob.objects.filter(pk=pending[0].pk).update(status=Status.COMPLETED)
+    bulk.step_batch(batch.pk)
+    assert len([j for j in batch.jobs.all() if j.status == Status.PENDING]) == 1
+
+
+@pytest.mark.django_db
+def test_cancelling_leaves_the_servers_to_the_coordinator(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=2)
+    bulk.step_batch(batch.pk)  # two servers starting, nothing running
+
+    batch = bulk.cancel_batch(batch)
+
+    # No GeoHosting call in the request: the batch is cancelling, its layers still queued.
+    assert batch.status == "cancelling"
+    assert geohosting.deleted == []
+    assert (
+        bulk.step_batch(batch.pk) is True
+    )  # the coordinator cancels the layers, deletes the servers
+    assert set(statuses(batch).values()) == {Status.CANCELLED}
+    assert len(geohosting.deleted) == 2
+    geohosting.finish_deleting()
+    assert bulk.step_batch(batch.pk) is False
+    batch.refresh_from_db()
+    assert batch.status == "cancelled"
+
+
+@pytest.mark.django_db
+def test_a_restart_carries_on_with_the_servers_it_had(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)  # the server is starting when the process stops
+    geohosting.ready()
+
+    def convert(job_id):
+        CngLiteJob.objects.filter(pk=job_id).update(status=Status.COMPLETED)
+
+    with (
+        patch("apps.s3.bulk.threading", SimpleNamespace(Thread=Sync)),
+        patch("apps.s3.bulk.run_conversion", side_effect=convert),
+        # Between its passes GeoHosting finishes deleting the servers.
+        patch("apps.s3.bulk.time.sleep", side_effect=lambda *_: geohosting.finish_deleting()),
+    ):
+        bulk.run_batch(batch.pk)  # the resume_conversions command's pass
+
+    assert len(geohosting.created) == 1  # it asked about the server, and didn't start another
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+    assert batch.jobs.get().instance_server is not None
+
+
+@pytest.mark.django_db
+def test_a_retry_runs_the_failed_layers_on_servers_again(owner, connection, s3, manual, geohosting):
+    seed(s3, ["a.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip"], concurrency=1)
+    bulk.step_batch(batch.pk)
+    geohosting.ready()
+    bulk.step_batch(batch.pk)
+    set_status(batch, "a.zip", Status.FAILED, error="boom")
+    bulk.step_batch(batch.pk)
+    geohosting.finish_deleting()
+    bulk.step_batch(batch.pk)
+    batch.refresh_from_db()
+    assert batch.status == "failed"
+
+    bulk.retry_failed(batch)
+
+    job = batch.jobs.get()
+    assert (job.status, job.instance_server_id) == (Status.QUEUED, None)

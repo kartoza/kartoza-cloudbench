@@ -69,6 +69,12 @@ class CngLiteBatch(models.Model):
     # are all done (see apps.s3.bulk_vrt): its name, and where it has got to -
     # {state: pending | building | done | skipped | failed, message, folder?, key?,
     # count?, leftOut?}. Empty without create_vrt. It never fails the batch.
+    # On demand (CLOUDNATIVEGIS_ON_DEMAND): the server type (GeoHosting's id) its
+    # servers are started as - N of them, each running one layer at a time - and
+    # whether the batch deletes them once it's over (else they're kept running,
+    # and billed). Null without on demand (see apps.s3.bulk_servers).
+    hetzner_server_id = models.PositiveIntegerField(null=True, blank=True)
+    auto_destroy = models.BooleanField(default=True)
     create_vrt = models.BooleanField(default=False)
     vrt_name = models.CharField(max_length=255, blank=True, default="")
     vrt = models.JSONField(default=dict, blank=True)
@@ -79,6 +85,11 @@ class CngLiteBatch(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def on_demand(self):
+        """Whether the batch runs its layers on servers GeoHosting starts for it."""
+        return self.hetzner_server_id is not None
 
     @property
     def is_cross_bucket(self):
@@ -134,9 +145,26 @@ class CngLiteBatch(models.Model):
             "concurrency": self.concurrency,
             "onExists": self.on_exists,
             "vrt": self.vrt if self.create_vrt else None,
+            "servers": self.servers_summary(),
             "createdAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
             "jobs": jobs,
+        }
+
+    def servers_summary(self):
+        """How many of its servers are in each state (on demand; else None).
+
+        {"starting", "ready", "stopping", "failed"}: those GeoHosting is
+        starting, can run a layer, is deleting, or couldn't start.
+        """
+        if not self.on_demand:
+            return None
+        statuses = list(self.servers.values_list("status", flat=True))
+        return {
+            "starting": statuses.count("provisioning"),
+            "ready": statuses.count("ready"),
+            "stopping": statuses.count("deleting"),
+            "failed": statuses.count("failed"),
         }
 
     @property

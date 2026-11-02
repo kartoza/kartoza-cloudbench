@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from . import bulk
 from .models import CngLiteBatch, S3Connection
+from .views import _requested_auto_destroy, _requested_server_type_id
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +133,10 @@ class S3BulkStartView(APIView):
         {prefix, files: [keys from the preview], concurrency, license,
         licenseUrl, destination: "beside" | "root" | "folder", destinationPrefix,
         onExists: "skip" | "replace" | "stop", recursive, sourceConnectionId,
-        createVrt, vrtName}. `createVrt` also publishes a VRT collection `vrtName`
-        of the converted GeoTIFFs (see apps.s3.bulk_vrt).
+        createVrt, vrtName, serverTypeId, autoDestroy}. `createVrt` also publishes
+        a VRT collection `vrtName` of the converted GeoTIFFs (see apps.s3.bulk_vrt).
+        On demand, `concurrency` is the number of servers started, as `serverTypeId`
+        (required), deleted when done unless `autoDestroy` is "false".
         The layers go into the URL's connection, from a folder of
         `sourceConnectionId`'s bucket if given. 400 for what can't be
         started (see apps.s3.bulk.start_batch).
@@ -165,6 +168,8 @@ class S3BulkStartView(APIView):
                 source_connection_id=source_id,
                 create_vrt=bool(data.get("createVrt")),
                 vrt_name=str(data.get("vrtName") or ""),
+                server_type_id=_requested_server_type_id(data),
+                auto_destroy=_requested_auto_destroy(data),
                 **_destination(data),
             )
         except ValueError as exc:

@@ -19,6 +19,9 @@ vi.mock('../../api/bulk', () => api)
 const s3api = vi.hoisted(() => ({ getS3Connections: vi.fn() }))
 vi.mock('../../api/s3', () => s3api)
 
+const clientApi = vi.hoisted(() => ({ getConversionToolStatus: vi.fn() }))
+vi.mock('../../api/client', () => clientApi)
+
 import BulkUploadDialog from './BulkUploadDialog'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -93,6 +96,8 @@ describe('BulkUploadDialog', () => {
     Object.values(api).forEach(
       (fn) => typeof fn === 'function' && 'mockReset' in fn && (fn as ReturnType<typeof vi.fn>).mockReset()
     )
+    clientApi.getConversionToolStatus.mockReset()
+    clientApi.getConversionToolStatus.mockResolvedValue({ cloudnativegis: { available: true } })
     s3api.getS3Connections.mockReset()
     s3api.getS3Connections.mockResolvedValue([
       { id: 'c1', name: 'Kartoza', endpoint: 'minio:9000', bucket: 'kartoza', useSSL: false, pathStyle: true },
@@ -300,13 +305,91 @@ describe('BulkUploadDialog', () => {
     )
   })
 
-  it('says bulk upload is not available with on-demand servers', async () => {
-    api.previewBulk.mockResolvedValue(preview({ limits: { maxConcurrency: 4, onDemand: true } }))
+  describe('with on-demand servers', () => {
+    const servers = [
+      { id: 11, label: 'fsn1 · 2 vCPU / 4 GB', currency: 'EUR', price: '0.01', available: false },
+      { id: 12, label: 'fsn1 · 4 vCPU / 8 GB', currency: 'EUR', price: '0.02', available: true },
+      { id: 13, label: 'fsn1 · 8 vCPU / 16 GB', currency: 'EUR', price: '0.04', available: true },
+    ]
+
+    beforeEach(() => {
+      api.previewBulk.mockResolvedValue(preview({ limits: { maxConcurrency: 3, onDemand: true } }))
+      clientApi.getConversionToolStatus.mockResolvedValue({
+        cloudnativegis: { available: true, onDemand: true, servers },
+      })
+    })
+
+    it('picks the server type - the cheapest in stock - and starts the batch with it', async () => {
+      renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+      const type = await screen.findByLabelText('Server type')
+      await waitFor(() => expect(type).toHaveValue('12'))
+      expect(screen.getByText(/out of stock/)).toBeInTheDocument()
+      expect(screen.getByText(/each running one conversion at a time/)).toBeInTheDocument()
+
+      fireEvent.change(type, { target: { value: '13' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
+
+      await screen.findByText('3 of 3 · Progress')
+      expect(api.startBulk).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({ serverTypeId: 13, autoDestroy: true, concurrency: 2 })
+      )
+    })
+
+    it('can keep the servers running', async () => {
+      renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      await waitFor(() => expect(screen.getByLabelText('Server type')).toHaveValue('12'))
+
+      fireEvent.click(screen.getByLabelText('Auto destroy'))
+      expect(await screen.findByText(/keep running \(and billed\)/)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
+
+      await screen.findByText('3 of 3 · Progress')
+      expect(api.startBulk).toHaveBeenCalledWith('c1', expect.objectContaining({ autoDestroy: false }))
+    })
+
+    it("can't start without a server in stock", async () => {
+      clientApi.getConversionToolStatus.mockResolvedValue({
+        cloudnativegis: { available: true, onDemand: true, servers: [servers[0]] },
+      })
+      renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      await screen.findByLabelText('Server type')
+
+      expect(screen.getByRole('button', { name: 'Start bulk upload' })).toBeDisabled()
+    })
+
+    it('says when GeoHosting offers no server type', async () => {
+      clientApi.getConversionToolStatus.mockResolvedValue({
+        cloudnativegis: { available: false, onDemand: true, servers: [] },
+      })
+      renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+      expect(await screen.findByTestId('bulk-no-server-types')).toHaveTextContent(/No server type is available/)
+      expect(screen.getByRole('button', { name: 'Start bulk upload' })).toBeDisabled()
+    })
+
+    it('shows how the servers are doing, in the progress', async () => {
+      api.getBulk.mockResolvedValue(batch({ servers: { starting: 1, ready: 2, stopping: 0, failed: 1 } }))
+      renderDialog({ batchId: 'b-1', connectionId: 'c1' })
+
+      expect(await screen.findByTestId('bulk-servers')).toHaveTextContent(
+        'Servers: 2 ready, 1 starting, 1 failed to start'
+      )
+    })
+  })
+
+  it('offers no server type without on-demand servers', async () => {
     renderDialog({ connectionId: 'c1', prefix: 'incoming/' })
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText(/3 layers found/)
 
-    expect(await screen.findByText(/doesn't support on-demand servers yet/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Start bulk upload' })).toBeDisabled()
+    expect(screen.queryByLabelText('Server type')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('bulk-servers')).not.toBeInTheDocument()
   })
 
   it('shows why a batch could not be started', async () => {

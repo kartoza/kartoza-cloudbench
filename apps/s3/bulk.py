@@ -25,7 +25,7 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
-from . import bulk_vrt, cog, copc, pmtiles, portolan
+from . import bulk_servers, bulk_vrt, cog, copc, pmtiles, portolan
 from .client import get_s3_client
 from .cng_lite import (
     TargetExists,
@@ -95,6 +95,13 @@ def classify(key):
     if suffix == ".zip" or is_geopackage(name) or pmtiles.is_vector_file(name):
         return pmtiles.KIND, None
     return None, UNSUPPORTED_REASON
+
+
+def max_processing_servers():
+    """The most conversions a batch may run at once: servers on demand, else jobs on the one server."""
+    if settings.CLOUDNATIVEGIS_ON_DEMAND:
+        return settings.CLOUDNATIVEGIS_BULK_MAX_SERVERS
+    return settings.CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY
 
 
 def _clean_prefix(prefix):
@@ -319,7 +326,7 @@ def preview(
         "files": [{k: v for k, v in entry.items() if k != "output"} for entry in entries],
         "truncated": truncated,
         "limits": {
-            "maxConcurrency": settings.CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY,
+            "maxConcurrency": max_processing_servers(),
             "onDemand": settings.CLOUDNATIVEGIS_ON_DEMAND,
         },
     }
@@ -341,8 +348,15 @@ def start_batch(
     source_connection_id=None,
     create_vrt=False,
     vrt_name="",
+    server_type_id=None,
+    auto_destroy=True,
 ):
     """Start converting the chosen `files` (keys) of folder `prefix`, `concurrency` at a time.
+
+    On demand, "at a time" is servers: the batch starts up to `concurrency` of
+    them, as `server_type_id` (required), each running one layer at a time,
+    and deletes them once they're not needed unless `auto_destroy` is off (see
+    apps.s3.bulk_servers).
 
     The layers go to `connection_id`'s bucket; the folder is in the same one,
     or in `source_connection_id`'s - each file is then converted where it is,
@@ -355,15 +369,16 @@ def start_batch(
     `on_exists`. `create_vrt` also publishes, once they are done, a VRT
     collection `vrt_name` of the GeoTIFFs that were converted (see apps.s3.bulk_vrt).
     Raises ValueError for what can't be started: CloudNativeGIS
-    not configured, on-demand servers (not supported yet), a bad N or
+    not configured, no server type picked on demand, a bad N or
     policy, a file that isn't in the folder or isn't a layer, nothing
     chosen, or a batch of this user's already running.
     """
     if not CngLiteJob.is_valid():
         raise ValueError("CloudNativeGIS is not configured.")
-    if settings.CLOUDNATIVEGIS_ON_DEMAND:
-        raise ValueError("Bulk upload doesn't support on-demand servers yet.")
-    maximum = settings.CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY
+    on_demand = settings.CLOUDNATIVEGIS_ON_DEMAND
+    if on_demand and not server_type_id:
+        raise ValueError("Pick a server to run the conversions on.")
+    maximum = max_processing_servers()
     if not isinstance(concurrency, int) or not 1 <= concurrency <= maximum:
         raise ValueError(f"Processing servers must be between 1 and {maximum}.")
     if on_exists not in CngLiteBatch.OnExists.values:
@@ -408,6 +423,8 @@ def start_batch(
         license_url=license_url if license_id == "other" else "",
         on_exists=on_exists,
         concurrency=concurrency,
+        hetzner_server_id=server_type_id if on_demand else None,
+        auto_destroy=bool(auto_destroy),
         create_vrt=bool(create_vrt),
         vrt_name=vrt_name.strip() if create_vrt else "",
         vrt={"state": bulk_vrt.PENDING} if create_vrt else {},
@@ -433,6 +450,8 @@ def start_batch(
             bucket=s3_client.bucket,
             source_name=entry["name"],
             origin_key=entry["key"],
+            # On demand the batch starts and deletes the servers, not its layers.
+            auto_destroy=not on_demand,
             source_in_place=bool(source_id),
             source_connection_id=source_id,
             output_key=entry["output"],
@@ -479,11 +498,15 @@ def step_batch(batch_id):
 
     Cancelling: the waiting jobs are cancelled and the running ones asked to
     stop. Otherwise - unless "stop" has been hit by a failure - waiting
-    jobs are started on the free slots. It ends once nothing waits or runs.
+    jobs are started on the free slots (on demand, the free servers: see
+    apps.s3.bulk_servers). It ends once nothing waits or runs - and, on
+    demand, once the servers the batch started are deleted.
     """
     batch = CngLiteBatch.objects.filter(pk=batch_id).first()
     if batch is None or not batch.is_active:
         return False
+    if batch.on_demand:
+        bulk_servers.sync(batch)
     jobs = list(batch.jobs.order_by("created_at", "source_name"))
     queued = [job for job in jobs if job.status == CngLiteJobStatus.QUEUED]
     running = [job for job in jobs if job.status in ACTIVE_CNG_LITE_JOB_STATUSES]
@@ -496,6 +519,8 @@ def step_batch(batch_id):
         job.status == CngLiteJobStatus.FAILED for job in jobs
     ):
         _cancel_queued(queued, "Not started: the batch stops at the first failure")
+    elif batch.on_demand:
+        _start_on_servers(batch, queued, running)
     else:
         for job in queued[: max(batch.concurrency - len(running), 0)]:
             _start_job(job)
@@ -506,8 +531,39 @@ def step_batch(batch_id):
         return True
     if batch.status == CngLiteBatch.Status.RUNNING:
         _publish_vrt(batch)
+    if batch.on_demand and bulk_servers.stopping(batch):
+        return True
     _finish_batch(batch)
     return False
+
+
+def _start_on_servers(batch, queued, running):
+    """On demand: start the servers the layers need, and give each waiting layer a free one.
+
+    N servers at most, each running one layer: as many as there are layers
+    waiting or running. With none waiting, the servers not running one are
+    deleted - nothing needs them. If no server can be had (too many failed to
+    start, and none is running), the waiting layers fail.
+    """
+    if not queued:
+        bulk_servers.release_idle(batch)
+        return
+    bulk_servers.start_missing(batch, min(batch.concurrency, len(queued) + len(running)))
+    free = bulk_servers.free(batch)
+    for job, server in zip(queued, free, strict=False):
+        CngLiteJob.objects.filter(pk=job.pk, status=CngLiteJobStatus.QUEUED).update(
+            instance_server=server,
+            hetzner_server_id=server.type_id,
+            # The batch deletes its servers, not the layers that ran on them.
+            auto_destroy=False,
+            updated_at=timezone.now(),
+        )
+        job.refresh_from_db()
+        _start_job(job)
+    if bulk_servers.gave_up(batch):
+        error = f"No server could be started: {bulk_servers.last_error(batch)}"
+        for job in queued[len(free) :]:
+            _fail(job, error)
 
 
 def _publish_vrt(batch):
@@ -622,8 +678,11 @@ def cancel_batch(batch):
         raise ValueError("That bulk upload isn't running.")
     batch.refresh_from_db()
     # Don't wait for the coordinator's next look: nothing running means it's over now.
-    step_batch(batch.pk)
-    batch.refresh_from_db()
+    # On demand its servers are to be deleted, which GeoHosting takes a while over:
+    # that is the coordinator's, not this request's.
+    if not batch.on_demand:
+        step_batch(batch.pk)
+        batch.refresh_from_db()
     return batch
 
 
@@ -647,6 +706,7 @@ def retry_failed(batch):
             status=CngLiteJobStatus.QUEUED,
             replace_existing=job.replace_existing or bool(job.source_key),
             source_key="",
+            instance_server=None,
             progress=0,
             error="",
             message="Waiting for a processing server",

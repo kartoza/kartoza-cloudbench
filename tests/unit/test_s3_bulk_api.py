@@ -376,3 +376,46 @@ def test_a_vrt_of_fewer_than_two_rasters_is_a_400(api, connection, s3):
 
     assert response.status_code == 400
     assert "at least two GeoTIFFs" in response.json()["error"]
+
+
+@pytest.fixture
+def on_demand(settings):
+    settings.CLOUDNATIVEGIS_ON_DEMAND = True
+    settings.CLOUDNATIVEGIS_BULK_MAX_SERVERS = 2
+    settings.GEOHOSTING_URL = "http://geohosting"
+    settings.GEOHOSTING_CLIENT_ID = "cloudbench"
+    settings.GEOHOSTING_CLIENT_SECRET = "secret"
+
+
+@pytest.mark.django_db
+def test_on_demand_the_preview_limits_the_servers(api, connection, s3, on_demand):
+    response = api.post(f"{URL}/preview/{connection.id}", {"prefix": "incoming/"}, format="json")
+
+    assert response.json()["limits"] == {"maxConcurrency": 2, "onDemand": True}
+
+
+@pytest.mark.django_db
+def test_on_demand_a_batch_needs_a_server_type(api, connection, s3, on_demand):
+    response = start(api, connection, concurrency=1)
+
+    assert response.status_code == 400
+    assert "Pick a server" in response.json()["error"]
+    assert CngLiteBatch.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_on_demand_a_batch_starts_with_its_server_type(api, connection, s3, on_demand):
+    started = start(api, connection, concurrency=2, serverTypeId=7, autoDestroy="false")
+
+    assert started.status_code == 202
+    assert started.json()["servers"] == {"starting": 0, "ready": 0, "stopping": 0, "failed": 0}
+    batch = CngLiteBatch.objects.get()
+    assert (batch.hetzner_server_id, batch.auto_destroy, batch.concurrency) == (7, False, 2)
+
+
+@pytest.mark.django_db
+def test_on_demand_a_batch_may_use_no_more_servers_than_the_cap(api, connection, s3, on_demand):
+    response = start(api, connection, concurrency=3, serverTypeId=7)
+
+    assert response.status_code == 400
+    assert "between 1 and 2" in response.json()["error"]

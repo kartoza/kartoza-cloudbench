@@ -27,6 +27,7 @@ import {
   SliderThumb,
   SliderTrack,
   Spinner,
+  Switch,
   Text,
   Tooltip,
   VStack,
@@ -46,6 +47,7 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
 import { getS3Connections } from '../../api/s3'
+import { getConversionToolStatus } from '../../api/client'
 import type { S3Connection } from '../../types'
 import {
   BULK_BATCHES_QUERY_KEY,
@@ -62,7 +64,15 @@ import {
   type BulkOptions,
   type OnExists,
 } from '../../api/bulk'
-import { KIND_COLORS, KIND_LABELS, batchCounts, batchProgress, batchSummary, formatSize } from '../../utils/bulkBatch'
+import {
+  KIND_COLORS,
+  KIND_LABELS,
+  batchCounts,
+  batchProgress,
+  batchSummary,
+  formatSize,
+  serversSummary,
+} from '../../utils/bulkBatch'
 
 // Mirrors apps.s3.portolan.LICENSE_CHOICES, as the Upload dialog does.
 const LICENSE_CHOICES = [
@@ -281,6 +291,21 @@ function ReviewStep({
   const chosen = selected ?? new Set(convertible.map((file) => file.key))
   const limits = preview?.limits
   const slots = Math.min(concurrency, Math.max(chosen.size, 1))
+  // On demand, the servers are started as the type picked here (the cheapest in stock by
+  // default; one out of stock is listed but can't be picked), and deleted when not needed
+  // unless kept.
+  const { data: toolStatus } = useQuery({
+    queryKey: ['conversionTools'],
+    queryFn: getConversionToolStatus,
+    enabled: !!limits?.onDemand,
+  })
+  const serverTypes = toolStatus?.cloudnativegis?.onDemand ? (toolStatus.cloudnativegis.servers ?? []) : []
+  const inStockServers = serverTypes.filter((server) => server.available !== false)
+  const [serverTypeId, setServerTypeId] = useState<number>()
+  const pickedServerId = inStockServers.some((server) => server.id === serverTypeId)
+    ? serverTypeId
+    : inStockServers[0]?.id
+  const [autoDestroy, setAutoDestroy] = useState(true)
   const acrossBuckets = sourceId !== connectionId
   const sourceName = connectionName(connections, sourceId)
 
@@ -298,7 +323,7 @@ function ReviewStep({
     chosen.size > 0 &&
     (destination !== 'folder' || destinationPrefix.trim() !== '') &&
     (!makesVrt || vrtName.trim() !== '') &&
-    !limits?.onDemand
+    (!limits?.onDemand || pickedServerId !== undefined)
 
   const start = () =>
     onStart({
@@ -313,6 +338,8 @@ function ReviewStep({
       sourceConnectionId: sourceId,
       createVrt: makesVrt,
       vrtName: makesVrt ? vrtName.trim() : '',
+      serverTypeId: limits?.onDemand ? pickedServerId : undefined,
+      autoDestroy: limits?.onDemand ? autoDestroy : undefined,
     })
 
   if (isLoading) {
@@ -559,10 +586,55 @@ function ReviewStep({
               </FormControl>
 
               {limits.onDemand ? (
-                <Alert status="warning" borderRadius="md" fontSize="xs" py={2}>
-                  <AlertIcon boxSize={4} />
-                  Bulk upload doesn&apos;t support on-demand servers yet: upload layers one at a time.
-                </Alert>
+                <>
+                  <FormControl>
+                    <FormLabel fontSize="sm">Server type</FormLabel>
+                    <Select
+                      size="sm"
+                      value={pickedServerId ?? ''}
+                      onChange={(e) => setServerTypeId(Number(e.target.value))}
+                      borderRadius="lg"
+                      aria-label="Server type"
+                    >
+                      {serverTypes.map((server) => (
+                        <option key={server.id} value={server.id} disabled={server.available === false}>
+                          {server.label} · {server.price} {server.currency}/h
+                          {server.available === false && ' — out of stock'}
+                        </option>
+                      ))}
+                    </Select>
+                    {toolStatus && serverTypes.length === 0 ? (
+                      <Text fontSize="xs" color="red.600" mt={1} data-testid="bulk-no-server-types">
+                        No server type is available: GeoHosting isn&apos;t configured or reachable, or has none enabled
+                        for your account.
+                      </Text>
+                    ) : (
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Up to {slots} server{slots === 1 ? '' : 's'}, each running one conversion at a time. Billed per
+                        started hour, until deleted.
+                      </Text>
+                    )}
+                  </FormControl>
+                  <FormControl>
+                    <HStack justify="space-between">
+                      <FormLabel htmlFor="bulk-auto-destroy" mb={0} fontSize="sm">
+                        Auto destroy
+                      </FormLabel>
+                      <Switch
+                        id="bulk-auto-destroy"
+                        isChecked={autoDestroy}
+                        onChange={(e) => setAutoDestroy(e.target.checked)}
+                        colorScheme="orange"
+                        size="sm"
+                      />
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      {autoDestroy
+                        ? 'Each server is deleted as soon as the batch has no layer left for it.'
+                        : 'The servers keep running (and billed) after the batch: delete them yourself.'}
+                    </Text>
+                  </FormControl>
+                </>
               ) : (
                 <Text fontSize="xs" color="gray.600">
                   There is one conversion server, so this is how many conversions it runs at once. Large rasters and
@@ -711,6 +783,11 @@ function ProgressStep({ batchId, onClose }: { batchId: string; onClose: () => vo
               hasStripe={active}
               isAnimated={active}
             />
+            {batch.servers && (
+              <Text fontSize="xs" color="gray.600" mt={1} data-testid="bulk-servers">
+                {serversSummary(batch.servers)}
+              </Text>
+            )}
             {batch.vrt && (
               <Text
                 fontSize="xs"

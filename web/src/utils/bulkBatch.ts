@@ -1,4 +1,4 @@
-import type { BulkBatch, BulkJob, BulkKind } from '../api/bulk'
+import type { BulkBatch, BulkJob, BulkKind, BulkServers } from '../api/bulk'
 
 export const KIND_LABELS: Record<BulkKind, string> = {
   pmtiles: 'PMTiles + GeoParquet',
@@ -69,4 +69,15 @@ export function formatSize(bytes: number): string {
     unit++
   }
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
+
+// How a batch's on-demand servers are doing, e.g. "Servers: 2 ready, 1 starting".
+export function serversSummary(servers: BulkServers): string {
+  const parts = [
+    servers.ready && `${servers.ready} ready`,
+    servers.starting && `${servers.starting} starting`,
+    servers.stopping && `${servers.stopping} being deleted`,
+    servers.failed && `${servers.failed} failed to start`,
+  ].filter(Boolean)
+  return `Servers: ${parts.length ? parts.join(', ') : 'none running'}`
 }

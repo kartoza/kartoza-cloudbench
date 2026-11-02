@@ -57,6 +57,10 @@ export interface BulkOptions {
   // Also publish a VRT collection `vrtName` of the converted GeoTIFFs (two or more).
   createVrt?: boolean
   vrtName?: string
+  // On demand: the server type (GeoHosting's id) the servers are started as - `concurrency` of
+  // them at most - and whether they are deleted once the batch doesn't need them.
+  serverTypeId?: number
+  autoDestroy?: boolean
 }
 
 export type BulkJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped'
@@ -84,6 +88,14 @@ export interface BulkVrt {
   leftOut?: { name: string; reason: string }[]
 }
 
+// On demand: how many of the batch's servers are in each state.
+export interface BulkServers {
+  starting: number
+  ready: number
+  stopping: number
+  failed: number
+}
+
 export type BulkBatchStatus = 'running' | 'cancelling' | 'completed' | 'partial' | 'failed' | 'cancelled'
 
 export interface BulkBatch {
@@ -99,6 +111,8 @@ export interface BulkBatch {
   onExists: OnExists
   // Null when no VRT was asked for.
   vrt?: BulkVrt | null
+  // Null without on-demand servers.
+  servers?: BulkServers | null
   createdAt: string
   completedAt: string | null
   jobs: BulkJob[]
