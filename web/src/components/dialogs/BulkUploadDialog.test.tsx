@@ -156,6 +156,8 @@ describe('BulkUploadDialog', () => {
       onExists: 'skip',
       concurrency: 2,
       sourceConnectionId: 'c1',
+      createVrt: false,
+      vrtName: '',
     })
     await waitFor(() => expect(screen.getByTestId('bulk-summary-line')).toHaveTextContent('0 of 2 done'))
     expect(screen.getByTestId('bulk-summary-line')).toHaveTextContent('1 running')
@@ -204,6 +206,68 @@ describe('BulkUploadDialog', () => {
     await screen.findByRole('button', { name: 'Open incoming' })
 
     expect(screen.queryByLabelText('Read the layers from')).not.toBeInTheDocument()
+  })
+
+  it('offers a VRT when there are two GeoTIFFs, named after the folder, and asks for it', async () => {
+    api.previewBulk.mockResolvedValue(
+      preview({ files: [file('a.tif', 'cog'), file('b.tif', 'cog'), file('c.zip', 'pmtiles')] })
+    )
+    renderDialog({ connectionId: 'c1', prefix: 'incoming' })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText(/3 layers found/)
+
+    expect(screen.getByLabelText(/Also publish a VRT of the 2 GeoTIFFs/)).toBeChecked()
+    expect(screen.getByLabelText('VRT name')).toHaveValue('incoming-vrt')
+    fireEvent.change(screen.getByLabelText('VRT name'), { target: { value: 'tiles-vrt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
+
+    await screen.findByText('3 of 3 · Progress')
+    expect(api.startBulk).toHaveBeenCalledWith('c1', expect.objectContaining({ createVrt: true, vrtName: 'tiles-vrt' }))
+  })
+
+  it('leaves the VRT out when it is unticked, or fewer than two GeoTIFFs are chosen', async () => {
+    api.previewBulk.mockResolvedValue(preview({ files: [file('a.tif', 'cog'), file('b.tif', 'cog')] }))
+    renderDialog({ connectionId: 'c1', prefix: 'incoming' })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText(/2 layers found/)
+
+    act(() => screen.getByLabelText('Convert b.tif').click())
+    await waitFor(() => expect(screen.getByLabelText(/Also publish a VRT/)).toBeDisabled())
+    expect(screen.queryByLabelText('VRT name')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Start bulk upload' }))
+
+    await screen.findByText('3 of 3 · Progress')
+    expect(api.startBulk).toHaveBeenCalledWith('c1', expect.objectContaining({ createVrt: false, vrtName: '' }))
+  })
+
+  it('offers no VRT for a single GeoTIFF', async () => {
+    renderDialog({ connectionId: 'c1', prefix: 'incoming' })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText(/3 layers found/)
+
+    expect(screen.queryByLabelText(/Also publish a VRT/)).not.toBeInTheDocument()
+  })
+
+  it('shows how the VRT is getting on, in the progress', async () => {
+    api.getBulk.mockResolvedValue(
+      batch({
+        status: 'completed',
+        completedAt: '2026-11-02T10:05:00Z',
+        vrt: { state: 'done', message: 'VRT of 2 rasters: incoming-vrt/incoming-vrt.vrt' },
+      })
+    )
+    renderDialog({ batchId: 'b-1', connectionId: 'c1' })
+
+    expect(await screen.findByTestId('bulk-vrt')).toHaveTextContent('VRT of 2 rasters: incoming-vrt/incoming-vrt.vrt')
+  })
+
+  it('says why there is no VRT', async () => {
+    api.getBulk.mockResolvedValue(
+      batch({ vrt: { state: 'failed', message: 'The folder "incoming-vrt" already holds something else.' } })
+    )
+    renderDialog({ batchId: 'b-1', connectionId: 'c1' })
+
+    expect(await screen.findByTestId('bulk-vrt')).toHaveTextContent('already holds something else')
   })
 
   it('says why a folder cannot be read', async () => {

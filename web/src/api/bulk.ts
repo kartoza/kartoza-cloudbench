@@ -54,6 +54,9 @@ export interface BulkOptions {
   // The connection whose bucket the folder is in; the same as the one the layers go to
   // (the default) when it is in their own.
   sourceConnectionId?: string
+  // Also publish a VRT collection `vrtName` of the converted GeoTIFFs (two or more).
+  createVrt?: boolean
+  vrtName?: string
 }
 
 export type BulkJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped'
@@ -66,6 +69,19 @@ export interface BulkJob {
   progress: number
   message: string
   error?: string | null
+}
+
+// The VRT collection a bulk upload also publishes of its GeoTIFFs, once they are converted.
+// It never fails the batch: `failed` and `skipped` say why there is none.
+export interface BulkVrt {
+  state: 'pending' | 'building' | 'done' | 'skipped' | 'failed'
+  message?: string
+  // Where it was published (state `done`): its collection folder, the VRT file's key.
+  folder?: string
+  key?: string
+  count?: number
+  // Rasters left out for not being alike (CRS, bands, data type, nodata).
+  leftOut?: { name: string; reason: string }[]
 }
 
 export type BulkBatchStatus = 'running' | 'cancelling' | 'completed' | 'partial' | 'failed' | 'cancelled'
@@ -81,6 +97,8 @@ export interface BulkBatch {
   status: BulkBatchStatus
   concurrency: number
   onExists: OnExists
+  // Null when no VRT was asked for.
+  vrt?: BulkVrt | null
   createdAt: string
   completedAt: string | null
   jobs: BulkJob[]

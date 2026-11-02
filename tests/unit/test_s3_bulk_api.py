@@ -350,3 +350,29 @@ def test_a_source_connection_that_is_not_the_users_is_not_found(
 
     assert preview.status_code == started.status_code == 404
     assert CngLiteBatch.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_a_vrt_can_be_asked_for_with_the_rasters(api, connection, s3):
+    s3.objects["incoming/d.tif"] = b"x" * 10
+
+    started = start(
+        api,
+        connection,
+        files=["incoming/b.tif", "incoming/d.tif"],
+        createVrt=True,
+        vrtName="incoming-vrt",
+    )
+
+    assert started.status_code == 202
+    assert started.json()["vrt"] == {"state": "pending"}
+    batch = CngLiteBatch.objects.get()
+    assert (batch.create_vrt, batch.vrt_name) == (True, "incoming-vrt")
+
+
+@pytest.mark.django_db
+def test_a_vrt_of_fewer_than_two_rasters_is_a_400(api, connection, s3):
+    response = start(api, connection, createVrt=True, vrtName="incoming-vrt")
+
+    assert response.status_code == 400
+    assert "at least two GeoTIFFs" in response.json()["error"]

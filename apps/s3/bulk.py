@@ -25,7 +25,7 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
-from . import cog, copc, pmtiles, portolan
+from . import bulk_vrt, cog, copc, pmtiles, portolan
 from .client import get_s3_client
 from .cng_lite import (
     TargetExists,
@@ -339,6 +339,8 @@ def start_batch(
     recursive=False,
     destination=None,
     source_connection_id=None,
+    create_vrt=False,
+    vrt_name="",
 ):
     """Start converting the chosen `files` (keys) of folder `prefix`, `concurrency` at a time.
 
@@ -350,7 +352,9 @@ def start_batch(
     The folder is read again, so what runs is what's in the bucket now.
     Every layer becomes a QUEUED job; a layer whose folder exists is
     skipped, replaced or - `stop` - fails when its turn comes, per
-    `on_exists`. Raises ValueError for what can't be started: CloudNativeGIS
+    `on_exists`. `create_vrt` also publishes, once they are done, a VRT
+    collection `vrt_name` of the GeoTIFFs that were converted (see apps.s3.bulk_vrt).
+    Raises ValueError for what can't be started: CloudNativeGIS
     not configured, on-demand servers (not supported yet), a bad N or
     policy, a file that isn't in the folder or isn't a layer, nothing
     chosen, or a batch of this user's already running.
@@ -387,6 +391,10 @@ def start_batch(
         chosen.append(entry)
     if not chosen:
         raise ValueError("Select at least one layer.")
+    if create_vrt:
+        bulk_vrt.vrt_id(vrt_name)
+        if sum(entry["kind"] == bulk_vrt.KIND for entry in chosen) < bulk_vrt.MIN_RASTERS:
+            raise ValueError("A VRT needs at least two GeoTIFFs: choose two or more.")
 
     license_id = portolan.normalize_license(license_id)
     batch = CngLiteBatch.objects.create(
@@ -400,6 +408,9 @@ def start_batch(
         license_url=license_url if license_id == "other" else "",
         on_exists=on_exists,
         concurrency=concurrency,
+        create_vrt=bool(create_vrt),
+        vrt_name=vrt_name.strip() if create_vrt else "",
+        vrt={"state": bulk_vrt.PENDING} if create_vrt else {},
     )
     skipped = []
     for entry in chosen:
@@ -409,6 +420,7 @@ def start_batch(
                     "key": entry["key"],
                     "name": entry["name"],
                     "kind": entry["kind"],
+                    "target": entry["target"],
                     "reason": "Already published: skipped",
                 }
             )
@@ -492,8 +504,31 @@ def step_batch(batch_id):
         status__in=[CngLiteJobStatus.QUEUED, *ACTIVE_CNG_LITE_JOB_STATUSES]
     ).exists():
         return True
+    if batch.status == CngLiteBatch.Status.RUNNING:
+        _publish_vrt(batch)
     _finish_batch(batch)
     return False
+
+
+def _publish_vrt(batch):
+    """Build the batch's VRT collection, once its layers are all over (if it asked for one).
+
+    Claimed by whoever sets it `building`, so it is built once; whatever goes
+    wrong is the VRT's alone - the batch's layers are published already.
+    """
+    if not (batch.create_vrt and batch.vrt.get("state") == bulk_vrt.PENDING):
+        return
+    claimed = CngLiteBatch.objects.filter(pk=batch.pk, vrt__state=bulk_vrt.PENDING).update(
+        vrt={"state": bulk_vrt.BUILDING, "message": "Building the VRT"}, updated_at=timezone.now()
+    )
+    if not claimed:
+        return
+    try:
+        state = bulk_vrt.publish(batch)
+    except Exception as exc:
+        logger.exception("Bulk upload %s: couldn't build its VRT", batch.id)
+        state = {"state": bulk_vrt.FAILED, "message": f"Couldn't build the VRT: {exc}"}
+    CngLiteBatch.objects.filter(pk=batch.pk).update(vrt=state, updated_at=timezone.now())
 
 
 def _cancel_queued(jobs, message):
@@ -625,7 +660,11 @@ def retry_failed(batch):
             updated_at=timezone.now(),
         )
     CngLiteBatch.objects.filter(pk=batch.pk).update(
-        status=CngLiteBatch.Status.RUNNING, completed_at=None, updated_at=timezone.now()
+        status=CngLiteBatch.Status.RUNNING,
+        completed_at=None,
+        # The layers retried belong in the VRT too: build it again.
+        vrt={"state": bulk_vrt.PENDING} if batch.create_vrt else {},
+        updated_at=timezone.now(),
     )
     batch.refresh_from_db()
     _start_coordinator(batch.pk)
@@ -644,5 +683,8 @@ def resume_batches():
     )
     for batch in batches:
         logger.info("Resuming bulk upload %s", batch.id)
+        if batch.vrt.get("state") == bulk_vrt.BUILDING:
+            # Interrupted partway: nothing else is building it now.
+            CngLiteBatch.objects.filter(pk=batch.pk).update(vrt={"state": bulk_vrt.PENDING})
         run_batch(batch.id)
     return len(batches)

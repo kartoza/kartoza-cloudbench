@@ -271,6 +271,9 @@ function ReviewStep({
   const [destination, setDestination] = useState<BulkDestination>('root')
   const [destinationPrefix, setDestinationPrefix] = useState('')
   const [onExists, setOnExists] = useState<OnExists>('skip')
+  // A VRT of the GeoTIFFs, named after the folder they are in.
+  const [createVrt, setCreateVrt] = useState(true)
+  const [vrtName, setVrtName] = useState(`${prefix.split('/').filter(Boolean).pop() ?? 'rasters'}-vrt`)
   const [concurrency, setConcurrency] = useState(2)
 
   const convertible = useMemo(() => (preview?.files ?? []).filter((file) => file.kind), [preview])
@@ -288,7 +291,14 @@ function ReviewStep({
     setSelected(next)
   }
 
-  const canStart = chosen.size > 0 && (destination !== 'folder' || destinationPrefix.trim() !== '') && !limits?.onDemand
+  const rasters = convertible.filter((file) => file.kind === 'cog')
+  const chosenRasters = rasters.filter((file) => chosen.has(file.key)).length
+  const makesVrt = createVrt && chosenRasters >= 2
+  const canStart =
+    chosen.size > 0 &&
+    (destination !== 'folder' || destinationPrefix.trim() !== '') &&
+    (!makesVrt || vrtName.trim() !== '') &&
+    !limits?.onDemand
 
   const start = () =>
     onStart({
@@ -301,6 +311,8 @@ function ReviewStep({
       onExists,
       concurrency: slots,
       sourceConnectionId: sourceId,
+      createVrt: makesVrt,
+      vrtName: makesVrt ? vrtName.trim() : '',
     })
 
   if (isLoading) {
@@ -557,6 +569,35 @@ function ReviewStep({
                   point clouds need more memory: keep it low for those.
                 </Text>
               )}
+
+              {rasters.length >= 2 && (
+                <FormControl>
+                  <FormLabel fontSize="sm">VRT</FormLabel>
+                  <Checkbox
+                    size="sm"
+                    isChecked={makesVrt}
+                    isDisabled={chosenRasters < 2}
+                    onChange={(e) => setCreateVrt(e.target.checked)}
+                  >
+                    Also publish a VRT of the {chosenRasters} GeoTIFFs
+                  </Checkbox>
+                  <Text fontSize="xs" color="gray.500" pl={6}>
+                    One more collection that opens every converted GeoTIFF as a single raster, e.g. in QGIS. The layers
+                    stay separate.
+                  </Text>
+                  {makesVrt && (
+                    <Input
+                      mt={2}
+                      size="sm"
+                      value={vrtName}
+                      onChange={(e) => setVrtName(e.target.value)}
+                      aria-label="VRT name"
+                      placeholder="incoming-vrt"
+                      borderRadius="lg"
+                    />
+                  )}
+                </FormControl>
+              )}
             </VStack>
           </HStack>
           <Text fontSize="sm" color="gray.700" data-testid="bulk-summary">
@@ -670,6 +711,16 @@ function ProgressStep({ batchId, onClose }: { batchId: string; onClose: () => vo
               hasStripe={active}
               isAnimated={active}
             />
+            {batch.vrt && (
+              <Text
+                fontSize="xs"
+                mt={1}
+                data-testid="bulk-vrt"
+                color={batch.vrt.state === 'failed' ? 'red.600' : batch.vrt.state === 'done' ? 'green.700' : 'gray.600'}
+              >
+                {batch.vrt.message ?? (batch.vrt.state === 'pending' ? 'A VRT follows once the layers are done' : '')}
+              </Text>
+            )}
             <Text fontSize="xs" color="gray.600" mt={1} data-testid="bulk-summary-line">
               {batchSummary(batch)}
               {counts.waiting > 0 && ` · ${counts.waiting} waiting`}

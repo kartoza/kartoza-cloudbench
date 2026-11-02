@@ -1147,3 +1147,46 @@ def test_a_failed_cross_bucket_layer_leaves_its_original(owner, connection, s3, 
     assert batch.jobs.get().status == "failed"
     assert batch.status == "failed"
     assert bucket.objects == {"incoming/districts.zip": b"the original"}
+
+
+# -- the VRT of a batch's GeoTIFFs -------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_start_asks_for_a_vrt_of_the_rasters(owner, connection, s3, manual):
+    seed(s3, ["a.tif", "b.tif", "c.zip"])
+
+    batch = start(
+        owner, connection, ["a.tif", "b.tif", "c.zip"], create_vrt=True, vrt_name=" My VRT "
+    )
+
+    assert (batch.create_vrt, batch.vrt_name, batch.vrt) == (True, "My VRT", {"state": "pending"})
+    assert batch.to_dict()["vrt"] == {"state": "pending"}
+
+
+@pytest.mark.django_db
+def test_a_batch_doesnt_make_a_vrt_unless_asked(owner, connection, s3, manual):
+    seed(s3, ["a.tif", "b.tif"])
+
+    batch = start(owner, connection, ["a.tif", "b.tif"])
+
+    assert (batch.create_vrt, batch.vrt) == (False, {})
+    assert batch.to_dict()["vrt"] is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "files, name, error",
+    [
+        (["a.tif", "c.zip"], "vrt", "at least two GeoTIFFs"),
+        (["a.tif"], "vrt", "at least two GeoTIFFs"),
+        (["a.tif", "b.tif"], "  ", "Name the VRT"),
+    ],
+)
+def test_a_vrt_needs_two_rasters_and_a_name(owner, connection, s3, manual, files, name, error):
+    seed(s3, ["a.tif", "b.tif", "c.zip"])
+
+    with pytest.raises(ValueError, match=error):
+        start(owner, connection, files, create_vrt=True, vrt_name=name)
+
+    assert CngLiteBatch.objects.count() == 0

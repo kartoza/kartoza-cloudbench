@@ -131,7 +131,9 @@ class S3BulkStartView(APIView):
 
         {prefix, files: [keys from the preview], concurrency, license,
         licenseUrl, destination: "beside" | "root" | "folder", destinationPrefix,
-        onExists: "skip" | "replace" | "stop", recursive, sourceConnectionId}.
+        onExists: "skip" | "replace" | "stop", recursive, sourceConnectionId,
+        createVrt, vrtName}. `createVrt` also publishes a VRT collection `vrtName`
+        of the converted GeoTIFFs (see apps.s3.bulk_vrt).
         The layers go into the URL's connection, from a folder of
         `sourceConnectionId`'s bucket if given. 400 for what can't be
         started (see apps.s3.bulk.start_batch).
@@ -161,6 +163,8 @@ class S3BulkStartView(APIView):
                 on_exists=str(data.get("onExists") or CngLiteBatch.OnExists.SKIP),
                 recursive=bool(data.get("recursive")),
                 source_connection_id=source_id,
+                create_vrt=bool(data.get("createVrt")),
+                vrt_name=str(data.get("vrtName") or ""),
                 **_destination(data),
             )
         except ValueError as exc:

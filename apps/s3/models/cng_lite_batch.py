@@ -65,6 +65,13 @@ class CngLiteBatch(models.Model):
     # Layers left out because they already existed (on_exists = skip):
     # [{"key", "name", "kind", "reason"}] - they get no job.
     skipped = models.JSONField(default=list, blank=True)
+    # Also publish a VRT collection of the batch's converted GeoTIFFs once they
+    # are all done (see apps.s3.bulk_vrt): its name, and where it has got to -
+    # {state: pending | building | done | skipped | failed, message, folder?, key?,
+    # count?, leftOut?}. Empty without create_vrt. It never fails the batch.
+    create_vrt = models.BooleanField(default=False)
+    vrt_name = models.CharField(max_length=255, blank=True, default="")
+    vrt = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -126,6 +133,7 @@ class CngLiteBatch(models.Model):
             "status": self.status,
             "concurrency": self.concurrency,
             "onExists": self.on_exists,
+            "vrt": self.vrt if self.create_vrt else None,
             "createdAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
             "jobs": jobs,
