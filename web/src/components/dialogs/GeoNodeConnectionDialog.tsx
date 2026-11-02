@@ -37,6 +37,8 @@ import * as api from '../../api'
 import { springs } from '../../utils/animations'
 import { getCreateGeoNodeUrl } from '../../config/env'
 import { BuyExternallyOption } from './BuyExternallyOption'
+import PermissionList from './PermissionList'
+import type { GeoNodeTestResult } from '../../types'
 
 export default function GeoNodeConnectionDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
@@ -57,7 +59,7 @@ export default function GeoNodeConnectionDialog() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; error?: string } | null>(null)
+  const [testResult, setTestResult] = useState<GeoNodeTestResult | null>(null)
 
   const isOpen = activeDialog === 'geonode'
   const isEditMode = dialogData?.mode === 'edit'
@@ -342,6 +344,7 @@ export default function GeoNodeConnectionDialog() {
                       <Text fontSize="sm">
                         {testResult.success ? 'Connection successful!' : testResult.error || 'Connection failed'}
                       </Text>
+                      <PermissionList permissions={testResult.permissions} />
                     </Box>
                   </Alert>
                 </motion.div>

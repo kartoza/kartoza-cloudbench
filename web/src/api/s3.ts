@@ -2,7 +2,7 @@
  * S3 Storage API
  */
 
-import { API_BASE, handleResponse, setAuthHeader } from './common'
+import { API_BASE, handleResponse, setAuthHeader, testResponse } from './common'
 import type {
   S3Connection,
   S3ConnectionCreate,
@@ -68,7 +68,7 @@ export async function testS3ConnectionDirect(conn: S3ConnectionTestRequest): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(conn),
   })
-  return handleResponse<S3ConnectionTestResult>(response)
+  return testResponse<S3ConnectionTestResult>(response)
 }
 
 // S3 Object API

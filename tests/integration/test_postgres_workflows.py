@@ -13,7 +13,27 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.core.models import PGService
+from apps.core.permissions import Permission
 from apps.postgres.client import PGServiceClient
+
+ALL_ALLOWED = [
+    Permission("PostGIS", "spatial imports", True),
+    Permission("create tables", "imports", True, "in public"),
+    Permission("import rasters", "raster imports", True, required=False),
+]
+
+
+@pytest.fixture(autouse=True)
+def allowed_everything():
+    """The database lets its user do everything: these tests are about the rest."""
+    with patch.multiple(
+        PGServiceClient,
+        check_connection=DEFAULT,
+        check_permissions=DEFAULT,
+    ) as mocks:
+        mocks["check_connection"].return_value = (True, "Connected: PostgreSQL 16", ALL_ALLOWED)
+        mocks["check_permissions"].return_value = ALL_ALLOWED
+        yield mocks
 
 
 @pytest.fixture
@@ -463,3 +483,96 @@ class TestPostgresBridgeWorkflow:
     """
 
     pass
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestPostgresPermissions:
+    """A connection, or an import, its user's permissions don't allow is refused, saying why."""
+
+    def test_a_user_who_cant_create_tables_isnt_saved(
+        self, api_client: APIClient, mock_pg_service, allowed_everything
+    ) -> None:
+        refused = [
+            Permission("PostGIS", "spatial imports", True),
+            Permission("create tables", "imports", False, "in no schema"),
+        ]
+        allowed_everything["check_connection"].return_value = (
+            False,
+            "This user may not: create tables (needed for imports).",
+            refused,
+        )
+        response = api_client.post(
+            "/api/pg/services",
+            {"name": "readonly", "host": "db.test", "dbname": "gis", "user": "reader"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"] == "This user may not: create tables (needed for imports)."
+        assert response.json()["permissions"][1]["allowed"] is False
+        assert "readonly" not in [s.name for s in mock_pg_service.list_pg_services()]
+
+    def test_editing_is_retested_only_when_the_connection_changes(
+        self, api_client: APIClient, mock_pg_service, allowed_everything
+    ) -> None:
+        allowed_everything["check_connection"].return_value = (False, "refused", [])
+        same = api_client.put("/api/pg/services/test_service", {"host": "localhost"}, format="json")
+        assert same.status_code == status.HTTP_200_OK
+        moved = api_client.put("/api/pg/services/test_service", {"host": "gone"}, format="json")
+        assert moved.status_code == status.HTTP_400_BAD_REQUEST
+        assert mock_pg_service.list_pg_services()[0].host == "localhost"
+
+    def test_testing_answers_with_the_permissions(
+        self, api_client: APIClient, mock_pg_service
+    ) -> None:
+        response = api_client.post("/api/pg/services/test_service/test")
+        assert [p["name"] for p in response.json()["permissions"]] == [
+            "PostGIS",
+            "create tables",
+            "import rasters",
+        ]
+
+    def test_an_import_into_a_schema_it_cant_write_is_refused_before_it_runs(
+        self, api_client: APIClient, mock_pg_service, allowed_everything, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "roads.geojson"
+        source.write_text("{}")
+        allowed_everything["check_permissions"].return_value = [
+            Permission("PostGIS", "spatial imports", True),
+            Permission("create tables in staging", "importing into it", False),
+            Permission("import rasters", "raster imports", False, required=False),
+        ]
+        with patch("apps.postgres.tasks.subprocess.run") as run:
+            response = api_client.post(
+                "/api/pg/import",
+                {"serviceName": "test_service", "filePath": str(source), "schema": "staging"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json()["error"] == (
+            "This database user may not: create tables in staging (needed for importing into it)."
+        )
+        run.assert_not_called()
+        allowed_everything["check_permissions"].assert_called_once_with("staging")
+
+    def test_a_raster_needs_postgis_raster_or_a_superuser(
+        self, api_client: APIClient, mock_pg_service, allowed_everything, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "dem.tif"
+        source.write_bytes(b"II*\x00")
+        allowed_everything["check_permissions"].return_value = [
+            Permission("PostGIS", "spatial imports", True),
+            Permission("create tables in public", "importing into it", True),
+            Permission("import rasters", "raster imports", False, required=False),
+        ]
+        with patch("apps.postgres.views.run_raster_import") as run:
+            response = api_client.post(
+                "/api/pg/import/raster",
+                {"serviceName": "test_service", "filePath": str(source), "tableName": "dem"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json()["error"] == (
+            "This database user may not: import rasters (needed for raster imports)."
+        )
+        run.assert_not_called()

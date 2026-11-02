@@ -32,6 +32,8 @@ import { createPGService, testPGServiceDirect, testConnectionDirect, type PGServ
 import { springs } from '../../utils/animations'
 import { getCreateGeoServerUrl, getCreatePostGISUrl } from '../../config/env'
 import { BuyExternallyOption } from './BuyExternallyOption'
+import PermissionList from './PermissionList'
+import type { ConnectionPermission } from '../../types'
 
 type ConnectionType = 'geoserver' | 'postgresql'
 
@@ -88,7 +90,11 @@ export default function ConnectionDialog() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    success: boolean
+    message: string
+    permissions?: ConnectionPermission[]
+  } | null>(null)
 
   const toast = useToast()
   const isOpen = activeDialog === 'connection'
@@ -156,20 +162,11 @@ export default function ConnectionDialog() {
           return
         }
 
-        if (connectionId) {
-          // Existing connection - test using the saved connection
-          const result = await testConnection(connectionId)
-          setTestResult(result)
-        } else {
-          // New connection - test directly without saving
-          const result = await testConnectionDirect({
-            name: name || 'Test',
-            url,
-            username,
-            password,
-          })
-          setTestResult(result)
-        }
+        // A saved connection is tested as saved; a new one as typed, without saving it.
+        const result = connectionId
+          ? await testConnection(connectionId)
+          : await testConnectionDirect({ name: name || 'Test', url, username, password })
+        setTestResult({ ...result, permissions: result.info?.permissions })
       } else {
         // PostgreSQL test - test the raw credentials directly, without
         // persisting anything (mirrors the geoserver branch above). This
@@ -576,7 +573,10 @@ export default function ConnectionDialog() {
                     variant="subtle"
                   >
                     <AlertIcon />
-                    <Text fontSize="sm">{testResult.message}</Text>
+                    <Box>
+                      <Text fontSize="sm">{testResult.message}</Text>
+                      <PermissionList permissions={testResult.permissions} />
+                    </Box>
                   </Alert>
                 </motion.div>
               )}

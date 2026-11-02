@@ -10,6 +10,7 @@ import psycopg2
 
 from apps.core.config import get_config
 from apps.core.models import PGService
+from apps.core.permissions import Permission, missing, refusal
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -52,13 +53,73 @@ class PGServiceClient:
             return [row[0] for row in cur.fetchall()]
 
     def test_connection(self) -> tuple[bool, str]:
+        """Connect, and check this user may do what CloudBench does (check_permissions)."""
+        success, message, _permissions = self.check_connection()
+        return success, message
+
+    def check_connection(self) -> tuple[bool, str, list[Permission]]:
+        """(success, message, the permissions checked): see test_connection."""
         try:
             with self._connect() as conn, conn.cursor() as cur:
                 cur.execute("SELECT version()")
                 version = cur.fetchone()[0]
-                return True, f"Connected: {version}"
+            permissions = self.check_permissions()
         except Exception as e:
-            return False, str(e)
+            return False, str(e), []
+        if missing(permissions):
+            return False, refusal("This user", missing(permissions)), permissions
+        return True, f"Connected: {version}", permissions
+
+    def check_permissions(self, schema: str | None = None) -> list[Permission]:
+        """What this user may do in the database, of what CloudBench needs.
+
+        Read from the catalogue only: nothing is created. `schema`: the one an
+        import writes to; without it, any schema the user may create tables in.
+        Importing rasters isn't required of a connection (many hosted
+        databases have no postgis_raster and no superuser): it's checked when
+        a raster is imported.
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis'),
+                    EXISTS (SELECT 1 FROM pg_type WHERE typname = 'raster'),
+                    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user),
+                    ARRAY(
+                        SELECT nspname FROM pg_namespace
+                        WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+                          AND has_schema_privilege(nspname, 'CREATE')
+                        ORDER BY nspname
+                    )
+                """)
+            postgis, raster, superuser, writable = cur.fetchone()
+        if schema is None:
+            creates = Permission(
+                "create tables",
+                "imports",
+                bool(writable),
+                f"in {', '.join(writable)}" if writable else "in no schema",
+            )
+        else:
+            creates = Permission(
+                f"create tables in {schema}",
+                "importing into it",
+                schema in writable,
+            )
+        return [
+            Permission(
+                "PostGIS",
+                "spatial imports (the database has no postgis extension)",
+                postgis,
+            ),
+            creates,
+            Permission(
+                "import rasters",
+                "raster imports (postgis_raster isn't installed, and installing it takes a superuser)",
+                raster or bool(superuser),
+                required=False,
+            ),
+        ]
 
     def get_stats(self) -> dict[str, Any]:
         with self._connect() as conn:  # noqa: SIM117 - large nested block, safer not to auto-dedent

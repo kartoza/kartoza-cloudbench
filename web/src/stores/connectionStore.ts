@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Connection } from '../types'
+import type { Connection, TestConnectionResult } from '../types'
 import * as api from '../api'
 import type { PGService } from '../api'
 
@@ -16,7 +16,7 @@ interface ConnectionState {
   updateConnection: (id: string, conn: Partial<{ name: string; url: string; username: string; password: string }>) => Promise<void>
   removeConnection: (id: string) => Promise<void>
   setActiveConnection: (id: string | null) => void
-  testConnection: (id: string) => Promise<{ success: boolean; message: string }>
+  testConnection: (id: string) => Promise<TestConnectionResult>
   clearError: () => void
 
   // PostgreSQL service actions
@@ -95,8 +95,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
   testConnection: async (id) => {
     try {
-      const result = await api.testConnection(id)
-      return { success: result.success, message: result.message }
+      return await api.testConnection(id)
     } catch (err) {
       return { success: false, message: (err as Error).message }
     }

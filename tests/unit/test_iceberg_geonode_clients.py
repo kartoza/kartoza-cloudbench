@@ -155,6 +155,8 @@ class TestGeoNodeClient:
         # Probes /resources (what the app reads), not the /api/v2/ root, which
         # 401s for credentials it rejects even on a working GeoNode.
         http_mock.add("GET", "/resources", json={"resources": []})
+        http_mock.add("POST", "/uploads/upload", status=500, text="No handlers found")
+        http_mock.add("POST", "/documents/", status=400, json={"doc_file": ["required"]})
         ok, msg = self.make().test_connection()
         assert ok and GN in msg
         # Reached GeoNode but it rejected the credentials -> clear message.
@@ -169,6 +171,29 @@ class TestGeoNodeClient:
         http_mock.add("GET", "/resources", exc=httpx.ConnectError("down"))
         ok, msg = self.make().test_connection()
         assert not ok and "down" in msg
+
+    @pytest.mark.parametrize(
+        "dataset_status, document_status, refused",
+        [
+            (500, 400, ""),
+            (403, 400, "upload datasets (needed for uploading datasets)"),
+            (403, 403, "upload datasets (needed for uploading datasets); upload documents"),
+        ],
+    )
+    def test_a_user_who_may_not_upload_is_refused(
+        self, http_mock, dataset_status, document_status, refused
+    ):
+        """GeoNode checks the permission before the request: 403 means not allowed."""
+        http_mock.add("GET", "/resources", json={"resources": []})
+        http_mock.add("POST", "/uploads/upload", status=dataset_status)
+        http_mock.add("POST", "/documents/", status=document_status)
+        ok, message, permissions = self.make(username="u", password="p").check_connection()
+        assert ok is not bool(refused)
+        assert refused in message if refused else GN in message
+        assert [p.name for p in permissions] == ["read", "upload datasets", "upload documents"]
+        # Nothing it could make: a 1-byte "zip", and a document without its file.
+        upload = http_mock.requests("POST")[0]
+        assert b"cloudbench-permission-check.zip" in upload.content
 
     def test_categories_and_users(self, http_mock):
         http_mock.add("GET", "/categories", json={"categories": [{"identifier": "a"}]})
