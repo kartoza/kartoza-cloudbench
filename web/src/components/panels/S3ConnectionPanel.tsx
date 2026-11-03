@@ -21,6 +21,7 @@ import {
 } from '@chakra-ui/react'
 import {
   FiUpload,
+  FiLayers,
   FiCheckCircle,
   FiAlertCircle,
   FiArchive,
@@ -232,6 +233,21 @@ export default function S3ConnectionPanel({ connectionId, initialPrefix = '' }: 
               >
                 Upload
               </Button>
+              <Tooltip label="Convert every layer in a bucket folder, several at a time" fontSize="xs">
+                <Button
+                  variant="outline"
+                  color="white"
+                  borderColor="whiteAlpha.400"
+                  _hover={{ bg: 'whiteAlpha.200' }}
+                  leftIcon={<FiLayers />}
+                  onClick={() => openDialog('s3bulk', {
+                    mode: 'create',
+                    data: { connectionId, prefix },
+                  })}
+                >
+                  Bulk upload
+                </Button>
+              </Tooltip>
               <Tooltip label="Check published layers' files against the checksums in their catalog entries" fontSize="xs">
                 <Button
                   variant="outline"

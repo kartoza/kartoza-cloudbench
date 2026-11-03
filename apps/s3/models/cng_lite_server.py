@@ -74,6 +74,12 @@ class CngLiteServer(models.Model):
     # Whether it was started to be deleted once its job is done: from the
     # job it was first asked for by (see CngLiteJob.auto_destroy).
     auto_destroy = models.BooleanField(default=True)
+    # The bulk upload that started it, to run its layers one after another
+    # (see apps.s3.bulk_servers); the batch deletes it - if auto_destroy - once
+    # they're done, not the jobs.
+    batch = models.ForeignKey(
+        "CngLiteBatch", null=True, blank=True, on_delete=models.SET_NULL, related_name="servers"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

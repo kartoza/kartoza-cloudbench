@@ -948,6 +948,16 @@ def prune_root_catalog(s3_client, deleted_key: str) -> None:
         logger.exception("Failed to prune catalog.json after deleting %s", deleted_key)
 
 
+def published_folders(s3_client) -> set[str]:
+    """The folders (no trailing slash) the root catalog links to: published layers and layer groups.
+
+    Reads only the root catalog.json - not each layer - so it is cheap enough
+    to ask on every folder listing. Empty if the bucket has no catalog.
+    """
+    root = _load_json(s3_client, CATALOG_KEY)
+    return {folder for _title, folder, _is_catalog in _catalog_children(root)} if root else set()
+
+
 def catalog_collections(s3_client) -> list[dict[str, str]] | None:
     """[{'folder', 'title', 'catalog', 'catalog_title'}, ...] for every layer collection.
 

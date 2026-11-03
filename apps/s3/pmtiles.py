@@ -363,7 +363,7 @@ def cancel_geopackage_inspection(job_id, user):
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
     # Without its connection (deleted since), the staged upload went with it.
-    if job.source_key and job.connection_id:
+    if job.source_key and job.connection_id and not job.source_in_place:
         s3_client = get_s3_client(job.connection_id, user)
         s3_client.delete_object(job.source_key)
     shutil.rmtree(job_directory(KIND, job.id), ignore_errors=True)

@@ -207,6 +207,16 @@ CLOUDNATIVEGIS_CONVERSION_TIMEOUT = max(
     1, int(os.environ.get("CLOUDNATIVEGIS_CONVERSION_TIMEOUT", "1800"))
 )
 CLOUDNATIVEGIS_POLL_INTERVAL = max(1, int(os.environ.get("CLOUDNATIVEGIS_POLL_INTERVAL", "5")))
+# The most conversions a bulk upload may run at once (see apps.s3.bulk).
+CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY", "5"))
+)
+# On demand, the most servers a bulk upload may start at once - what it spends
+# (each is billed per started hour): its N is the number of servers
+# (see apps.s3.bulk_servers).
+CLOUDNATIVEGIS_BULK_MAX_SERVERS = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_BULK_MAX_SERVERS", "5"))
+)
 # How long a conversion waits for its CloudNativeGIS service to answer /health
 # before failing (see CngLiteJob.provision).
 CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 600

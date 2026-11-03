@@ -1,6 +1,7 @@
 """A GeoPackage's original is kept once in its layer group and listed as a `source` asset."""
 
 import hashlib
+import io
 from unittest.mock import Mock
 
 import pytest
@@ -132,3 +133,32 @@ def test_a_failed_move_leaves_the_layers_publishable_without_a_source(gpkg_job):
     client.delete_object.assert_not_called()  # the staged original is kept
     gpkg_job.refresh_from_db()
     assert gpkg_job.source_key == "maps/sources/job-1/CasteloBranco.gpkg"
+
+
+@pytest.mark.django_db
+def test_an_original_in_another_bucket_is_copied_across_and_left_alone(gpkg_job):
+    gpkg_job.source_in_place = True
+    gpkg_job.source_key = "incoming/CasteloBranco.gpkg"
+    gpkg_job.save()
+    client, source_client = Mock(), Mock()
+    source_client.get_object_stream.return_value = io.BytesIO(GPKG)
+    uploaded = {}
+    client.client.upload_fileobj.side_effect = lambda body, _bucket, key, **kwargs: uploaded.update(
+        {key: (body.read(), kwargs["ExtraArgs"]["ContentType"])}
+    )
+
+    asset = _publish_source(gpkg_job, client, "maps/castelobranco", source_client)
+
+    dest = "maps/castelobranco/source/CasteloBranco.gpkg"
+    source_client.get_object_stream.assert_called_once_with("incoming/CasteloBranco.gpkg")
+    assert uploaded == {dest: (GPKG, "application/geopackage+sqlite3")}
+    # Hashed on the way across, so it has its checksum like one uploaded from disk.
+    assert asset["file"] == {
+        "checksum": "1220" + hashlib.sha256(GPKG).hexdigest(),
+        "size": len(GPKG),
+    }
+    # The original isn't moved or deleted, and the job still points at it.
+    client.delete_object.assert_not_called()
+    source_client.delete_object.assert_not_called()
+    gpkg_job.refresh_from_db()
+    assert gpkg_job.source_key == "incoming/CasteloBranco.gpkg"

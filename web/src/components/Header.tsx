@@ -18,7 +18,7 @@ import {
   Image,
   Text,
 } from '@chakra-ui/react'
-import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload, FiLogOut, FiMap } from 'react-icons/fi'
+import { FiSettings, FiRefreshCw, FiHelpCircle, FiRefreshCcw, FiSearch, FiChevronDown, FiUpload, FiLogOut, FiMap, FiLayers } from 'react-icons/fi'
 import { useUIStore } from '../stores/uiStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { useTreeStore } from '../stores/treeStore'
@@ -83,6 +83,18 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
       return
     }
     openDialog('upload', { mode: 'create' })
+  }
+
+  // S3 only: convert every layer in a bucket folder.
+  const handleBulkUpload = () => {
+    if (!selectedNode?.s3ConnectionId) {
+      useUIStore.getState().setError('Select an S3 connection first')
+      return
+    }
+    openDialog('s3bulk', {
+      mode: 'create',
+      data: { connectionId: selectedNode.s3ConnectionId, bucketName: selectedNode.s3Bucket },
+    })
   }
 
   const handleRefresh = () => {
@@ -249,6 +261,12 @@ export default function Header({ onSearchClick, onHelpClick, onMapClick }: Heade
                   onClick={handleUpload}
                 >
                   Upload Data
+                </MenuItem>
+                <MenuItem
+                  icon={<FiLayers />}
+                  onClick={handleBulkUpload}
+                >
+                  Bulk Upload
                 </MenuItem>
               </MenuList>
             </Menu>

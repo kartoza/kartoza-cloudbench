@@ -50,18 +50,34 @@ class FakeS3:
 
     def list_objects(self, prefix="", delimiter="/", max_keys=1000, continuation_token=None):
         keys = [key for key in self.objects if key.startswith(prefix)][:max_keys]
-        return {"objects": [{"key": key} for key in keys], "isTruncated": False}
+        # Objects are all of them, whatever the delimiter (callers filter); with
+        # "/" the folders below the prefix are listed too, as S3 does.
+        folders = sorted(
+            {
+                f"{prefix}{key[len(prefix) :].split('/', 1)[0]}/"
+                for key in keys
+                if "/" in key[len(prefix) :]
+            }
+        )
+        return {
+            "objects": [{"key": key, "size": len(self.objects[key])} for key in keys],
+            "prefixes": folders if delimiter == "/" else [],
+            "isTruncated": False,
+        }
 
     def _get_range(self, Bucket, Key, Range):
         start, end = (int(n) for n in Range.removeprefix("bytes=").split("-"))
         return {"Body": io.BytesIO(self.objects[Key][start : end + 1])}
+
+    def get_object_stream(self, key, byte_range=None):
+        return io.BytesIO(self.objects[key])
 
     def get_object_info(self, key):
         return {"contentLength": len(self.objects[key]), "contentType": self.content_types[key]}
 
     def generate_presigned_url(self, key, expiration=3600, method="get_object", content_type=None):
         self.expirations.append(expiration)
-        url = f"http://minio:9000/bucket/{key}?method={method}"
+        url = f"http://minio:9000/{self.bucket}/{key}?method={method}"
         return f"{url}&type={quote(content_type)}" if content_type else url
 
     def presigned_put(self, url, body):

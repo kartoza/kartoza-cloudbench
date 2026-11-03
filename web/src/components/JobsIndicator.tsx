@@ -20,8 +20,11 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiRefreshCw, FiSquare, FiXCircle } from 'react-icons/fi'
+import { FiActivity, FiAlertCircle, FiCheckCircle, FiCircle, FiLayers, FiRefreshCw, FiSquare, FiXCircle } from 'react-icons/fi'
 import * as api from '../api'
+import { BULK_BATCHES_QUERY_KEY, cancelBulk, isActiveBatch, listBulk, type BulkBatch } from '../api/bulk'
+import { useUIStore } from '../stores/uiStore'
+import { batchProgress, batchSummary } from '../utils/bulkBatch'
 import type { ConversionJob } from '../types'
 import { isActiveJob, isActiveStatus, isCancellableJob, jobKindLabel, layerConversionStatuses } from '../utils/conversionJobs'
 
@@ -121,16 +124,79 @@ function JobRow({ job }: { job: ConversionJob }) {
   )
 }
 
+// A bulk upload is one entry here, however many layers it converts; opening
+// it shows the layers in the Bulk upload dialog.
+function BatchRow({ batch }: { batch: BulkBatch }) {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const openDialog = useUIStore((state) => state.openDialog)
+  const active = isActiveBatch(batch)
+  const cancel = async () => {
+    try {
+      await cancelBulk(batch.id)
+    } catch (err) {
+      toast({ title: "Couldn't stop the bulk upload", description: (err as Error).message, status: 'error', duration: 5000 })
+    }
+    queryClient.invalidateQueries({ queryKey: BULK_BATCHES_QUERY_KEY })
+    queryClient.invalidateQueries({ queryKey: ['bulkBatch', batch.id] })
+  }
+  return (
+    <Box py={2.5} borderBottom="1px solid" borderColor="gray.100" _last={{ borderBottom: 'none' }}>
+      <HStack justify="space-between" align="start" spacing={2}>
+        <Box minW={0}>
+          <HStack spacing={1.5} mb="6px">
+            <Icon as={FiLayers} color="orange.400" boxSize={3.5} />
+            <Text fontSize="sm" fontWeight="600" noOfLines={1}>
+              Bulk upload: {batch.sourceName ? `${batch.sourceName}: ` : ''}{batch.prefix}
+            </Text>
+          </HStack>
+          <Text fontSize="xs" color="gray.500">
+            {batch.jobs.length} layers · {batch.concurrency} at a time · {relativeTime(batch.createdAt)}
+          </Text>
+        </Box>
+        <HStack spacing={1} mt={0.5}>
+          {active && (
+            <Tooltip label="Cancel the batch">
+              <IconButton aria-label="Cancel bulk upload" icon={<FiSquare />} size="xs" variant="ghost" colorScheme="red" onClick={cancel} />
+            </Tooltip>
+          )}
+          {active && <Spinner size="xs" color="blue.500" />}
+          {batch.status === 'completed' && <Icon as={FiCheckCircle} color="green.500" />}
+          {(batch.status === 'failed' || batch.status === 'partial') && <Icon as={FiAlertCircle} color={batch.status === 'failed' ? 'red.500' : 'orange.400'} />}
+          {batch.status === 'cancelled' && <Icon as={FiXCircle} color="gray.400" />}
+        </HStack>
+      </HStack>
+      {active && <Progress value={batchProgress(batch)} size="xs" colorScheme="blue" borderRadius="sm" mt={2} hasStripe isAnimated />}
+      <HStack justify="space-between" mt={1}>
+        <Text fontSize="xs" color="gray.600">{batchSummary(batch)}</Text>
+        <Button
+          size="xs"
+          variant="link"
+          colorScheme="orange"
+          onClick={() => openDialog('s3bulk', { mode: 'view', data: { connectionId: batch.connectionId, batchId: batch.id } })}
+        >
+          Open
+        </Button>
+      </HStack>
+    </Box>
+  )
+}
+
 export default function JobsIndicator() {
   const toast = useToast()
   const queryClient = useQueryClient()
+  const { data: batches = [], isSuccess: batchesLoaded } = useQuery({
+    queryKey: BULK_BATCHES_QUERY_KEY,
+    queryFn: listBulk,
+    refetchInterval: (query) => ((query.state.data ?? []).some(isActiveBatch) ? ACTIVE_POLL_MS / 3 : IDLE_POLL_MS),
+  })
   const { data: jobs = [], isLoading, isError } = useQuery({
     queryKey: CONVERSION_JOBS_QUERY_KEY,
     queryFn: api.getConversionJobs,
     refetchInterval: (query) =>
       (query.state.data ?? []).some(isActiveJob) ? ACTIVE_POLL_MS : IDLE_POLL_MS,
   })
-  const activeCount = jobs.filter(isActiveJob).length
+  const activeCount = jobs.filter(isActiveJob).length + batches.filter(isActiveBatch).length
 
   // Announce a job finishing - one seen running in this session, so a
   // refresh doesn't replay notifications for jobs that finished earlier.
@@ -160,6 +226,32 @@ export default function JobsIndicator() {
     }
     lastStatus.current = current
   }, [jobs, isLoading, isError, toast, queryClient])
+
+  // Likewise a bulk upload finishing: one seen running in this session.
+  const lastBatchStatus = useRef<Map<string, BulkBatch['status']> | null>(null)
+  useEffect(() => {
+    if (!batchesLoaded) return
+    const previous = lastBatchStatus.current
+    if (previous) {
+      for (const batch of batches) {
+        const before = previous.get(batch.id)
+        if (!before || !(before === 'running' || before === 'cancelling') || isActiveBatch(batch)) continue
+        toast({
+          title: `Bulk upload of ${batch.prefix}: ${
+            batch.status === 'completed' ? 'finished' : batch.status === 'cancelled' ? 'cancelled' : batch.status === 'partial' ? 'finished with failures' : 'failed'
+          }`,
+          description: batchSummary(batch),
+          status:
+            batch.status === 'completed' ? 'success' : batch.status === 'cancelled' ? 'info' : batch.status === 'partial' ? 'warning' : 'error',
+          duration: 8000,
+          isClosable: true,
+        })
+        // Newly published layers: refresh the S3 browser listings.
+        if (batch.status === 'completed' || batch.status === 'partial') queryClient.invalidateQueries({ queryKey: ['s3objects'] })
+      }
+    }
+    lastBatchStatus.current = new Map(batches.map((batch) => [batch.id, batch.status]))
+  }, [batches, batchesLoaded, toast, queryClient])
 
   return (
     <Popover placement="bottom-end" isLazy>
@@ -214,7 +306,10 @@ export default function JobsIndicator() {
               </Button>
             </VStack>
           )}
-          {!isLoading && !isError && jobs.length === 0 && (
+          {batches.map((batch) => (
+            <BatchRow key={batch.id} batch={batch} />
+          ))}
+          {!isLoading && !isError && jobs.length === 0 && batches.length === 0 && (
             <Text fontSize="sm" color="gray.500" py={4} textAlign="center">
               No conversions in the last 24 hours.
             </Text>

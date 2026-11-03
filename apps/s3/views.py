@@ -1098,11 +1098,12 @@ def _recent_conversion_jobs(user):
     Lets progress be followed from anywhere in the app - not just the
     upload dialog that started it, which may have been closed or the page
     refreshed. A GeoPackage still waiting for its layers to be picked is
-    left out: that step belongs to the open upload dialog. A running job
+    left out: that step belongs to the open upload dialog. So are the layers
+    of a bulk upload, which is listed as one entry (see S3BulkListView). A running job
     that stopped reporting is marked failed first (see expire_stalled_job).
     """
     jobs = list(
-        CngLiteJob.objects.filter(owner=user)
+        CngLiteJob.objects.filter(owner=user, batch__isnull=True)
         .select_related("instance_server")
         .filter(
             Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
