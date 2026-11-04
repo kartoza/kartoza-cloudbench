@@ -527,6 +527,111 @@ def test_catalog_collections_follows_sub_catalogs():
     assert portolan.catalog_collections(FakeBucket()) is None
 
 
+def test_a_batchs_plain_layer_nests_in_its_shared_sub_catalog():
+    """A bulk-upload layer (no GeoPackage group) goes straight into its batch's sub-catalog."""
+    bucket = FakeBucket()
+    portolan.finalize_layer(
+        bucket,
+        folder="mydata/roads",
+        layer_id="roads",
+        title="Roads",
+        kind="pmtiles",
+        data_assets=[{"filename": "roads.pmtiles", "role": "visual"}],
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="roads.zip",
+        info={"bbox": [1, 2, 3, 4], "layers": ["default"]},
+        catalog_folder="mydata",
+        catalog_title="Mydata",
+        catalog_description="Layers from mydata/, uploaded via CloudBench.",
+    )
+
+    # Only the batch's sub-catalog is linked from the root - not the layer itself.
+    root = bucket.json("catalog.json")
+    assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
+        "./mydata/catalog.json"
+    ]
+    sub = bucket.json("mydata/catalog.json")
+    assert [link["href"] for link in sub["links"] if link["rel"] == "child"] == [
+        "./roads/collection.json"
+    ]
+
+
+def test_a_deeply_nested_batch_layer_still_finds_its_shared_sub_catalog():
+    """A recursive "beside each file" upload's layer can sit several folders under its batch's."""
+    bucket = FakeBucket()
+    portolan.finalize_layer(
+        bucket,
+        folder="incoming/region1/roads",
+        layer_id="roads",
+        title="Roads",
+        kind="pmtiles",
+        data_assets=[{"filename": "roads.pmtiles", "role": "visual"}],
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="roads.zip",
+        info={"bbox": [1, 2, 3, 4], "layers": ["default"]},
+        catalog_folder="incoming",
+        catalog_title="Incoming",
+        catalog_description="Layers from incoming/, uploaded via CloudBench.",
+    )
+
+    collection = bucket.json("incoming/region1/roads/collection.json")
+    links = {link["rel"]: link["href"] for link in collection["links"]}
+    assert links["parent"] == "../../catalog.json"  # two levels up to incoming/catalog.json
+
+    sub = bucket.json("incoming/catalog.json")
+    assert [link["href"] for link in sub["links"] if link["rel"] == "child"] == [
+        "./region1/roads/collection.json"
+    ]
+
+
+def test_a_geopackages_group_nests_in_its_batch_sub_catalog_too():
+    """A GeoPackage bulk-uploaded into a batch keeps its own group, nested under the batch's."""
+    bucket = FakeBucket()
+    portolan.finalize_layer(
+        bucket,
+        folder="incoming/castelo-branco/highway",
+        layer_id="highway",
+        title="Highway",
+        kind="pmtiles",
+        data_assets=[{"filename": "highway.pmtiles", "role": "visual"}],
+        license_id="CC-BY-4.0",
+        provider_name="admin",
+        source_name="CasteloBranco.gpkg",
+        info={"bbox": [1, 2, 3, 4], "layers": ["highway"]},
+        catalog_folder="incoming/castelo-branco",
+        catalog_title="Castelo Branco",
+        catalog_description="Layers from CasteloBranco.gpkg, uploaded via CloudBench.",
+        parent_folder="incoming",
+        parent_title="Incoming",
+        parent_description="Layers from incoming/, uploaded via CloudBench.",
+    )
+
+    # The layer's own parent is still its gpkg group, one level up.
+    highway = bucket.json("incoming/castelo-branco/highway/collection.json")
+    links = {link["rel"]: link["href"] for link in highway["links"]}
+    assert links["root"] == "../../../catalog.json"
+    assert links["parent"] == "../catalog.json"
+
+    # The gpkg's own sub-catalog now has the batch as its parent, not the root.
+    gpkg = bucket.json("incoming/castelo-branco/catalog.json")
+    gpkg_links = {link["rel"]: link["href"] for link in gpkg["links"]}
+    assert gpkg_links["root"] == "../../catalog.json"
+    assert gpkg_links["parent"] == "../catalog.json"
+
+    # The batch's sub-catalog links the gpkg's, and is itself linked from the root.
+    batch = bucket.json("incoming/catalog.json")
+    assert batch["title"] == "Incoming"
+    assert [link["href"] for link in batch["links"] if link["rel"] == "child"] == [
+        "./castelo-branco/catalog.json"
+    ]
+    root = bucket.json("catalog.json")
+    assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
+        "./incoming/catalog.json"
+    ]
+
+
 def test_deleting_a_geopackage_layer_prunes_its_sub_catalog():
     bucket = FakeBucket()
     publish_gpkg_layer(bucket, "highway", "Highway")
