@@ -312,10 +312,10 @@ def test_layers_can_go_to_the_top_level_like_other_uploads(owner, connection, s3
         False,
     )
     assert batch.destination_prefix == ""
-    # Its staged copy is in the top level's sources/, as a single upload's is.
+    # A plain layer converts where it already is: no staged copy at all.
     bulk.step_batch(batch.pk)
     job = batch.jobs.get(source_name="dem.tif")
-    assert job.source_key == f"sources/{job.id}/dem.tif"
+    assert job.source_key == "bulk-test/dem.tif"
     assert s3.objects["bulk-test/dem.tif"]  # the original stays
 
 
@@ -637,15 +637,18 @@ def test_a_batch_where_everything_fails_fails(owner, connection, s3, manual):
 
 @pytest.mark.django_db
 def test_a_layer_that_cant_be_staged_fails_alone(owner, connection, s3, manual):
-    seed(s3, ["a.zip", "b.zip"])
-    batch = start(owner, connection, ["a.zip", "b.zip"], concurrency=2)
-    del s3.objects["incoming/a.zip"]  # gone since the preview
+    # Only a GeoPackage stages a copy of its original (it's moved into its
+    # layer group once converted) - a plain file converts where it already
+    # is, so it has nothing to fail to stage.
+    seed(s3, ["a.gpkg", "b.zip"])
+    batch = start(owner, connection, ["a.gpkg", "b.zip"], concurrency=2)
+    del s3.objects["incoming/a.gpkg"]  # gone since the preview
 
     bulk.step_batch(batch.pk)
 
     jobs = jobs_by_name(batch)
-    assert jobs["a.zip"].status == Status.FAILED
-    assert jobs["a.zip"].completed_at is not None
+    assert jobs["a.gpkg"].status == Status.FAILED
+    assert jobs["a.gpkg"].completed_at is not None
     assert jobs["b.zip"].status == Status.PENDING
 
 

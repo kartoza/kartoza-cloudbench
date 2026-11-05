@@ -12,6 +12,15 @@ from apps.s3.models import CngLiteBatch, CngLiteJob, CngLiteServer, S3Connection
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def geohosting_settings(settings):
+    # reusable() asks GeoHosting (CngLiteServer.running_for): GeoHostingClient()
+    # itself refuses to construct unless it's configured.
+    settings.GEOHOSTING_URL = "http://geohosting"
+    settings.GEOHOSTING_CLIENT_ID = "cloudbench"
+    settings.GEOHOSTING_CLIENT_SECRET = "secret"
+
+
 @pytest.fixture
 def owner(django_user_model):
     return django_user_model.objects.create(username="7")
