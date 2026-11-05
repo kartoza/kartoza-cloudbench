@@ -44,9 +44,11 @@ def test_doesnt_retry_a_different_operational_error():
     def broken():
         raise OperationalError("no such table: foo")
 
-    with patch.object(retry_module.time, "sleep") as sleep:
-        with pytest.raises(OperationalError, match="no such table"):
-            retry_if_locked(broken)
+    with (
+        patch.object(retry_module.time, "sleep") as sleep,
+        pytest.raises(OperationalError, match="no such table"),
+    ):
+        retry_if_locked(broken)
 
     sleep.assert_not_called()
 
@@ -94,8 +96,10 @@ def test_request_retry_doesnt_retry_a_real_response():
     def refused(*, response):
         raise httpx.HTTPStatusError("not found", request=None, response=response)
 
-    with patch.object(retry_module.time, "sleep") as sleep:
-        with pytest.raises(httpx.HTTPStatusError):
-            retry_transient_request(refused, response=httpx.Response(404))
+    with (
+        patch.object(retry_module.time, "sleep") as sleep,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        retry_transient_request(refused, response=httpx.Response(404))
 
     sleep.assert_not_called()

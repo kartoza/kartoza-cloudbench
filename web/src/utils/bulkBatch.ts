@@ -20,23 +20,18 @@ export interface BatchCounts {
   failed: number
   skipped: number
   cancelled: number
-  // Jobs that are over, however they ended.
-  finished: number
 }
 
 export function batchCounts(batch: Pick<BulkBatch, 'jobs'>): BatchCounts {
   const count = (status: BulkJob['status']) => batch.jobs.filter((job) => job.status === status).length
-  const waiting = count('queued')
-  const running = count('running')
   return {
     total: batch.jobs.length,
-    waiting,
-    running,
+    waiting: count('queued'),
+    running: count('running'),
     completed: count('completed'),
     failed: count('failed'),
     skipped: count('skipped'),
     cancelled: count('cancelled'),
-    finished: batch.jobs.length - waiting - running,
   }
 }
 
@@ -50,12 +45,18 @@ export function batchProgress(batch: Pick<BulkBatch, 'jobs'>): number {
   return Math.round(done / batch.jobs.length)
 }
 
-// "12 of 23 done · 2 running · 1 failed", for a batch's summary line.
+// "12 of 23 done · 2 running · 1 failed · 1 cancelled", for a batch's summary
+// line. "Done" only counts a real success - a failed or cancelled layer is
+// just as over, but isn't "done" by any reasonable reading of the word, so
+// it's broken out on its own instead of being folded silently into the
+// count (which used to make a batch that failed or was cancelled outright
+// still claim everything was "done").
 export function batchSummary(batch: Pick<BulkBatch, 'jobs'>): string {
   const counts = batchCounts(batch)
-  const parts = [`${counts.finished} of ${counts.total} done`]
+  const parts = [`${counts.completed} of ${counts.total} done`]
   if (counts.running) parts.push(`${counts.running} running`)
   if (counts.failed) parts.push(`${counts.failed} failed`)
+  if (counts.cancelled) parts.push(`${counts.cancelled} cancelled`)
   return parts.join(' · ')
 }
 
