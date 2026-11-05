@@ -190,5 +190,11 @@ export async function retryBulk(batchId: string): Promise<BulkBatch> {
   return handleResponse(response)
 }
 
+// Convert a cancelled batch's unfinished layers again.
+export async function restartBulk(batchId: string): Promise<BulkBatch> {
+  const response = await fetch(`${API_BASE}/s3/bulk/${encodeURIComponent(batchId)}/restart`, { method: 'POST' })
+  return handleResponse(response)
+}
+
 // The Jobs panel's and the dialog's shared list of batches.
 export const BULK_BATCHES_QUERY_KEY = ['bulkBatches']

@@ -230,3 +230,22 @@ class S3BulkRetryView(APIView):
         except ValueError as exc:
             return _error(str(exc), status.HTTP_409_CONFLICT)
         return Response(batch.to_dict())
+
+
+class S3BulkRestartView(APIView):
+    """Convert a cancelled batch's unfinished layers again."""
+
+    def post(self, request, batch_id):
+        """POST -> the batch, running again.
+
+        409 if it isn't cancelled (or stuck cancelling - see
+        apps.s3.bulk.restart_batch) or nothing's left to do.
+        """
+        batch = _batch(request, batch_id)
+        if batch is None:
+            return _error("Bulk upload not found", status.HTTP_404_NOT_FOUND)
+        try:
+            batch = bulk.restart_batch(batch)
+        except ValueError as exc:
+            return _error(str(exc), status.HTTP_409_CONFLICT)
+        return Response(batch.to_dict())

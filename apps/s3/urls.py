@@ -112,6 +112,11 @@ urlpatterns = [
         bulk_views.S3BulkRetryView.as_view(),
         name="s3-bulk-retry",
     ),
+    path(
+        "s3/bulk/<str:batch_id>/restart",
+        bulk_views.S3BulkRestartView.as_view(),
+        name="s3-bulk-restart",
+    ),
     # Upload
     path(
         "s3/upload/<str:conn_id>",

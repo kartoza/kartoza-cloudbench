@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getBulk: vi.fn(),
   cancelBulk: vi.fn(),
   retryBulk: vi.fn(),
+  restartBulk: vi.fn(),
   isActiveBatch: (batch: { status: string }) => batch.status === 'running' || batch.status === 'cancelling',
   BULK_BATCHES_QUERY_KEY: ['bulkBatches'],
 }))
@@ -430,6 +431,48 @@ describe('BulkUploadDialog', () => {
     expect(await screen.findByText(/missing its .shx/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Retry failed (1)' }))
     await waitFor(() => expect(api.retryBulk).toHaveBeenCalledWith('b-1'))
+  })
+
+  it('offers Restart, not Retry, on a cancelled batch', async () => {
+    api.getBulk.mockResolvedValue(
+      batch({
+        status: 'cancelled',
+        jobs: [
+          { key: 'k1', name: 'a.zip', kind: 'pmtiles', status: 'cancelled', progress: 0, message: 'Cancelled' },
+          {
+            key: 'k2',
+            name: 'b.tif',
+            kind: 'cog',
+            status: 'failed',
+            progress: 30,
+            message: 'x',
+            error: 'boom',
+          },
+          { key: 'k3', name: 'c.laz', kind: 'copc', status: 'completed', progress: 100, message: 'Published' },
+        ],
+      })
+    )
+    api.restartBulk.mockResolvedValue(batch())
+    renderDialog({ connectionId: 'c1', batchId: 'b-1' })
+
+    const restartButton = await screen.findByRole('button', { name: 'Restart (2)' })
+    expect(screen.queryByRole('button', { name: /Retry failed/ })).not.toBeInTheDocument()
+
+    fireEvent.click(restartButton)
+    await waitFor(() => expect(api.restartBulk).toHaveBeenCalledWith('b-1'))
+  })
+
+  it('offers an unqualified Restart on a batch still cancelling, for when it is stuck', async () => {
+    api.getBulk.mockResolvedValue(batch({ status: 'cancelling' }))
+    api.restartBulk.mockRejectedValue(new Error('That bulk upload is still cancelling: give it a moment.'))
+    renderDialog({ connectionId: 'c1', batchId: 'b-1' })
+
+    const restart = await screen.findByRole('button', { name: 'Restart' })
+    // Cancelling is still shown as active too: both can be true at once.
+    expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled()
+
+    fireEvent.click(restart)
+    await waitFor(() => expect(api.restartBulk).toHaveBeenCalledWith('b-1'))
   })
 
   it('says when a batch is gone', async () => {

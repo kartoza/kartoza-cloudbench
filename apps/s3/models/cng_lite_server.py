@@ -6,6 +6,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
+from apps.core.retry import retry_if_locked
 
 # What would tell the user which server it is (Hetzner's type name, e.g.
 # "cx23", and the specifications' "description", the type name again): never
@@ -94,7 +95,9 @@ class CngLiteServer(models.Model):
         """Save GeoHosting's `answer` about a server (see GeoHostingClient), owned by `owner`.
 
         Returns the server, created the first time GeoHosting tells of it -
-        with `auto_destroy`, which a later answer doesn't change.
+        with `auto_destroy`, which a later answer doesn't change. Retries a
+        few times if sqlite's writer lock refuses it (see apps.core.retry) -
+        a bulk upload's servers can all be saving one at once.
         """
         picked = answer.get("server") or {}
         values = {
@@ -109,7 +112,8 @@ class CngLiteServer(models.Model):
             values["type_id"] = picked.get("id")
             values["specification"] = picked.get("specifications")
             values["label"] = picked.get("label") or ""
-        server, _ = cls.objects.update_or_create(
+        server, _ = retry_if_locked(
+            cls.objects.update_or_create,
             instance_id=answer["server_id"],
             defaults=values,
             create_defaults={**values, "auto_destroy": auto_destroy},
@@ -172,4 +176,4 @@ class CngLiteServer(models.Model):
         """Gone at GeoHosting (nothing to answer about it any more): deleted, token forgotten."""
         self.status = self.Status.DELETED
         self.api_token = ""
-        self.save(update_fields=["status", "api_token", "updated_at"])
+        retry_if_locked(self.save, update_fields=["status", "api_token", "updated_at"])

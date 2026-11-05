@@ -7,18 +7,24 @@ them as slots free up: at most `concurrency` run at once. Each job then runs
 as any upload's does (CNGProcessingClient) - bulk only decides when, and from
 which file.
 
-A job's original is never handed to the pipeline, which moves and deletes
-the source it is given: it is copied to the job's own staging key first -
-within S3, nothing downloaded. A folder in another bucket than the layers
-go to (see start_batch) isn't copied: each job converts its file where it
-is, handing CloudNativeGIS a URL to it, and leaves it alone.
+A GeoPackage's original is never handed to the pipeline, which moves it
+into its layer group once converted (_publish_source): it is copied to the
+job's own staging key first - within S3, nothing downloaded - so what gets
+moved is CloudBench's own disposable copy, not the user's file. Nothing
+else the pipeline converts is ever moved or deleted, so it converts where
+it already is, handing CloudNativeGIS a URL straight to it - as does a
+GeoPackage in another bucket than the layers go to (see start_batch):
+either way, nothing of CloudBench's own is left behind in the source
+folder.
 """
 
 import contextlib
 import logging
 import re
+import shutil
 import threading
 import time
+from datetime import timedelta
 from pathlib import PurePosixPath
 
 from django.conf import settings
@@ -32,6 +38,7 @@ from .cng_lite import (
     cancel_job,
     check_target,
     finish_job,
+    job_directory,
     run_conversion,
     source_object_key,
     target_folder,
@@ -39,6 +46,7 @@ from .cng_lite import (
 from .geopackage import is_geopackage
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
+    CANCELLABLE_CNG_LITE_JOB_STATUSES,
     CngLiteBatch,
     CngLiteJob,
     CngLiteJobStatus,
@@ -604,14 +612,19 @@ def _stop(job):
 
 
 def _start_job(job):
-    """Give a queued job its slot: stage its source, and run it in a thread of its own.
+    """Give a queued job its slot: stage its source if it needs one, and run it in a thread of its own.
 
-    The original is copied to the job's staging key, where the pipeline may
-    move or delete it. One in another bucket than the layers go to isn't
-    copied at all: the job converts it where it is (see CngLiteJob.source_in_place),
-    its key already set. A layer that already exists fails the job unless
-    it replaces it (the batch's "stop" policy; see start_batch). Anything
-    that stops it starting fails the job, not the batch.
+    A GeoPackage's original is copied to the job's own staging key, since
+    the pipeline moves it into its layer group once converted (see
+    _publish_source) - it must be its own disposable copy, not the user's
+    original. Nothing else the pipeline converts is ever moved or deleted,
+    so a plain file (shapefile, GeoTIFF, LAS/LAZ) converts where it already
+    is instead, leaving no "sources/" copy behind - the same as one in
+    another bucket than the layers go to, which is never copied either way
+    (see CngLiteJob.source_in_place). Either way the key is set up front. A
+    layer that already exists fails the job unless it replaces it (the
+    batch's "stop" policy; see start_batch). Anything that stops it
+    starting fails the job, not the batch.
     """
     batch = job.batch
     try:
@@ -621,7 +634,7 @@ def _start_job(job):
             raise ValueError(f'The connection to the "{batch.source_bucket}" bucket was deleted.')
         s3_client = get_s3_client(str(job.connection_id), job.owner)
         check_target(s3_client, job.output_key, job.source_name, job.replace_existing)
-        if job.source_in_place:
+        if job.source_in_place or not is_geopackage(job.source_name):
             source_key = job.origin_key
         else:
             source_key = source_object_key(job.output_key, job.id, job.source_name)
@@ -686,22 +699,15 @@ def cancel_batch(batch):
     return batch
 
 
-def retry_failed(batch):
-    """Queue a finished batch's failed layers again, and start running it.
+def _requeue_and_run(batch, jobs):
+    """Queue `jobs` of a finished `batch` again, and start running it.
 
-    A layer that failed after its source was staged may have left files in
-    its folder, so the retry replaces them; one that failed before (it
-    already existed, with `stop`) still doesn't. Raises ValueError if the
-    batch is running or nothing failed.
+    A job that got far enough to stage its source may have left files in
+    its folder, so it replaces them; one that never got that far still
+    doesn't. Shared by retry_failed and restart_batch - the only
+    difference between them is which jobs qualify.
     """
-    if batch.is_active:
-        raise ValueError("That bulk upload is still running.")
-    failed = list(batch.jobs.filter(status=CngLiteJobStatus.FAILED))
-    if not failed:
-        raise ValueError("Nothing failed in that bulk upload.")
-    if CngLiteBatch.objects.filter(owner=batch.owner, status__in=CngLiteBatch.ACTIVE).exists():
-        raise ValueError("A bulk upload is already running: wait for it, or cancel it.")
-    for job in failed:
+    for job in jobs:
         CngLiteJob.objects.filter(pk=job.pk).update(
             status=CngLiteJobStatus.QUEUED,
             replace_existing=job.replace_existing or bool(job.source_key),
@@ -722,13 +728,108 @@ def retry_failed(batch):
     CngLiteBatch.objects.filter(pk=batch.pk).update(
         status=CngLiteBatch.Status.RUNNING,
         completed_at=None,
-        # The layers retried belong in the VRT too: build it again.
+        # The layers queued again belong in the VRT too: build it again.
         vrt={"state": bulk_vrt.PENDING} if batch.create_vrt else {},
         updated_at=timezone.now(),
     )
     batch.refresh_from_db()
     _start_coordinator(batch.pk)
     return batch
+
+
+def _check_nothing_else_running(batch):
+    if CngLiteBatch.objects.filter(owner=batch.owner, status__in=CngLiteBatch.ACTIVE).exists():
+        raise ValueError("A bulk upload is already running: wait for it, or cancel it.")
+
+
+def retry_failed(batch):
+    """Queue a finished batch's failed layers again, and start running it.
+
+    Raises ValueError if the batch is running or nothing failed.
+    """
+    if batch.is_active:
+        raise ValueError("That bulk upload is still running.")
+    failed = list(batch.jobs.filter(status=CngLiteJobStatus.FAILED))
+    if not failed:
+        raise ValueError("Nothing failed in that bulk upload.")
+    _check_nothing_else_running(batch)
+    return _requeue_and_run(batch, failed)
+
+
+def _finish_stuck_cancelling(batch):
+    """Finish cancelling a batch nothing is driving any more, as CngLiteJobStatus.CANCELLED.
+
+    Its coordinator calls _stop (cancel_job) on every running job once the
+    batch is CANCELLING - but if it died before it got to one (the same
+    silent death this is all for), that job is left active, never even
+    asked to stop. So first, any of its jobs still cancellable (not
+    publishing or otherwise genuinely unstoppable) that isn't CANCELLING
+    yet is asked now, exactly as the coordinator would have. What's left -
+    the same ones a restart would already finish this way (see
+    resume_interrupted_conversions) - is finished as CANCELLED, but only
+    once CANCELLING and gone untouched for CLOUDNATIVEGIS_BULK_CANCEL_STUCK_AFTER:
+    a healthy cancel usually resolves within a poll or two on its own
+    (asking just now counts as touching it, so it gets that long to), and
+    racing whatever might still be finishing it - two different threads
+    both call finish_job on the same job, one of them about to requeue it -
+    is worse than waiting. Raises ValueError if any job is still active in
+    some other, genuinely unstoppable way (e.g. publishing): that isn't
+    this function's to resolve.
+    """
+    for job in batch.jobs.filter(status__in=CANCELLABLE_CNG_LITE_JOB_STATUSES):
+        _stop(job)
+    jobs = list(batch.jobs.filter(status__in=ACTIVE_CNG_LITE_JOB_STATUSES))
+    stuck = [job for job in jobs if job.status == CngLiteJobStatus.CANCELLING]
+    if len(stuck) != len(jobs):
+        raise ValueError("That bulk upload is still cancelling: a layer is still being worked on.")
+    cutoff = timezone.now() - timedelta(seconds=settings.CLOUDNATIVEGIS_BULK_CANCEL_STUCK_AFTER)
+    if any(job.updated_at >= cutoff for job in stuck):
+        raise ValueError("That bulk upload is still cancelling: give it a moment.")
+    for job in stuck:
+        # Claimed by this call only: anything else already finishing it is left alone.
+        claimed = CngLiteJob.objects.filter(
+            pk=job.pk, status=CngLiteJobStatus.CANCELLING, updated_at__lt=cutoff
+        ).update(updated_at=timezone.now())
+        if not claimed:
+            continue
+        shutil.rmtree(job_directory(job.kind, job.id), ignore_errors=True)
+        finish_job(job, CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
+    step_batch(batch.pk)  # nothing active left: finishes the batch itself as cancelled
+    batch.refresh_from_db()
+
+
+def restart_batch(batch):
+    """Finish cancelling a batch if nothing is still doing that, queue its unfinished
+    layers again, and start running it.
+
+    A batch stuck at `cancelling` - nothing left to drive it, e.g. after a
+    restart - is finished first (see _finish_stuck_cancelling); once
+    cancelled, its layers are either done or cancelled, none still running,
+    so there is nothing left for a stray thread to race. On demand, that can
+    still leave it cancelling - its servers take GeoHosting a while to
+    delete - in which case this only gets that moving again (the coordinator
+    wasn't running it any more either); restarting the layers themselves
+    waits for a later call, once it is actually done. Raises ValueError if
+    the batch isn't cancelled or cancelling, a layer is still genuinely
+    running, or every layer was already done (nothing to restart).
+    """
+    if batch.status == CngLiteBatch.Status.CANCELLING:
+        _finish_stuck_cancelling(batch)
+        if batch.status == CngLiteBatch.Status.CANCELLING:
+            _start_coordinator(batch.pk)
+            raise ValueError(
+                "Still finishing cancelling: its servers are still being deleted. "
+                "Try restarting again once it shows as cancelled."
+            )
+    if batch.status != CngLiteBatch.Status.CANCELLED:
+        raise ValueError("Only a cancelled bulk upload can be restarted.")
+    unfinished = list(
+        batch.jobs.filter(status__in=[CngLiteJobStatus.CANCELLED, CngLiteJobStatus.FAILED])
+    )
+    if not unfinished:
+        raise ValueError("Nothing to restart: every layer already finished.")
+    _check_nothing_else_running(batch)
+    return _requeue_and_run(batch, unfinished)
 
 
 def resume_batches():

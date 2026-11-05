@@ -1,11 +1,13 @@
 """Bulk upload: a bucket folder's layers converted N at a time (apps.s3.bulk)."""
 
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
 import pytest
+from django.utils import timezone
 
 from apps.s3 import bulk, bulk_servers
 from apps.s3.models import CngLiteBatch, CngLiteJob, CngLiteJobStatus, S3Connection
@@ -111,6 +113,13 @@ def set_status(batch, name, status, **values):
 
 def statuses(batch):
     return {job.source_name: job.status for job in batch.jobs.all()}
+
+
+def age(batch, minutes=5):
+    """Make every job of `batch` look like it hasn't been touched for a while."""
+    CngLiteJob.objects.filter(batch=batch).update(
+        updated_at=timezone.now() - timedelta(minutes=minutes)
+    )
 
 
 # -- classify -------------------------------------------------------------------
@@ -556,7 +565,10 @@ def test_never_more_jobs_running_than_slots(owner, connection, s3, manual):
 
 
 @pytest.mark.django_db
-def test_a_job_gets_a_copy_of_its_original_and_the_original_stays(owner, connection, s3, manual):
+def test_a_plain_layer_converts_where_it_already_is(owner, connection, s3, manual):
+    # Nothing ever moves or deletes a plain layer's original, so it doesn't
+    # need its own disposable copy, unlike a GeoPackage's (see the next test):
+    # it's converted where it already is, leaving no "sources/" behind.
     seed(s3, ["a.zip"], size=4)
     s3.objects["incoming/a.zip"] = b"the original"
     batch = start(owner, connection, ["a.zip"], concurrency=1)
@@ -565,10 +577,30 @@ def test_a_job_gets_a_copy_of_its_original_and_the_original_stays(owner, connect
 
     job = batch.jobs.get()
     assert job.status == Status.PENDING
-    assert job.source_key == f"incoming/sources/{job.id}/a.zip"
-    assert s3.objects[job.source_key] == b"the original"
+    assert job.source_key == "incoming/a.zip"
     assert s3.objects["incoming/a.zip"] == b"the original"
+    assert not any("/sources/" in key for key in s3.objects)
     assert conversions(manual) == [job.id]
+
+
+@pytest.mark.django_db
+def test_a_geopackage_gets_a_copy_of_its_original_and_the_original_stays(
+    owner, connection, s3, manual
+):
+    # A GeoPackage's original is moved into its layer group once converted
+    # (_publish_source), so it needs its own disposable copy - the user's
+    # original must be left alone.
+    seed(s3, ["cadastre.gpkg"], size=4)
+    s3.objects["incoming/cadastre.gpkg"] = b"the original"
+    batch = start(owner, connection, ["cadastre.gpkg"], concurrency=1)
+
+    bulk.step_batch(batch.pk)
+
+    job = batch.jobs.get()
+    assert job.status == Status.PENDING
+    assert job.source_key == f"incoming/sources/{job.id}/cadastre.gpkg"
+    assert s3.objects[job.source_key] == b"the original"
+    assert s3.objects["incoming/cadastre.gpkg"] == b"the original"
 
 
 @pytest.mark.django_db
@@ -786,6 +818,176 @@ def test_retry_needs_a_finished_batch_with_failures(owner, connection, s3, manua
     batch.refresh_from_db()
     with pytest.raises(ValueError, match="Nothing failed"):
         bulk.retry_failed(batch)
+
+
+# -- restart ----------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_restart_queues_the_cancelled_and_failed_layers_again(owner, connection, s3, manual):
+    names = ["a.zip", "b.zip", "c.zip"]
+    seed(s3, names)
+    # Only two slots: c never gets a turn before the user cancels.
+    batch = start(owner, connection, names, concurrency=2)
+    bulk.step_batch(batch.pk)
+    assert statuses(batch)["c.zip"] == "queued"
+    # a completes; b fails in the pipeline, its source already staged.
+    set_status(batch, "a.zip", Status.COMPLETED)
+    set_status(batch, "b.zip", Status.FAILED, error="boom", progress=40, cng_job_id="cng-1")
+
+    batch = bulk.cancel_batch(batch)
+
+    # c, still waiting, is cancelled outright; a and b are untouched (already terminal).
+    assert batch.status == "cancelled"
+    assert statuses(batch) == {"a.zip": "completed", "b.zip": "failed", "c.zip": "cancelled"}
+
+    batch = bulk.restart_batch(batch)
+
+    assert batch.status == "running"
+    assert batch.completed_at is None
+    jobs = jobs_by_name(batch)
+    assert (jobs["a.zip"].status, jobs["b.zip"].status, jobs["c.zip"].status) == (
+        "completed",
+        "queued",
+        "queued",
+    )
+    assert (jobs["b.zip"].error, jobs["b.zip"].progress, jobs["b.zip"].cng_job_id) == ("", 0, "")
+    # What the failed attempt staged is replaced; c never got that far.
+    assert jobs["b.zip"].replace_existing is True
+    assert jobs["c.zip"].replace_existing is False
+    assert conversions(manual) == [jobs["a.zip"].id, jobs["b.zip"].id]  # before the restart
+
+
+@pytest.mark.django_db
+def test_restart_needs_a_cancelled_batch(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+    batch = start(owner, connection, ["a.zip"])
+    with pytest.raises(ValueError, match="Only a cancelled"):
+        bulk.restart_batch(batch)
+
+    bulk.step_batch(batch.pk)
+    set_status(batch, "a.zip", Status.COMPLETED)
+    bulk.step_batch(batch.pk)
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+    with pytest.raises(ValueError, match="Only a cancelled"):
+        bulk.restart_batch(batch)
+
+
+@pytest.mark.django_db
+def test_restart_needs_something_left_to_restart(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+    batch = start(owner, connection, ["a.zip"])
+    bulk.step_batch(batch.pk)
+    set_status(batch, "a.zip", Status.COMPLETED)
+    # Cancelling right as the last layer finishes still ends the batch cancelled.
+    batch = bulk.cancel_batch(batch)
+    batch.refresh_from_db()
+    assert batch.status == "cancelled"
+
+    with pytest.raises(ValueError, match="Nothing to restart"):
+        bulk.restart_batch(batch)
+
+
+@pytest.mark.django_db
+def test_restart_refuses_while_another_batch_runs(owner, connection, s3, manual):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start(owner, connection, ["a.zip"], prefix="incoming/", concurrency=1)
+    batch = bulk.cancel_batch(batch)
+    batch.refresh_from_db()
+    assert batch.status == "cancelled"
+    other = start(owner, connection, ["b.zip"], prefix="incoming/", concurrency=1)
+    assert other.status == "running"
+
+    with pytest.raises(ValueError, match="already running"):
+        bulk.restart_batch(batch)
+
+
+@pytest.mark.django_db
+def test_restart_finishes_a_batch_stuck_cancelling(owner, connection, s3, manual):
+    names = ["a.zip", "b.zip", "c.zip"]
+    seed(s3, names)
+    batch = start(owner, connection, names, concurrency=2)
+    bulk.step_batch(batch.pk)  # a, b start; c stays queued
+
+    batch = bulk.cancel_batch(batch)
+
+    # Nothing ever finishes a or b here - no thread really runs them in this
+    # test - exactly what a coordinator dying mid-cancel leaves behind.
+    assert batch.status == "cancelling"
+    assert statuses(batch) == {"a.zip": "cancelling", "b.zip": "cancelling", "c.zip": "cancelled"}
+    age(batch)  # old enough that nothing could still be finishing it
+
+    batch = bulk.restart_batch(batch)
+
+    assert batch.status == "running"
+    jobs = jobs_by_name(batch)
+    assert (jobs["a.zip"].status, jobs["b.zip"].status, jobs["c.zip"].status) == (
+        "queued",
+        "queued",
+        "queued",
+    )
+
+
+@pytest.mark.django_db
+def test_restart_wont_touch_a_batch_with_something_genuinely_running(owner, connection, s3, manual):
+    names = ["a.zip", "b.zip"]
+    seed(s3, names)
+    batch = start(owner, connection, names, concurrency=2)
+    bulk.step_batch(batch.pk)
+    # a is already publishing - too far along to cancel - when the user cancels.
+    set_status(batch, "a.zip", Status.PUBLISHING)
+
+    batch = bulk.cancel_batch(batch)
+
+    assert statuses(batch) == {"a.zip": "publishing", "b.zip": "cancelling"}
+    assert batch.status == "cancelling"
+
+    with pytest.raises(ValueError, match="still being worked on"):
+        bulk.restart_batch(batch)
+    # Untouched: a real thread could still be driving a.zip.
+    assert statuses(batch) == {"a.zip": "publishing", "b.zip": "cancelling"}
+
+
+@pytest.mark.django_db
+def test_restart_wont_race_a_cancel_thats_still_fresh(owner, connection, s3, manual):
+    names = ["a.zip", "b.zip"]
+    seed(s3, names)
+    batch = start(owner, connection, names, concurrency=2)
+    bulk.step_batch(batch.pk)
+    batch = bulk.cancel_batch(batch)
+    assert batch.status == "cancelling"
+    # Not aged: this could still be a healthy cancel about to resolve on its own.
+
+    with pytest.raises(ValueError, match="still cancelling: give it a moment"):
+        bulk.restart_batch(batch)
+    assert statuses(batch) == {"a.zip": "cancelling", "b.zip": "cancelling"}
+
+
+@pytest.mark.django_db
+def test_restart_gets_a_batch_stuck_deleting_servers_moving_again(
+    owner, connection, s3, manual, geohosting
+):
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start_on_servers(owner, connection, ["a.zip", "b.zip"], concurrency=2)
+    bulk.step_batch(batch.pk)  # two servers starting, nothing running
+    batch = bulk.cancel_batch(batch)
+    bulk.step_batch(batch.pk)  # layers cancelled, servers asked to delete
+    assert set(statuses(batch).values()) == {Status.CANCELLED}
+    batch.refresh_from_db()
+    assert batch.status == "cancelling"  # still waiting on GeoHosting
+    # Nothing calls step_batch again here: what a dead coordinator leaves behind.
+
+    with pytest.raises(ValueError, match="still being deleted"):
+        bulk.restart_batch(batch)
+
+    # The coordinator was restarted...
+    assert manual.call_args_list[-1].kwargs["target"] is bulk.run_batch
+    assert manual.call_args_list[-1].kwargs["args"] == (batch.pk,)
+    geohosting.finish_deleting()
+    assert bulk.step_batch(batch.pk) is False  # ...and gets the servers the rest of the way
+    batch.refresh_from_db()
+    assert batch.status == "cancelled"
 
 
 @pytest.mark.django_db
@@ -1201,6 +1403,7 @@ class FakeGeoHosting:
 
     def __init__(self):
         self.servers = {}
+        self.owners = {}
         self.created = []
         self.deleted = []
         self.create_error = None
@@ -1223,11 +1426,20 @@ class FakeGeoHosting:
             "token": "",
         }
         self.servers[str(server_id)] = answer
+        self.owners[str(server_id)] = username
         return dict(answer)
 
     def get_server(self, server_id, log=None):
         answer = self.servers.get(str(server_id))
         return dict(answer) if answer else None
+
+    def list_servers(self, username, log=None):
+        """`username`'s servers still provisioning or ready, newest first."""
+        return [
+            dict(answer)
+            for server_id, answer in reversed(self.servers.items())
+            if self.owners.get(server_id) == username and answer["status"] in ("provisioning", "ready")
+        ]
 
     def delete_server(self, server_id, log=None):
         from apps.core.geohosting import GeoHostingError  # noqa: PLC0415

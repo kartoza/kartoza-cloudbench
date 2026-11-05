@@ -97,6 +97,17 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": Path(os.environ.get("CLOUDBENCH_DATA_FOLDER", BASE_DIR)) / "db.sqlite3",
+        "OPTIONS": {
+            # WAL lets readers (e.g. the frontend's polling GETs) proceed
+            # without waiting on a writer - most of what a bulk upload's
+            # concurrent threads (one per server/job) do to each other.
+            # SQLite still allows only one writer at a time either way, so
+            # a writer can still have to wait on another - 20s (Django's
+            # default is 5) gives it room to, rather than raising "database
+            # is locked" under a batch's normal write bursts.
+            "init_command": "PRAGMA journal_mode=wal;",
+            "timeout": int(os.environ.get("CLOUDBENCH_SQLITE_TIMEOUT", "20")),
+        },
     }
 }
 
@@ -217,6 +228,24 @@ CLOUDNATIVEGIS_BULK_MAX_CONCURRENCY = max(
 CLOUDNATIVEGIS_BULK_MAX_SERVERS = max(
     1, int(os.environ.get("CLOUDNATIVEGIS_BULK_MAX_SERVERS", "5"))
 )
+# How long a batch may sit cancelling with no job of its own updated before
+# restart_batch (apps.s3.bulk) will finish it off as cancelled itself, rather
+# than risk racing whatever might still be driving it. Normally a cancel
+# resolves within a poll or two of CLOUDNATIVEGIS_POLL_INTERVAL; this only
+# matters once that has stopped (e.g. the process that was running it died).
+CLOUDNATIVEGIS_BULK_CANCEL_STUCK_AFTER = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_BULK_CANCEL_STUCK_AFTER", "60"))
+)
+# How long a call to a bucket's S3-compatible API may take - connecting, and
+# reading its response - and how many attempts in total, before S3Client
+# gives up (see apps.s3.client). Tighter than botocore's own defaults (60s
+# connect, 60s read): on a real connection having a bad moment (e.g. a
+# batch's layers all read-modify-write the same catalog.json), those let one
+# bad call silently cost minutes instead of failing - visibly, as that job's
+# error - in seconds.
+S3_CONNECT_TIMEOUT = max(1, int(os.environ.get("S3_CONNECT_TIMEOUT", "10")))
+S3_READ_TIMEOUT = max(1, int(os.environ.get("S3_READ_TIMEOUT", "30")))
+S3_MAX_ATTEMPTS = max(1, int(os.environ.get("S3_MAX_ATTEMPTS", "3")))
 # How long a conversion waits for its CloudNativeGIS service to answer /health
 # before failing (see CngLiteJob.provision).
 CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 600

@@ -10,6 +10,13 @@ batch deletes the servers it started - if auto_destroy - as soon as they're no
 longer needed, i.e. once no layer is waiting for one, and at the latest when it
 is over (see `stopping`).
 
+Before starting a new one, a batch first reuses any of its owner's already
+running servers of the same type (kept by an earlier batch, or a single
+upload, with auto_destroy off) that nothing else is using (see `reusable`) -
+so choosing not to destroy a server lets the next batch pick it up instead of
+paying to start another. A reused server's auto_destroy becomes this batch's:
+whoever is using it now decides what happens to it once it's done with it.
+
 Everything here is a step, never a wait: the batch's coordinator (apps.s3.bulk)
 calls these on every pass, so a restart loses nothing - what's known is in the
 database (CngLiteServer.batch), as GeoHosting last answered about it. Starting
@@ -21,8 +28,9 @@ import logging
 import uuid
 
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
+from apps.core.retry import retry_if_locked
 
-from .models import ACTIVE_CNG_LITE_JOB_STATUSES, CngLiteJob, CngLiteServer
+from .models import ACTIVE_CNG_LITE_JOB_STATUSES, CngLiteBatch, CngLiteJob, CngLiteServer
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +65,58 @@ def failures(batch):
     return batch.servers.filter(status=Status.FAILED).count()
 
 
+def reusable(batch):
+    """The owner's already-running servers nothing else is using, same type as `batch`'s.
+
+    Asks GeoHosting for them (CngLiteServer.running_for), so one it no
+    longer has (deleted meanwhile) isn't offered; [] if GeoHosting can't be
+    asked. Left alone: one a job - another batch's, or a single upload -
+    is running on right now, and one another active batch's (even idle
+    between layers: it's that batch's to give its own next queued one, not
+    this one's to take). A different server type isn't offered either,
+    even if it's cheaper, since it isn't what this batch's server type was
+    chosen to be billed as.
+    """
+    try:
+        running = CngLiteServer.running_for(batch.owner)
+    except GeoHostingError:
+        return []
+    busy = set(
+        CngLiteJob.objects.filter(
+            status__in=ACTIVE_CNG_LITE_JOB_STATUSES, instance_server__isnull=False
+        ).values_list("instance_server_id", flat=True)
+    )
+    taken = set(
+        CngLiteServer.objects.filter(batch__status__in=CngLiteBatch.ACTIVE).values_list(
+            "pk", flat=True
+        )
+    )
+    return [
+        server
+        for server in running
+        if server.status == Status.READY
+        and server.type_id == batch.hetzner_server_id
+        and server.pk not in busy
+        and server.pk not in taken
+    ]
+
+
 def start_missing(batch, wanted):
     """Start servers until the batch has `wanted` running - unless too many failed.
 
-    Each is asked for at once and starts in the background; it is saved
-    before it is asked for, so a restart in between finds it (and asks about
-    it) rather than starting another.
+    Reuses the owner's already-running servers first (see `reusable`) -
+    taking over their auto_destroy, this batch's now. Each new one is asked
+    for at once and starts in the background; it is saved before it is
+    asked for, so a restart in between finds it (and asks about it) rather
+    than starting another.
     """
+    if alive(batch) < wanted:
+        for server in reusable(batch):
+            if alive(batch) >= wanted:
+                break
+            server.batch = batch
+            server.auto_destroy = batch.auto_destroy
+            retry_if_locked(server.save, update_fields=["batch", "auto_destroy", "updated_at"])
     for _ in range(wanted - alive(batch)):
         if failures(batch) > MAX_FAILURES:
             return
@@ -71,7 +124,8 @@ def start_missing(batch, wanted):
 
 
 def _start(batch):
-    server = CngLiteServer.objects.create(
+    server = retry_if_locked(
+        CngLiteServer.objects.create,
         instance_id=uuid.uuid4(),
         owner=batch.owner,
         batch=batch,
@@ -89,7 +143,7 @@ def _start(batch):
         logger.warning("Bulk upload %s: couldn't start a server: %s", batch.id, exc)
         server.status = Status.FAILED
         server.error = str(exc)
-        server.save(update_fields=["status", "error", "updated_at"])
+        retry_if_locked(server.save, update_fields=["status", "error", "updated_at"])
         return
     CngLiteServer.record(answer, batch.owner, batch.auto_destroy)
 
@@ -147,7 +201,7 @@ def _delete(server):
     except GeoHostingError as exc:
         logger.exception("Server %s: couldn't ask GeoHosting to delete it", server.pk)
         server.error = f"{DELETE_FAILED}{exc}"
-        server.save(update_fields=["error", "updated_at"])
+        retry_if_locked(server.save, update_fields=["error", "updated_at"])
         return
     if answer is None:
         server.forget()
