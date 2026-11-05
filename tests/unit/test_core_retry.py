@@ -35,9 +35,7 @@ def test_gives_up_after_the_last_retry():
         patch.object(retry_module.time, "sleep"),
         pytest.raises(OperationalError, match="database is locked"),
     ):
-        retry_if_locked(
-            lambda: (_ for _ in ()).throw(OperationalError("database is locked"))
-        )
+        retry_if_locked(lambda: (_ for _ in ()).throw(OperationalError("database is locked")))
 
 
 def test_doesnt_retry_a_different_operational_error():

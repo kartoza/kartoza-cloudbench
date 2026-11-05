@@ -1438,7 +1438,8 @@ class FakeGeoHosting:
         return [
             dict(answer)
             for server_id, answer in reversed(self.servers.items())
-            if self.owners.get(server_id) == username and answer["status"] in ("provisioning", "ready")
+            if self.owners.get(server_id) == username
+            and answer["status"] in ("provisioning", "ready")
         ]
 
     def delete_server(self, server_id, log=None):

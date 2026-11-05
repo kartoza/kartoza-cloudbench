@@ -799,7 +799,9 @@ class CNGProcessingClient:
             catalog_description = f"Layers from {job.source_name}, uploaded via CloudBench."
             parent_folder, parent_title = self._batch_folder()
             if parent_folder:
-                parent_description = f"Layers from {job.batch.source_prefix}, uploaded via CloudBench."
+                parent_description = (
+                    f"Layers from {job.batch.source_prefix}, uploaded via CloudBench."
+                )
         else:
             # No GeoPackage group: the batch's shared sub-catalog (if it has
             # one) holds the layer directly, so it doesn't surface outside it.

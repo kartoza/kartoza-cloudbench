@@ -890,7 +890,9 @@ def ensure_sub_catalog(
             catalog_folder,
             f"./{relative}/collection.json",
             title,
-            new_catalog=_new_catalog(catalog_folder, catalog_title, catalog_description, parent_folder),
+            new_catalog=_new_catalog(
+                catalog_folder, catalog_title, catalog_description, parent_folder
+            ),
         )
         catalog_relative = catalog_folder.removeprefix(f"{parent_folder}/" if parent_folder else "")
         _add_child(
