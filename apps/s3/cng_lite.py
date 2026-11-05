@@ -25,6 +25,8 @@ from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.utils import timezone
 
+from apps.core.retry import retry_if_locked, retry_transient_request
+
 from . import direct_upload, portolan
 from .client import get_s3_client
 from .geopackage import is_geopackage
@@ -241,9 +243,11 @@ def update_job(job_id, **values):
     Raises JobCancelled instead if the user has asked to stop it
     (CANCELLING): whatever runs it stops at its next update, rather than
     carrying on (or overwriting CANCELLING). finish_job is what ends it.
+    Retries a few times if sqlite's writer lock refuses it (see
+    apps.core.retry) - several conversions saving their progress at once.
     """
-    updated = (
-        CngLiteJob.objects.filter(pk=job_id)
+    updated = retry_if_locked(
+        lambda: CngLiteJob.objects.filter(pk=job_id)
         .exclude(status=CngLiteJobStatus.CANCELLING)
         .update(updated_at=timezone.now(), **values)
     )
@@ -269,7 +273,9 @@ def finish_job(job, outcome, **values):
     """
 
     def save(**fields):
-        CngLiteJob.objects.filter(pk=job.id).update(updated_at=timezone.now(), **fields)
+        retry_if_locked(
+            CngLiteJob.objects.filter(pk=job.id).update, updated_at=timezone.now(), **fields
+        )
         for field, value in fields.items():
             setattr(job, field, value)
 
@@ -511,7 +517,10 @@ class CNGProcessingClient:
     layer's Portolan entry - collection.json/README.md/AGENTS.md/default
     style (see apps.s3.portolan) - in its own folder under wherever
     `job.output_key` pointed ("{parent}/{layer_id}/"). A GeoPackage's layers
-    sit in its sub-catalog, its layer group (see apps.s3.layer_groups).
+    sit in its sub-catalog, its layer group (see apps.s3.layer_groups). A
+    bulk-upload job not publishing to the bucket's top level also nests in
+    its batch's shared sub-catalog (`_batch_folder`), a GeoPackage's own
+    group included, so a batch's layers never surface outside it.
     """
 
     def __init__(self, job):
@@ -690,7 +699,10 @@ class CNGProcessingClient:
         path = f"api/v1/jobs/{self.job.cng_job_id}"
         started = time.monotonic()
         try:
-            response = self.http.get(path)
+            # A GET: safe to retry on its own past the transport's own
+            # retries (self.http), for a connection that failed after it
+            # was already made (e.g. reset mid-read), not just refused.
+            response = retry_transient_request(self.http.get, path)
         except httpx.HTTPError as exc:
             self._log("GET", path, started, error=exc)
             raise
@@ -775,16 +787,39 @@ class CNGProcessingClient:
             message="Publishing to the catalog",
         )
         layers = self.uploaded_layers()
-        catalog_folder, catalog_title = self.catalog()
+        # The GeoPackage's own layer group ("", "" otherwise) - kept apart
+        # from `catalog_folder` below, which a batch can also set, so only a
+        # real GeoPackage group gets its original kept (_publish_source) and
+        # a `source` asset.
+        gpkg_folder, gpkg_title = self.catalog()
+        catalog_folder, catalog_title = gpkg_folder, gpkg_title
+        parent_folder = parent_title = parent_description = ""
+        if catalog_folder:
+            # Nests in its batch's shared sub-catalog too, if it has one.
+            catalog_description = f"Layers from {job.source_name}, uploaded via CloudBench."
+            parent_folder, parent_title = self._batch_folder()
+            if parent_folder:
+                parent_description = (
+                    f"Layers from {job.batch.source_prefix}, uploaded via CloudBench."
+                )
+        else:
+            # No GeoPackage group: the batch's shared sub-catalog (if it has
+            # one) holds the layer directly, so it doesn't surface outside it.
+            catalog_folder, catalog_title = self._batch_folder()
+            catalog_description = (
+                f"Layers from {job.batch.source_prefix}, uploaded via CloudBench."
+                if catalog_folder
+                else ""
+            )
         # A GeoPackage's original is kept once in its group folder and
         # listed as each of its layers' `source` asset.
         source_asset = None
-        if catalog_folder:
+        if gpkg_folder:
             self.update(message="Keeping the original GeoPackage")
             source_asset = _publish_source(
                 job,
                 self.s3_client,
-                catalog_folder,
+                gpkg_folder,
                 self.source_client if job.source_in_place else None,
             )
         written = {
@@ -796,7 +831,7 @@ class CNGProcessingClient:
             # The new files are already on their final keys: once they're
             # up, whatever else the replaced layer (or group) had goes.
             self.update(progress=88, message="Removing the replaced layer's old files")
-            keep = written | ({_source_asset_key(job, catalog_folder)} if source_asset else set())
+            keep = written | ({_source_asset_key(job, gpkg_folder)} if source_asset else set())
             direct_upload.delete_leftovers(
                 self.s3_client, target_folder(job.output_key, job.source_name), keep
             )
@@ -852,11 +887,10 @@ class CNGProcessingClient:
                 host_email=host_email,
                 catalog_folder=catalog_folder,
                 catalog_title=catalog_title,
-                catalog_description=(
-                    f"Layers from {job.source_name}, uploaded via CloudBench."
-                    if catalog_folder
-                    else ""
-                ),
+                catalog_description=catalog_description,
+                parent_folder=parent_folder,
+                parent_title=parent_title,
+                parent_description=parent_description,
             )
         self.complete(layers, output_keys, output_size)
 
@@ -935,13 +969,20 @@ class CNGProcessingClient:
 
     @property
     def http(self):
-        """Client for the job's CloudNativeGIS (set by provision())."""
+        """Client for the job's CloudNativeGIS (set by provision()).
+
+        Retries a connection that was refused outright (e.g. an on-demand
+        server's cng-lite settling right after it came up) - only ever
+        before anything was sent, so this is safe for push() too, not only
+        poll()'s GETs.
+        """
         if self._http is None:
             self._http = httpx.Client(
                 base_url=f"{self.job.server_url}/",
                 timeout=httpx.Timeout(60, connect=10),
                 follow_redirects=False,
                 headers=self.job.cloudnativegis_headers(),
+                transport=httpx.HTTPTransport(retries=2),
             )
         return self._http
 
@@ -978,6 +1019,22 @@ class CNGProcessingClient:
         stem = PurePosixPath(self.job.source_name).stem
         gpkg_id = portolan.sanitize_layer_id(stem)
         return (f"{parent}/{gpkg_id}" if parent else gpkg_id), portolan.prettify(stem)
+
+    def _batch_folder(self):
+        """(folder, title) of the job's bulk-upload batch's shared sub-catalog; ("", "") otherwise.
+
+        A batch (`job.batch`) whose layers don't go to the bucket's top
+        level: `destination_prefix` ("into one folder"), or else
+        `source_prefix` ("beside each file") - the one folder every job of
+        the batch shares, however deep under it any one of them actually
+        publishes (a recursive "beside each file" upload's files can sit in
+        different sub-folders) - so none of them surfaces outside it.
+        """
+        batch = self.job.batch
+        if batch is None or "/" not in self.job.output_key:
+            return "", ""
+        folder = (batch.destination_prefix or batch.source_prefix).strip("/")
+        return folder, portolan.prettify(PurePosixPath(folder).name)
 
     def layers(self, names=None):
         """The job's planned layers (see plan_layers), each with its `folder`.

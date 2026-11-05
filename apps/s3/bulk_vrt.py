@@ -234,12 +234,30 @@ def build_vrt(s3_client, layers, folder, filename):
 
 
 def build_collection_json(
-    *, folder, title, license_id, license_url, provider_name, host, layers, vrt, bbox
+    *,
+    folder,
+    title,
+    license_id,
+    license_url,
+    provider_name,
+    host,
+    layers,
+    vrt,
+    bbox,
+    parent_folder="",
 ) -> dict[str, Any]:
-    """The VRT collection's collection.json: the VRT (beside the folder) as a `metadata` asset, a `related` link per layer."""
+    """The VRT collection's collection.json: the VRT asset, a `related` link per layer.
+
+    `parent_folder` is the batch's shared sub-catalog the VRT nests in
+    ("" - the bucket's top level - when there isn't one): the layer links
+    up to it, not necessarily straight to the root.
+    """
+    parent_depth = (
+        folder.count("/") - parent_folder.count("/") if parent_folder else folder.count("/") + 1
+    )
     links: list[dict[str, Any]] = [
         {"rel": "root", "href": portolan_mosaic._root_href(folder.count("/") + 1)},
-        {"rel": "parent", "href": portolan_mosaic._root_href(folder.count("/") + 1)},
+        {"rel": "parent", "href": portolan_mosaic._root_href(parent_depth)},
         {"rel": "agents", "href": "./AGENTS.md", "title": "Guidance for AI agents"},
         {"rel": "describedby", "href": "./README.md", "title": "Human-readable documentation"},
     ]
@@ -393,6 +411,9 @@ def publish(batch):
     folder = vrt_folder(layers, batch.vrt_name)
     filename = f"{posixpath.basename(folder)}.vrt"
     key = vrt_key(folder, filename)
+    # The layers' shared folder (empty at the bucket's top level): the VRT
+    # nests in its batch's sub-catalog too, so it doesn't surface outside it.
+    batch_folder = posixpath.dirname(folder)
     if not _is_ours(s3_client, folder) or (
         not _holds_anything(s3_client, folder) and _exists(s3_client, key)
     ):
@@ -411,6 +432,7 @@ def publish(batch):
     vrt = {"filename": filename, "file": portolan.file_of(body)}
     collection = build_collection_json(
         folder=folder,
+        parent_folder=batch_folder,
         title=title,
         license_id=license_id,
         license_url=license_url,
@@ -458,7 +480,17 @@ def publish(batch):
     # Where the first version kept it: inside the folder, with paths that didn't open from S3.
     with contextlib.suppress(Exception):
         s3_client.delete_object(f"{folder}/{filename}")
-    portolan.ensure_root_catalog(s3_client, folder=folder, title=title)
+    if batch_folder:
+        portolan.ensure_sub_catalog(
+            s3_client,
+            catalog_folder=batch_folder,
+            catalog_title=portolan.prettify(posixpath.basename(batch_folder)),
+            catalog_description=f"Layers from {batch.source_prefix}, uploaded via CloudBench.",
+            folder=folder,
+            title=title,
+        )
+    else:
+        portolan.ensure_root_catalog(s3_client, folder=folder, title=title)
     state = {
         "state": DONE,
         "folder": folder,

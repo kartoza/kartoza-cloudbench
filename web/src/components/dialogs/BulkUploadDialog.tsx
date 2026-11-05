@@ -56,6 +56,7 @@ import {
   isActiveBatch,
   listBulkFolders,
   previewBulk,
+  restartBulk,
   retryBulk,
   startBulk,
   type BulkBatch,
@@ -844,7 +845,29 @@ function ProgressStep({ batchId, onClose }: { batchId: string; onClose: () => vo
               {active ? 'You can close this: the batch keeps running, and shows in the Jobs panel.' : ' '}
             </Text>
             <HStack>
-              {counts.failed > 0 && !active && (
+              {batch.status === 'cancelled' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorScheme="orange"
+                  onClick={() => run(() => restartBulk(batchId))}
+                >
+                  Restart ({counts.cancelled + counts.failed})
+                </Button>
+              )}
+              {batch.status === 'cancelling' && (
+                <Tooltip label="Only if cancelling is stuck - nothing is actually still stopping it">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    colorScheme="orange"
+                    onClick={() => run(() => restartBulk(batchId))}
+                  >
+                    Restart
+                  </Button>
+                </Tooltip>
+              )}
+              {counts.failed > 0 && !active && batch.status !== 'cancelled' && (
                 <Button size="sm" variant="outline" colorScheme="orange" onClick={() => run(() => retryBulk(batchId))}>
                   Retry failed ({counts.failed})
                 </Button>

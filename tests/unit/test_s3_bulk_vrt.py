@@ -66,9 +66,9 @@ def scratch(tmp_path):
 def convert(batch, s3, scratch, name, folder=None, **cog):
     """Publish `name` as a bulk upload would have (a layer folder with its COGs) and a job for it."""
     folder = folder or name
-    s3.objects[f"{folder}/{name}.tif"] = make_cog(scratch, name, **cog)
-    s3.objects[f"{folder}/{name}_3857.tif"] = b"web"
-    s3.objects[f"{folder}/thumbnail.png"] = b"png"
+    s3.put_object(f"{folder}/{name}.tif", make_cog(scratch, name, **cog), content_type="image/tiff")
+    s3.put_object(f"{folder}/{name}_3857.tif", b"web", content_type="image/tiff")
+    s3.put_object(f"{folder}/thumbnail.png", b"png", content_type="image/png")
     return CngLiteJob.objects.create(
         batch=batch,
         kind="cog",
@@ -122,7 +122,7 @@ def test_the_vrt_collection_covers_every_raster_with_relative_paths(batch, s3, s
 
     collection = s3.json("incoming-vrt/collection.json")
     asset = collection["assets"]["vrt"]
-    assert (asset["href"], asset["roles"]) == ("./incoming-vrt.vrt", ["metadata"])
+    assert (asset["href"], asset["roles"]) == ("../incoming-vrt.vrt", ["metadata"])
     assert asset["file:checksum"] == portolan.file_of(s3.objects["incoming-vrt.vrt"])["checksum"]
     assert collection["license"] == "CC-BY-4.0"
     related = [link["href"] for link in collection["links"] if link["rel"] == "related"]
@@ -152,6 +152,31 @@ def test_the_vrt_folder_is_in_the_folder_the_layers_share(batch, s3, scratch):
     assert "y/a/a.tif" in vrt and "z/c/c.tif" in vrt and ".." not in vrt
     collection = s3.json("x/incoming-vrt/collection.json")
     assert collection["links"][0]["href"] == "../../catalog.json"
+
+
+@pytest.mark.django_db
+def test_the_vrt_nests_in_the_batch_sub_catalog_the_layers_share(batch, s3, scratch):
+    convert(batch, s3, scratch, "a", folder="x/a", west=300000)
+    convert(batch, s3, scratch, "b", folder="x/b", west=301000)
+
+    bulk_vrt.publish(batch)
+
+    # The root links the batch's sub-catalog, not the VRT collection directly.
+    root = s3.json("catalog.json")
+    assert [link["href"] for link in root["links"] if link["rel"] == "child"] == [
+        "./x/catalog.json"
+    ]
+    sub = s3.json("x/catalog.json")
+    assert [link["href"] for link in sub["links"] if link["rel"] == "child"] == [
+        "./incoming-vrt/collection.json"
+    ]
+    # The VRT's own parent is the batch's sub-catalog, not straight to the root.
+    collection = s3.json("x/incoming-vrt/collection.json")
+    assert collection["links"][1] == {
+        "rel": "parent",
+        "href": "../catalog.json",
+        "type": "application/json",
+    }
 
 
 @pytest.mark.django_db

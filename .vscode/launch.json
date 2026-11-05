@@ -26,7 +26,7 @@
       "env": {
         "DJANGO_SETTINGS_MODULE": "cloudbench.settings.development",
         "CLOUDNATIVEGIS_ON_DEMAND": "True",
-        "CLOUDNATIVEGIS_BULK_MAX_SERVERS": "2"
+        "CLOUDNATIVEGIS_BULK_MAX_SERVERS": "5"
       }
     },
     {

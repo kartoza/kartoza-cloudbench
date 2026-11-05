@@ -11,6 +11,7 @@ from django.db.models import Q
 
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
+from apps.core.retry import retry_if_locked
 
 from .cng_lite_server import CngLiteServer, hide_server_type
 from .s3_connection import S3Connection
@@ -309,8 +310,9 @@ class CngLiteJob(models.Model):
         else:
             self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
             self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
-            self.save(
-                update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"]
+            retry_if_locked(
+                self.save,
+                update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"],
             )
         self.wait_until_healthy()
 
@@ -412,7 +414,7 @@ class CngLiteJob(models.Model):
         linked = self.instance_server_id == server.pk
         self.instance_server = server
         if not linked:
-            self.save(update_fields=["instance_server", "updated_at"])
+            retry_if_locked(self.save, update_fields=["instance_server", "updated_at"])
         return server
 
     def deprovision(self):
@@ -475,7 +477,7 @@ class CngLiteJob(models.Model):
         """Only message/updated_at: the status is set by the caller."""
         if self.message != message:
             self.message = message
-            self.save(update_fields=["message", "updated_at"])
+            retry_if_locked(self.save, update_fields=["message", "updated_at"])
 
     def wait_until_healthy(self):
         """Poll this job's CloudNativeGIS /health until it answers.

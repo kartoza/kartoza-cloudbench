@@ -770,11 +770,13 @@ def _write_root_catalog(s3_client, catalog: dict) -> None:
     _write_catalog(s3_client, catalog, "")
 
 
-def _new_catalog(folder: str, title: str, description: str) -> dict:
+def _new_catalog(folder: str, title: str, description: str, parent_folder: str = "") -> dict:
     """A fresh catalog.json: the bucket root ("" folder), or a sub-catalog.
 
-    Sub-catalogs (a GeoPackage's layer group) always sit directly under the
-    root catalog, so their `root` and `parent` are both the root.
+    A sub-catalog's `root` is always the bucket root; its `parent` is
+    `parent_folder`'s catalog ("" - the default - is the root too). A
+    bulk-upload batch's shared sub-catalog nests a GeoPackage's own layer
+    group this way (`parent_folder` is the batch's).
     """
     if not folder:
         return {
@@ -787,6 +789,11 @@ def _new_catalog(folder: str, title: str, description: str) -> dict:
             "links": [{"rel": "root", "href": "./catalog.json", "type": "application/json"}],
         }
     root_href = "../" * (folder.count("/") + 1) + CATALOG_KEY
+    parent_href = (
+        "../" * (folder.count("/") - parent_folder.count("/")) + CATALOG_KEY
+        if parent_folder
+        else root_href
+    )
     return {
         "type": "Catalog",
         "stac_version": "1.1.0",
@@ -796,7 +803,7 @@ def _new_catalog(folder: str, title: str, description: str) -> dict:
         "description": description,
         "links": [
             {"rel": "root", "href": root_href, "type": "application/json"},
-            {"rel": "parent", "href": root_href, "type": "application/json"},
+            {"rel": "parent", "href": parent_href, "type": "application/json"},
         ],
     }
 
@@ -859,15 +866,22 @@ def ensure_sub_catalog(
     catalog_description: str,
     folder: str,
     title: str,
+    parent_folder: str = "",
+    parent_title: str = "",
+    parent_description: str = "",
 ) -> None:
-    """Link a layer from its sub-catalog, and the sub-catalog from the root.
+    """Link a layer from its sub-catalog, and the sub-catalog from its parent (the root, by default).
 
     For a GeoPackage's layers: `catalog_folder` ("castelo-branco") holds a
     catalog.json listing each layer folder inside it (`folder`,
-    "castelo-branco/highway"), and the root catalog links that catalog.json.
-    The root is rewritten even when it already links the sub-catalog, so
-    anything keyed on its ETag (the STAC API's cache) notices the new layer.
-    Best-effort, like ensure_root_catalog.
+    "castelo-branco/highway", however deep under `catalog_folder` - a
+    recursive bulk upload's source folder can be). With `parent_folder`
+    (a bulk-upload batch's shared sub-catalog, holding a GeoPackage's own
+    group alongside its other layers), that is linked instead of the root -
+    which then links `parent_folder` itself. Each catalog touched is
+    rewritten even when it already links its child, so anything keyed on
+    its ETag (the STAC API's cache) notices the new layer. Best-effort,
+    like ensure_root_catalog.
     """
     try:
         relative = folder.removeprefix(f"{catalog_folder}/")
@@ -876,15 +890,26 @@ def ensure_sub_catalog(
             catalog_folder,
             f"./{relative}/collection.json",
             title,
-            new_catalog=_new_catalog(catalog_folder, catalog_title, catalog_description),
+            new_catalog=_new_catalog(
+                catalog_folder, catalog_title, catalog_description, parent_folder
+            ),
         )
+        catalog_relative = catalog_folder.removeprefix(f"{parent_folder}/" if parent_folder else "")
         _add_child(
             s3_client,
-            "",
-            f"./{catalog_folder}/{CATALOG_KEY}",
+            parent_folder,
+            f"./{catalog_relative}/{CATALOG_KEY}",
             catalog_title,
-            new_catalog=_new_catalog("", "", ""),
+            new_catalog=_new_catalog(parent_folder, parent_title, parent_description),
         )
+        if parent_folder:
+            _add_child(
+                s3_client,
+                "",
+                f"./{parent_folder}/{CATALOG_KEY}",
+                parent_title,
+                new_catalog=_new_catalog("", "", ""),
+            )
     except Exception:
         logger.exception("Failed to update %s's catalog.json (layer was still uploaded)", folder)
 
@@ -1020,14 +1045,20 @@ def finalize_layer(
     catalog_folder: str = "",
     catalog_title: str = "",
     catalog_description: str = "",
+    parent_folder: str = "",
+    parent_title: str = "",
+    parent_description: str = "",
 ) -> None:
     """Upload collection.json, README.md, AGENTS.md and a default style for one layer.
 
     `catalog_folder`, if given, is the sub-catalog the layer belongs to (a
-    GeoPackage's layer group, holding `folder`): the layer is linked from
+    GeoPackage's layer group, or a bulk-upload batch's shared folder,
+    holding `folder` however deep under it): the layer is linked from
     that catalog.json - created with `catalog_title`/`catalog_description`
-    if need be - which is linked from the root; otherwise the layer is
-    linked from the root catalog directly.
+    if need be. With `parent_folder` too (a GeoPackage uploaded as part of
+    a batch), that sub-catalog is linked from `parent_folder`'s instead of
+    the root - which is then linked from the root. Without a
+    `catalog_folder`, the layer is linked from the root catalog directly.
 
     `data_assets` is [{'filename', 'role', 'media_type'?}, ...] for every
     asset the layer's data file(s) already uploaded under `folder`.
@@ -1049,7 +1080,14 @@ def finalize_layer(
     # "folder/sub/folder" -> "../../catalog.json": one "../" per path segment
     # plus the collection's own folder, back up to the bucket root.
     root_relative_path = "../" * (folder.count("/") + 1) + "catalog.json"
-    parent_relative_path = "../catalog.json" if catalog_folder else root_relative_path
+    # Up from `folder` to `catalog_folder`'s own catalog.json: one "../" per
+    # path segment `folder` has beyond it (more than one for a recursive
+    # bulk upload's sub-folder, or a GeoPackage nested in a batch).
+    parent_relative_path = (
+        "../" * (folder.count("/") - catalog_folder.count("/")) + "catalog.json"
+        if catalog_folder
+        else root_relative_path
+    )
 
     try:
         style = (
@@ -1122,6 +1160,9 @@ def finalize_layer(
                 catalog_description=catalog_description or catalog_title or catalog_folder,
                 folder=folder,
                 title=title,
+                parent_folder=parent_folder,
+                parent_title=parent_title or parent_folder,
+                parent_description=parent_description or parent_title or parent_folder,
             )
         else:
             ensure_root_catalog(s3_client, folder=folder, title=title)

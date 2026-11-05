@@ -239,6 +239,7 @@ def test_detail_shows_progress_and_is_the_users_own(api, connection, s3, django_
     assert other.get(f"{URL}/{batch_id}").status_code == 404
     assert other.delete(f"{URL}/{batch_id}").status_code == 404
     assert other.post(f"{URL}/{batch_id}/retry").status_code == 404
+    assert other.post(f"{URL}/{batch_id}/restart").status_code == 404
     assert api.get(f"{URL}/not-a-uuid").status_code == 404
 
 
@@ -298,6 +299,26 @@ def test_retry(api, connection, s3):
         "a.zip": "queued",
         "b.tif": "completed",
     }
+
+
+@pytest.mark.django_db
+def test_restart(api, connection, s3):
+    batch_id = start(api, connection).json()["id"]
+    assert api.post(f"{URL}/{batch_id}/restart").status_code == 409  # not cancelled
+
+    CngLiteJob.objects.filter(source_name="b.tif").update(status=CngLiteJobStatus.COMPLETED)
+    assert api.delete(f"{URL}/{batch_id}").json()["status"] == "cancelled"  # a.zip was still queued
+
+    response = api.post(f"{URL}/{batch_id}/restart")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "running"
+    assert {j["name"]: j["status"] for j in data["jobs"]} == {
+        "a.zip": "queued",
+        "b.tif": "completed",
+    }
+    assert api.post(f"{URL}/{batch_id}/restart").status_code == 409  # running again now
 
 
 @pytest.mark.django_db
