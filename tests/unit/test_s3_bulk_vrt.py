@@ -101,6 +101,19 @@ def batch(owner, connection):
 
 
 @pytest.mark.django_db
+def test_builds_even_when_upload_temp_dir_was_never_created(
+    owner, connection, s3, scratch, batch, settings, tmp_path
+):
+    settings.UPLOAD_TEMP_DIR = str(tmp_path / "never-created-yet")
+    convert(batch, s3, scratch, "a", west=300000)
+    convert(batch, s3, scratch, "b", west=301000)
+
+    state = bulk_vrt.publish(batch)
+
+    assert state["state"] == "done", state.get("message")
+
+
+@pytest.mark.django_db
 def test_the_vrt_collection_covers_every_raster_with_relative_paths(batch, s3, scratch):
     for index, name in enumerate(["a", "b", "c"]):
         convert(batch, s3, scratch, name, west=300000 + index * 1000)
