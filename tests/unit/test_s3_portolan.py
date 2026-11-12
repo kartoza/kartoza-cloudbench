@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import threading
+import time
 from unittest.mock import Mock, patch
 
 import pytest
@@ -318,6 +320,62 @@ def test_publishing_writes_root_readme_and_agents_listing_every_layer():
     agents = bucket.objects["AGENTS.md"].decode()
     assert "- `Roads`: `./roads/collection.json` (notes: `./roads/AGENTS.md`)" in agents
     assert "`./imports/rivers/collection.json`" in agents
+
+
+def test_adding_a_child_holds_the_catalog_lock_for_the_whole_read_modify_write():
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="roads", title="Roads")
+    done = []
+
+    def add_rivers():
+        portolan.ensure_root_catalog(bucket, folder="rivers", title="Rivers")
+        done.append("rivers")
+
+    with portolan._CATALOG_LOCK:
+        thread = threading.Thread(target=add_rivers)
+        thread.start()
+        thread.join(timeout=0.2)
+        # Still blocked: a reader/writer waits for the lock, not just skips ahead.
+        assert done == []
+    thread.join(timeout=2)
+    assert done == ["rivers"]
+
+
+def test_two_layers_finishing_together_dont_drop_each_others_catalog_link():
+    # Without the lock, two threads can both read catalog.json before either
+    # writes it back - whichever writes last silently loses the other's link.
+    # A short sleep between the read and the write (where the real race
+    # window is) makes that interleaving happen every time, not just
+    # sometimes - so this fails reliably without the fix, not flakily.
+    bucket = FakeBucket()
+    portolan.ensure_root_catalog(bucket, folder="existing", title="Existing")
+    original_load_json = portolan._load_json
+
+    def slow_load_json(client, key):
+        result = original_load_json(client, key)
+        time.sleep(0.05)
+        return result
+
+    with patch.object(portolan, "_load_json", side_effect=slow_load_json):
+        threads = [
+            threading.Thread(target=portolan.ensure_root_catalog, args=(bucket,), kwargs=kwargs)
+            for kwargs in (
+                {"folder": "a", "title": "A"},
+                {"folder": "b", "title": "B"},
+            )
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+    root = bucket.json("catalog.json")
+    hrefs = {link["href"] for link in root["links"] if link["rel"] == "child"}
+    assert hrefs == {
+        "./existing/collection.json",
+        "./a/collection.json",
+        "./b/collection.json",
+    }
 
 
 def test_republishing_a_layer_does_not_duplicate_links():
