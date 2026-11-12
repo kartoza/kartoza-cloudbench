@@ -25,6 +25,7 @@ range request into a scratch folder laid out like the bucket.
 import contextlib
 import json
 import logging
+import os
 import posixpath
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -209,6 +210,7 @@ def build_vrt(s3_client, layers, folder, filename):
     most (CRS, bands, data type) are left out. Raises ValueError if GDAL
     can't build it.
     """
+    os.makedirs(settings.UPLOAD_TEMP_DIR, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=settings.UPLOAD_TEMP_DIR) as scratch:
         root = Path(scratch)
 

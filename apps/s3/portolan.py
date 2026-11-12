@@ -13,6 +13,7 @@ import json
 import logging
 import posixpath
 import re
+import threading
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -29,6 +30,8 @@ STYLE_KEY = "styles/default.json"
 # Multihash prefix for SHA-256: function code 0x12, digest length 0x20 (32 bytes).
 _SHA256_MULTIHASH_PREFIX = "1220"
 CATALOG_KEY = "catalog.json"
+
+_CATALOG_LOCK = threading.RLock()
 
 # SPDX ids offered in the upload dialog; "other" is the safe default when
 # the uploader doesn't know (or the source data doesn't specify) a license,
@@ -811,14 +814,18 @@ def _new_catalog(folder: str, title: str, description: str, parent_folder: str =
 def _add_child(
     s3_client, catalog_folder: str, child_href: str, title: str, *, new_catalog: dict
 ) -> None:
-    """Link a child from a catalog (created from `new_catalog` if missing)."""
-    catalog = _load_json(s3_client, _catalog_key(catalog_folder)) or new_catalog
-    links = catalog.setdefault("links", [])
-    if not any(link.get("href") == child_href for link in links):
-        links.append(
-            {"rel": "child", "href": child_href, "type": "application/json", "title": title}
-        )
-    _write_catalog(s3_client, catalog, catalog_folder)
+    """Link a child from a catalog (created from `new_catalog` if missing).
+
+    Locked (see _CATALOG_LOCK): read, modify and write as one step.
+    """
+    with _CATALOG_LOCK:
+        catalog = _load_json(s3_client, _catalog_key(catalog_folder)) or new_catalog
+        links = catalog.setdefault("links", [])
+        if not any(link.get("href") == child_href for link in links):
+            links.append(
+                {"rel": "child", "href": child_href, "type": "application/json", "title": title}
+            )
+        _write_catalog(s3_client, catalog, catalog_folder)
 
 
 def touch_root_catalog(s3_client) -> None:
@@ -829,9 +836,10 @@ def touch_root_catalog(s3_client) -> None:
     Best-effort: a failure is only logged.
     """
     try:
-        catalog = _load_json(s3_client, CATALOG_KEY)
-        if catalog:
-            _write_root_catalog(s3_client, catalog)
+        with _CATALOG_LOCK:
+            catalog = _load_json(s3_client, CATALOG_KEY)
+            if catalog:
+                _write_root_catalog(s3_client, catalog)
     except Exception:
         logger.exception("Failed to touch root catalog.json")
 
@@ -920,37 +928,44 @@ def _prune_catalog(
     """Drop a catalog's child links to deleted data, recursing into sub-catalogs.
 
     Returns (changed here - and so rewritten, changed in a sub-catalog).
+    Locked (see _CATALOG_LOCK), same as _add_child - a sibling publishing
+    into this catalog right now mustn't be read mid-way and overwritten.
     """
-    catalog = _load_json(s3_client, _catalog_key(catalog_folder))
-    if not catalog:
-        return False, False
-    prefix = f"{catalog_folder}/" if catalog_folder else ""
+    with _CATALOG_LOCK:
+        catalog = _load_json(s3_client, _catalog_key(catalog_folder))
+        if not catalog:
+            return False, False
+        prefix = f"{catalog_folder}/" if catalog_folder else ""
 
-    def is_deleted(path: str) -> bool:
-        return path.startswith(deleted_key) if deleted_key.endswith("/") else path == deleted_key
+        def is_deleted(path: str) -> bool:
+            return (
+                path.startswith(deleted_key) if deleted_key.endswith("/") else path == deleted_key
+            )
 
-    kept = []
-    removed = nested = False
-    for link in catalog.get("links", []):
-        if link.get("rel") != "child":
+        kept = []
+        removed = nested = False
+        for link in catalog.get("links", []):
+            if link.get("rel") != "child":
+                kept.append(link)
+                continue
+            path = prefix + str(link.get("href", "")).removeprefix("./")
+            if is_deleted(path):
+                removed = True
+                continue
             kept.append(link)
-            continue
-        path = prefix + str(link.get("href", "")).removeprefix("./")
-        if is_deleted(path):
-            removed = True
-            continue
-        kept.append(link)
-        sub_folder = path.removesuffix(f"/{CATALOG_KEY}")
-        if (
-            path.endswith(f"/{CATALOG_KEY}")
-            and deleted_key.startswith(f"{sub_folder}/")
-            and depth < 4
-        ):
-            nested = any(_prune_catalog(s3_client, sub_folder, deleted_key, depth + 1)) or nested
-    if removed:
-        catalog["links"] = kept
-        _write_catalog(s3_client, catalog, catalog_folder)
-    return removed, nested
+            sub_folder = path.removesuffix(f"/{CATALOG_KEY}")
+            if (
+                path.endswith(f"/{CATALOG_KEY}")
+                and deleted_key.startswith(f"{sub_folder}/")
+                and depth < 4
+            ):
+                nested = (
+                    any(_prune_catalog(s3_client, sub_folder, deleted_key, depth + 1)) or nested
+                )
+        if removed:
+            catalog["links"] = kept
+            _write_catalog(s3_client, catalog, catalog_folder)
+        return removed, nested
 
 
 def prune_root_catalog(s3_client, deleted_key: str) -> None:
