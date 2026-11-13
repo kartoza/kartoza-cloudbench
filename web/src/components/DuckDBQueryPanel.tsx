@@ -47,6 +47,7 @@ import type { DuckDBTableInfo } from '../types'
 import { SQLEditor } from './SQLEditor'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { applyBasemap } from '../config/basemap'
 
 // Schema info for autocompletion
 interface ColumnInfo {
@@ -321,21 +322,10 @@ export default function DuckDBQueryPanel({
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '&copy; OpenStreetMap Contributors',
-          },
-        },
-        layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
-      },
       center: [0, 0],
       zoom: 2,
     })
+    applyBasemap(map)
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
 

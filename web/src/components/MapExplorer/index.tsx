@@ -35,11 +35,11 @@ import {
   setMapExplorerTabUrlParam,
 } from '../../utils/mapViewUrl'
 import { clearNodeUrlParamQuietly } from '../../utils/nodeUrl'
+import { applyBasemap } from '../../config/basemap'
 import './styles.css'
 
 const LAYER_COLORS = ['#54A2CC', '#EEB348', '#3C7D54', '#B0473C', '#8A8B8B', '#383939']
 
-const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
 function buildFeaturePopupContent(layerName: string, feature: maplibregl.MapGeoJSONFeature): HTMLElement {
   const container = document.createElement('div')
@@ -147,10 +147,10 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
 
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
-      style: BASEMAP_STYLE_URL,
       center: [10, 45],
       zoom: 3,
     })
+    applyBasemap(mapInstance)
     mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right')
     mapInstance.on('load', () => setMapReady(true))
     mapInstance.on('click', (e) => {

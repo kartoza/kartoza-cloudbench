@@ -42,6 +42,7 @@ import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
 import { useUIStore } from '../stores/uiStore'
+import { applyBasemap } from '../config/basemap'
 
 // Disable Cesium Ion (we don't use it)
 Cesium.Ion.defaultAccessToken = ''
@@ -446,31 +447,10 @@ export default function S3LayerPreview({
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'osm': {
-            type: 'raster',
-            tiles: [
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-            ],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors',
-          },
-        },
-        layers: [
-          {
-            id: 'osm-tiles',
-            type: 'raster',
-            source: 'osm',
-            minzoom: 0,
-            maxzoom: 19,
-          },
-        ],
-      },
       center,
       zoom: 2,
     })
+    applyBasemap(map.current)
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.current.addControl(new maplibregl.ScaleControl(), 'bottom-left')

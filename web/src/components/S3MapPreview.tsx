@@ -8,8 +8,8 @@ import { cogProtocol } from '@geomatico/maplibre-cog-protocol'
 import { getPmtilesStyle } from '../api/mapExplorer'
 import { useUIStore } from '../stores/uiStore'
 import { loadLayerOntoMap, applyPmtilesVectorStyle, layerIdFor } from './MapExplorer/layerLoader'
+import { applyBasemap } from '../config/basemap'
 
-const BASEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 const LAYER_COLOR = '#54A2CC'
 
 interface S3MapPreviewProps {
@@ -41,10 +41,10 @@ export default function S3MapPreview({ connectionId, bucketName, objectKey, form
 
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
-      style: BASEMAP_STYLE_URL,
       center: [0, 0],
       zoom: 1,
     })
+    applyBasemap(mapInstance)
     map.current = mapInstance
 
     const layerId = layerIdFor({ connectionId, bucketName, key: objectKey, format })
