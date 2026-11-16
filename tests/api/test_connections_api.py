@@ -5,6 +5,7 @@ Note: URL patterns in this project do NOT use trailing slashes.
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
@@ -411,6 +412,60 @@ class TestGeoNodeConnectionsAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_201_CREATED
+
+    def _geonode_id(self, api_client: APIClient) -> str:
+        response = api_client.post(
+            "/api/geonode/connections",
+            {"name": "GN", "url": "https://gn.example/", "username": "u", "password": "p"},
+            format="json",
+        )
+        return response.json()["id"]
+
+    def test_wms_proxy_forwards_getmap_to_geoserver(self, api_client: APIClient) -> None:
+        """The map preview's tiles: forwarded to the GeoNode's GeoServer, image returned."""
+        conn_id = self._geonode_id(api_client)
+        upstream = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
+        with patch("apps.geonode.views.httpx.get", return_value=upstream) as get:
+            response = api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms",
+                {"SERVICE": "WMS", "REQUEST": "GetMap", "LAYERS": "geonode:roads"},
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "image/png"
+        assert response.content == b"PNG"
+        assert get.call_args.args[0] == "https://gn.example/geoserver/ows"
+        assert get.call_args.kwargs["params"]["LAYERS"] == "geonode:roads"
+        assert "Authorization" not in get.call_args.kwargs["headers"]
+
+    def test_wms_proxy_sends_the_geonode_token(self, api_client: APIClient) -> None:
+        """A token connection's tiles carry its token, so private layers draw."""
+        conn_id = api_client.post(
+            "/api/geonode/connections",
+            {"name": "GN", "url": "https://gn.example/", "token": "tok"},
+            format="json",
+        ).json()["id"]
+        upstream = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
+        with patch("apps.geonode.views.httpx.get", return_value=upstream) as get:
+            api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+            )
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer tok"
+
+    def test_wms_proxy_only_forwards_wms_reads(self, api_client: APIClient) -> None:
+        conn_id = self._geonode_id(api_client)
+        with patch("apps.geonode.views.httpx.get") as get:
+            response = api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms",
+                {"SERVICE": "WFS", "REQUEST": "Transaction"},
+            )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        get.assert_not_called()
+
+    def test_wms_proxy_unknown_connection(self, api_client: APIClient) -> None:
+        response = api_client.get(
+            "/api/geonode/connections/nope/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.django_db

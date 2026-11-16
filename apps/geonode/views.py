@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 import httpx
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -279,6 +280,67 @@ class GeoNodeResourceDetailView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+# The WMS requests the map preview makes; the proxy forwards nothing else.
+WMS_PROXY_REQUESTS = {"getmap", "getcapabilities", "getlegendgraphic"}
+
+
+class GeoNodeWMSProxyView(APIView):
+    """Proxy the map preview's WMS requests to the GeoNode's GeoServer.
+
+    The browser can't fetch the GeoServer tiles itself (CORS), so they go
+    through CloudBench, to ``<GeoNode>/geoserver/ows``, with the
+    connection's GeoNode OAuth2 token, if it has one, as a Bearer token:
+    GeoServer checks it with GeoNode, so private layers draw too. Username and
+    password aren't sent: GeoServer only takes its own users' basic auth, not
+    GeoNode's, so a password-only connection draws public layers only. (GeoNode's
+    ``/gs/ows`` proxy does take GeoNode's basic auth, but a map's worth of tiles
+    at once hangs GeoNode: each holds a GeoNode worker while GeoServer waits on
+    another for the token check.)
+    """
+
+    def get(self, request, conn_id):
+        """Forward one WMS request and return GeoServer's answer as is."""
+        conn = get_config(request.user).get_geonode_connection(conn_id)
+        if not conn:
+            return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        params = {key.upper(): value for key, value in request.query_params.items()}
+        if (
+            params.get("SERVICE", "").upper() != "WMS"
+            or params.get("REQUEST", "").lower() not in WMS_PROXY_REQUESTS
+        ):
+            return Response(
+                {"error": "Only WMS GetMap, GetCapabilities and GetLegendGraphic are proxied."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        headers = {"User-Agent": "CloudBench WMS proxy"}
+        if conn.api_key:
+            headers["Authorization"] = f"Bearer {conn.api_key}"
+
+        try:
+            upstream = httpx.get(
+                f"{conn.url.rstrip('/')}/geoserver/ows",
+                params=request.query_params,
+                headers=headers,
+                timeout=30.0,
+                follow_redirects=True,
+            )
+        except httpx.HTTPError as e:
+            return Response(
+                {"error": f"Failed to fetch from GeoServer: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        response = HttpResponse(
+            upstream.content,
+            status=upstream.status_code,
+            content_type=upstream.headers.get("content-type", "application/octet-stream"),
+        )
+        response["Cross-Origin-Resource-Policy"] = "cross-origin"
+        return response
 
 
 class GeoNodeUploadCompleteView(APIView):

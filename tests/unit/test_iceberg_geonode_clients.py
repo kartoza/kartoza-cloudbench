@@ -147,7 +147,7 @@ class TestGeoNodeClient:
         return geonode.GeoNodeClient(GN + "/", **kwargs)
 
     def test_auth_configuration(self):
-        assert self.make(api_key="k").client.headers["Authorization"] == "ApiKey k"
+        assert self.make(api_key="k").client.headers["Authorization"] == "Bearer k"
         assert self.make(username="u", password="p").client.auth is not None
         assert self.make().client.auth is None
 
@@ -191,8 +191,13 @@ class TestGeoNodeClient:
                         "title": "T",
                         "category": {"identifier": "cat"},
                         "owner": {"username": "bob"},
+                        "resource_type": "dataset",
+                        "subtype": "vector",
+                        "alternate": "geonode:n",
+                        "detail_url": "https://gn/catalogue/#/dataset/1",
+                        "thumbnail_url": "https://gn/thumb.jpg",
                     },
-                    {"pk": 2, "category": None, "owner": None},
+                    {"pk": 2, "name": None, "category": None, "owner": None},
                 ],
                 "total": 2,
                 "page": 1,
@@ -204,6 +209,13 @@ class TestGeoNodeClient:
         first, second = result["dataset"]
         assert first["category"] == "cat" and first["owner"] == "bob"
         assert second["category"] == "" and second["owner"] == ""
+        # GeoNode's own field names, as the frontend reads them: the map
+        # preview needs the dataset's alternate (its WMS layer name).
+        assert first["alternate"] == "geonode:n"
+        assert first["resource_type"] == "dataset" and first["subtype"] == "vector"
+        assert first["detail_url"] == "https://gn/catalogue/#/dataset/1"
+        assert first["thumbnail_url"] == "https://gn/thumb.jpg"
+        assert second["alternate"] == "" and second["name"] == ""
         url = str(http_mock.calls[0].url)
         assert "category__identifier" in url and "owner__username" in url
 
@@ -271,10 +283,17 @@ class TestGeoNodeClient:
         http_mock.add(
             "GET",
             "/datasets/5",
-            json={"dataset": {"pk": 5, "title": "T", "owner": {"username": "o"}}},
+            json={
+                "dataset": {
+                    "pk": 5,
+                    "title": "T",
+                    "owner": {"username": "o"},
+                    "alternate": "geonode:t",
+                }
+            },
         )
         res = self.make().get_resource("datasets", 5)
-        assert res.pk == 5 and res.owner == "o"
+        assert res.pk == 5 and res.owner == "o" and res.alternate == "geonode:t"
 
     def test_errors_raise(self, http_mock):
         http_mock.add("*", ".*", status=500)
