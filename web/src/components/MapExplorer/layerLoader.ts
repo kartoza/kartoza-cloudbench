@@ -11,6 +11,7 @@ import { fromUrl } from 'geotiff'
 import type { LidarControl } from 'maplibre-gl-lidar'
 import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
+import { stretchRange } from '../../utils/rasterStretch'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -66,9 +67,10 @@ export function cogStyleFrom(style: Record<string, unknown> | null): CogStyle {
  * ("photo") rendering can't draw it: one band of more than 8 bits, such as a
  * Float32 DEM. That rendering divides by 2^bits (all black) and, without a
  * NoData value, paints the tiles' area outside the raster opaque white. A
- * `#color:` ramp over the data's min–max fixes both: the colour renderer leaves
- * NoData, NaN and the out-of-raster fill transparent. Black is low, as in the
- * original-CRS GeoTIFF preview. The range comes from the smallest overview.
+ * `#color:` ramp fixes both: the colour renderer leaves NoData, NaN and the
+ * out-of-raster fill transparent. Black is low, as in the original-CRS GeoTIFF
+ * preview. The range is the 2–98% stretch (utils/rasterStretch) of the
+ * smallest overview.
  * Returns '' when the default rendering is fine or the range can't be read.
  */
 export async function defaultCogHash(url: string): Promise<string> {
@@ -86,19 +88,10 @@ export async function defaultCogHash(url: string): Promise<string> {
     if (!isMask && image.getWidth() < smallest.getWidth()) smallest = image
   }
 
-  const noData = first.getGDALNoData()
   const [band] = (await smallest.readRasters({ samples: [0] })) as unknown as ArrayLike<number>[]
-  let min = Infinity
-  let max = -Infinity
-  for (let i = 0; i < band.length; i++) {
-    const value = band[i]
-    if (!Number.isFinite(value) || value === noData) continue
-    if (value < min) min = value
-    if (value > max) max = value
-  }
-  if (!Number.isFinite(min)) return ''
-  if (max === min) max = min + 1
-  return `#color:BrewerGreys9,${min},${max},-c`
+  const range = stretchRange(band, first.getGDALNoData())
+  if (!range) return ''
+  return `#color:BrewerGreys9,${range.min},${range.max},-c`
 }
 
 export async function addCogLayer(

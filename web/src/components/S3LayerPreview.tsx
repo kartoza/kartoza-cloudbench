@@ -41,6 +41,7 @@ import { getS3ProxyURL } from '../api/s3'
 import type { S3PreviewMetadata, S3AttributeTableResponse } from '../types'
 import type { FeatureCollection, Feature, Geometry } from 'geojson'
 import { formatCellValue, geoParquetColumns } from '../utils/geoparquet'
+import { isNoData, stretchRange } from '../utils/rasterStretch'
 import { useUIStore } from '../stores/uiStore'
 import { applyBasemap } from '../config/basemap'
 
@@ -510,13 +511,19 @@ export default function S3LayerPreview({
             const band1 = numBands > 1 ? rasters[1] as Uint8Array | Uint16Array | Float32Array : band0
             const band2 = numBands > 2 ? rasters[2] as Uint8Array | Uint16Array | Float32Array : band0
 
-            // Calculate min/max for normalization
-            let min = Infinity, max = -Infinity
-            for (let i = 0; i < band0.length; i++) {
-              if (band0[i] !== 0) { // Skip nodata
-                min = Math.min(min, band0[i])
-                max = Math.max(max, band0[i])
+            // NoData: the file's own value (plus NaN/±∞); 0 only for a
+            // file that declares none, as before.
+            const noData = image.getGDALNoData() ?? 0
+            // Grey range for one band: the 2–98% stretch, so skewed data
+            // (population counts…) isn't all dark. RGB only needs the max.
+            let min = 0, max = -Infinity
+            if (numBands >= 3) {
+              for (let i = 0; i < band0.length; i++) {
+                if (!isNoData(band0[i], noData)) max = Math.max(max, band0[i])
               }
+            } else {
+              const stretch = stretchRange(band0, noData)
+              if (stretch) ({ min, max } = stretch)
             }
             const range = max - min || 1
 
@@ -530,13 +537,13 @@ export default function S3LayerPreview({
                 data[idx + 1] = Math.round((band1[i] as number) * scale)
                 data[idx + 2] = Math.round((band2[i] as number) * scale)
               } else {
-                // Grayscale - normalize to 0-255
-                const val = Math.round(((band0[i] as number) - min) / range * 255)
+                // Grayscale - normalize to 0-255 (clamped to the stretch)
+                const val = Math.round(Math.min(Math.max(((band0[i] as number) - min) / range, 0), 1) * 255)
                 data[idx] = val
                 data[idx + 1] = val
                 data[idx + 2] = val
               }
-              data[idx + 3] = band0[i] === 0 ? 0 : 255 // Alpha (transparent for nodata)
+              data[idx + 3] = isNoData(band0[i], noData) ? 0 : 255 // Alpha (transparent for nodata)
             }
 
             ctx.putImageData(imageData, 0, 0)
