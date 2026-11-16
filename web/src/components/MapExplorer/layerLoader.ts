@@ -7,9 +7,11 @@
 import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
+import { fromUrl } from 'geotiff'
 import type { LidarControl } from 'maplibre-gl-lidar'
 import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
+import { stretchRange } from '../../utils/rasterStretch'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -58,6 +60,38 @@ export function cogStyleFrom(style: Record<string, unknown> | null): CogStyle {
       Object.entries(paint).filter(([name]) => name.startsWith('raster-') && name !== 'raster-opacity')
     ),
   }
+}
+
+/**
+ * A colour ramp for a COG whose style has none, when the protocol's default
+ * ("photo") rendering can't draw it: one band of more than 8 bits, such as a
+ * Float32 DEM. That rendering divides by 2^bits (all black) and, without a
+ * NoData value, paints the tiles' area outside the raster opaque white. A
+ * `#color:` ramp fixes both: the colour renderer leaves NoData, NaN and the
+ * out-of-raster fill transparent. Black is low, as in the original-CRS GeoTIFF
+ * preview. The range is the 2–98% stretch (utils/rasterStretch) of the
+ * smallest overview.
+ * Returns '' when the default rendering is fine or the range can't be read.
+ */
+export async function defaultCogHash(url: string): Promise<string> {
+  const tiff = await fromUrl(url)
+  const first = await tiff.getImage(0)
+  const sampleFormat = first.getSampleFormat(0) ?? 1
+  if (first.getSamplesPerPixel() !== 1) return ''
+  if (first.getBitsPerSample(0) <= 8 && sampleFormat === 1) return ''
+
+  let smallest = first
+  const count = await tiff.getImageCount()
+  for (let i = 1; i < count; i++) {
+    const image = await tiff.getImage(i)
+    const isMask = (((await image.fileDirectory.loadValue('NewSubfileType')) as number | undefined) ?? 0) & 4
+    if (!isMask && image.getWidth() < smallest.getWidth()) smallest = image
+  }
+
+  const [band] = (await smallest.readRasters({ samples: [0] })) as unknown as ArrayLike<number>[]
+  const range = stretchRange(band, first.getGDALNoData())
+  if (!range) return ''
+  return `#color:BrewerGreys9,${range.min},${range.max},-c`
 }
 
 export async function addCogLayer(
@@ -242,6 +276,7 @@ export async function loadLayerOntoMap(
   if (layer.format === 'cog') {
     // Drawn the way the layer's saved default style says (colour ramp, paint).
     const style = cogStyleFrom(await getPmtilesStyle(connectionId, layer.key))
+    if (!style.hash) style.hash = await defaultCogHash(url).catch(() => '')
     const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity, style)
     return { bounds, isVector: false }
   }
