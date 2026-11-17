@@ -492,6 +492,31 @@ def test_a_skipped_layer_is_reported_not_published(conversion_job):
     assert conversion_job.message == "Published 1 layer to the catalog (1 skipped)"
     assert "broken: unsupported geometry" in conversion_job.error
     assert not any("broken" in key for key in s3.objects)
+    assert conversion_job.to_dict()["skipped"] == [
+        {"name": "broken", "error": "unsupported geometry"}
+    ]
+
+
+@pytest.mark.django_db
+def test_a_skipped_layer_error_drops_the_tool_progress(conversion_job):
+    conversion_job.source_name = "roads.gpkg"
+    conversion_job.layers = ["roads", "empty"]
+    conversion_job.save(update_fields=["source_name", "layers"])
+    s3 = FakeS3()
+    s3.objects[conversion_job.source_key] = b"SQLite format 3\x00gpkg"
+    tippecanoe = (
+        "tippecanoe failed: Merging string pool           \rMerging vertices   \r"
+        "0 features, 12 bytes of geometry\nDid not read any valid geometries"
+    )
+    client, _submitted = converting_cng(
+        s3, "pmtiles", vector_results("roads"), errors=[{"name": "empty", "error": tippecanoe}]
+    )
+
+    run_with(conversion_job, s3, client)
+
+    reason = "tippecanoe failed: Did not read any valid geometries"
+    assert conversion_job.error == f"empty: {reason}"
+    assert conversion_job.to_dict()["skipped"] == [{"name": "empty", "error": reason}]
 
 
 @pytest.mark.django_db

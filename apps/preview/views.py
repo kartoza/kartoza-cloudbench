@@ -239,8 +239,9 @@ class PreviewMetadataView(APIView):
             if isinstance(default_style, dict):
                 metadata["default_style"] = default_style.get("name", "")
 
-            # Get bounding box
-            bbox = layer_meta.get("bbox")
+            # The map needs WGS84: the native bbox is in the layer's own CRS
+            # (metres for e.g. EPSG:3763), so only a fallback.
+            bbox = layer_meta.get("latLonBbox") or layer_meta.get("bbox")
             if bbox:
                 metadata["latlon_bbox"] = {
                     "minx": bbox.get("minx", -180),

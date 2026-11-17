@@ -130,6 +130,8 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 onSchemaChange(e.target.value)
                 onTableChange('')
                 onColumnsChange([])
+                onConditionsChange([])
+                onOrderByChange([])
               }}
               size="sm"
               borderRadius="lg"
@@ -148,6 +150,8 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
               onChange={(e) => {
                 onTableChange(e.target.value)
                 onColumnsChange([])
+                onConditionsChange([])
+                onOrderByChange([])
               }}
               size="sm"
               borderRadius="lg"

@@ -1,6 +1,7 @@
 """Persistent status of CloudNativeGIS-to-S3 conversion jobs."""
 
 import logging
+import re
 import time
 import uuid
 
@@ -29,6 +30,20 @@ CONVERSION_FORMATS = {
 
 # GeoHosting's page of a user's on-demand servers ("Server on Demand").
 GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/server-on-demand"
+
+
+def readable_layer_error(error):
+    """A skipped layer's error, short enough to show.
+
+    A tool's output (e.g. tippecanoe's) can come with its progress lines,
+    separated by carriage returns: keep what it failed with, and its last line,
+    which says why ("tippecanoe failed: Did not read any valid geometries").
+    """
+    lines = [line.strip() for line in re.split(r"[\r\n]+", str(error or "")) if line.strip()]
+    if len(lines) <= 1:
+        return lines[0] if lines else ""
+    prefix, sep, _rest = lines[0].partition(": ")
+    return f"{prefix}: {lines[-1]}" if sep else lines[-1]
 
 
 def _is_healthy(url):
@@ -526,6 +541,12 @@ class CngLiteJob(models.Model):
             "inputSize": self.input_size,
             "outputSize": self.output_size,
             "layers": self.layers,
+            # The layers/tables CloudNativeGIS couldn't convert, and why.
+            "skipped": [
+                {"name": str(e.get("name", "")), "error": readable_layer_error(e.get("error"))}
+                for e in self.cng_errors or []
+                if isinstance(e, dict)
+            ],
             "startedAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
             # On demand: the server it runs (or ran) on.

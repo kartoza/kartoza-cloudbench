@@ -233,11 +233,12 @@ export default function MapExplorerView({ onClose }: MapExplorerViewProps) {
         )
 
         if (!isVector || option.format !== 'pmtiles') return
+        // A layer starts on the default style; its custom style (if it has
+        // one) is kept, to switch to from the layer's style picker.
         getPmtilesStyle(option.connectionId, option.key).then((style) => {
           if (!style) return
           customStylesRef.current.set(id, style)
-          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'custom', customLegend: legendItemsFromStyle(style) } : l)))
-          applyPmtilesVectorStyle(mapInstance, id, sourceLayer ?? 'default', newLayer.color, newLayer.opacity, style)
+          setLayers((cur) => cur.map((l) => (l.id === id ? { ...l, hasCustomStyle: true, styleMode: 'default', customLegend: legendItemsFromStyle(style) } : l)))
         })
       })
       .catch(() => {

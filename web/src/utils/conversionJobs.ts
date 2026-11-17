@@ -5,7 +5,9 @@ import type { ConversionJob, ConversionJobStatus } from '../types'
 
 export interface LayerProgressStatus {
   name: string
-  status: 'done' | 'active' | 'pending'
+  status: 'done' | 'active' | 'pending' | 'skipped'
+  // Why it was skipped.
+  error?: string
 }
 
 // Derives a per-layer done/active/pending breakdown from the job's coarse
@@ -20,10 +22,26 @@ export function layerConversionStatuses(job: ConversionJob): LayerProgressStatus
   const activeIndex = Math.floor(fraction * layers.length)
   const allDone = job.status === 'completed' || activeIndex >= layers.length
 
-  return layers.map((name, index) => ({
-    name,
-    status: allDone || index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
-  }))
+  const skipped = new Map((job.skipped ?? []).map((s) => [s.name, s.error]))
+  return layers.map((name, index) =>
+    skipped.has(name)
+      ? { name, status: 'skipped', error: skipped.get(name) }
+      : {
+          name,
+          status: allDone || index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
+        },
+  )
+}
+
+// The layers that were skipped, and why: from job.skipped, or (for a job
+// recorded before that existed) its error, "name: reason; name: reason".
+export function skippedLayers(job: ConversionJob): { name: string; error: string }[] {
+  if (job.skipped?.length) return job.skipped
+  if (!job.error || job.status !== 'completed') return []
+  return job.error.split('; ').map((line) => {
+    const at = line.indexOf(': ')
+    return at > 0 ? { name: line.slice(0, at), error: line.slice(at + 2) } : { name: '', error: line }
+  })
 }
 
 // Not finished yet - matches ACTIVE_CNG_LITE_JOB_STATUSES on the backend.
