@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from apps.core.models import PGService
 from apps.postgres.client import PGServiceClient
 from apps.upload.jobs import _run
+from apps.upload.models import UploadSession
 
 
 @pytest.fixture
@@ -322,11 +323,12 @@ class TestPostgresImportCleanup:
     """
 
     @pytest.fixture
-    def authenticated_client(self, api_client: APIClient) -> APIClient:
-        """PGImportView requires IsAuthenticated; force_authenticate skips
-        the real auth backend so no DB-backed user is needed.
-        """
-        api_client.force_authenticate(user=get_user_model().objects.create(username="importer"))
+    def importer(self):
+        return get_user_model().objects.create(username="importer")
+
+    @pytest.fixture
+    def authenticated_client(self, api_client: APIClient, importer) -> APIClient:
+        api_client.force_authenticate(user=importer)
         return api_client
 
     @pytest.fixture(autouse=True)
@@ -353,12 +355,9 @@ class TestPostgresImportCleanup:
             yield mock_get_client
 
     @pytest.fixture
-    def uploaded_gpkg(self, tmp_path: Path) -> Path:
-        upload_dir = tmp_path / "session-abc"
-        upload_dir.mkdir()
-        file_path = upload_dir / "combined.gpkg"
-        file_path.write_bytes(b"fake gpkg content")
-        return file_path
+    def uploaded_gpkg(self, tmp_path: Path, importer) -> Path:
+        """A file the importer uploaded (as PGUploadCompleteView leaves it)."""
+        return _staged_upload(tmp_path, importer, "combined.gpkg")
 
     def test_import_without_cleanup_flag_keeps_file(
         self,
@@ -503,6 +502,108 @@ class TestPostgresImportCleanup:
                     assert uploaded_gpkg.exists(), f"source must survive after layer {layer}"
 
         assert not uploaded_gpkg.parent.exists()
+
+
+def _staged_upload(tmp_path: Path, user, filename: str) -> Path:
+    """A file uploaded by `user` through an upload session, in its directory."""
+    session = UploadSession(
+        user=user, filename=filename, file_size=17, chunk_size=17, total_chunks=1
+    )
+    upload_dir = tmp_path / "uploads" / str(session.session_id)
+    upload_dir.mkdir(parents=True)
+    session.upload_dir = str(upload_dir)
+    session.save()
+    file_path = upload_dir / filename
+    file_path.write_bytes(b"fake gpkg content")
+    return file_path
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestPostgresImportOnlyTakesTheUsersUploads:
+    """The import endpoints take a file path: only one the user uploaded.
+
+    Any other path would have that file imported (read) and, with
+    cleanupSource, its directory deleted.
+    """
+
+    @pytest.fixture
+    def importer(self):
+        return get_user_model().objects.create(username="importer")
+
+    @pytest.fixture
+    def client(self, api_client: APIClient, importer) -> APIClient:
+        api_client.force_authenticate(user=importer)
+        return api_client
+
+    @pytest.fixture(autouse=True)
+    def pg_service(self):
+        with patch("apps.postgres.views.get_pg_client") as get_client:
+            get_client.return_value.service = MagicMock(host="h", port=5432, password="pw")
+            yield
+
+    @pytest.fixture(autouse=True)
+    def tools(self):
+        with (
+            patch("apps.postgres.views.start_job") as start_job,
+            patch("apps.postgres.views.subprocess") as subprocess,
+        ):
+            subprocess.run.return_value = MagicMock(returncode=0, stdout="Layer name: a\n")
+            yield start_job
+
+    @pytest.fixture
+    def victim(self, tmp_path: Path) -> Path:
+        """A file elsewhere on the server, in a directory worth keeping."""
+        folder = tmp_path / "data"
+        folder.mkdir()
+        (folder / "keep.gpkg").write_bytes(b"precious")
+        return folder / "keep.gpkg"
+
+    def _import(self, client, path, endpoint="/api/pg/import"):
+        body = {"serviceName": "svc", "filePath": str(path), "tableName": "t"}
+        return client.post(endpoint, {**body, "cleanupSource": True}, format="json")
+
+    @pytest.mark.parametrize("endpoint", ["/api/pg/import", "/api/pg/import/raster"])
+    def test_a_file_outside_the_uploads_is_refused(self, client, victim, tools, endpoint):
+        response = self._import(client, victim, endpoint)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Uploaded file not found" in response.json()["error"]
+        tools.assert_not_called()
+        assert victim.exists()
+
+    def test_a_path_climbing_out_of_an_upload_is_refused(
+        self, client, importer, victim, tools, tmp_path
+    ):
+        upload = _staged_upload(tmp_path, importer, "mine.gpkg")
+        climbing = upload.parent / ".." / ".." / "data" / "keep.gpkg"
+
+        assert self._import(client, climbing).status_code == status.HTTP_400_BAD_REQUEST
+        tools.assert_not_called()
+
+    def test_another_users_upload_is_refused(self, client, tools, tmp_path):
+        other = get_user_model().objects.create(username="other")
+        theirs = _staged_upload(tmp_path, other, "theirs.gpkg")
+
+        assert self._import(client, theirs).status_code == status.HTTP_400_BAD_REQUEST
+        tools.assert_not_called()
+        assert theirs.exists()
+
+    def test_the_users_own_upload_is_imported(self, client, importer, tools, tmp_path):
+        mine = _staged_upload(tmp_path, importer, "mine.gpkg")
+
+        assert self._import(client, mine).status_code == status.HTTP_202_ACCEPTED
+        tools.assert_called_once()
+
+    def test_layers_are_only_listed_for_the_users_uploads(self, client, importer, victim, tmp_path):
+        mine = _staged_upload(tmp_path, importer, "mine.gpkg")
+
+        refused = client.post("/api/pg/detect-layers", {"filePath": str(victim)}, format="json")
+        listed = client.post("/api/pg/detect-layers", {"filePath": str(mine)}, format="json")
+
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST
+        assert listed.status_code == status.HTTP_200_OK
+        assert listed.json()["layers"] == ["a"]
 
 
 @pytest.mark.integration

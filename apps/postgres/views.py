@@ -13,6 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,6 +32,8 @@ from .client import (
     update_pg_service,
 )
 from .tasks import run_raster_import, run_vector_import
+
+User = get_user_model()
 
 # === PostgreSQL Services ===
 
@@ -415,6 +418,37 @@ class PGQueryView(APIView):
 # === Data Import ===
 
 
+def _staged_file(request, file_path) -> str | None:
+    """`file_path` if it's a file the user uploaded for import, else None.
+
+    The import endpoints take the path the upload answered with
+    (PGUploadCompleteView): it must be in the upload directory of one of the
+    user's own upload sessions. Without this check a caller could have any
+    file the process can read imported, and with cleanupSource have its
+    directory deleted.
+    """
+    try:
+        path = Path(str(file_path)).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not path.is_file():
+        return None
+    session = _get_session(path.parent.name)
+    if not session or Path(session.upload_dir).resolve() != path.parent:
+        return None
+    if session.user_id is None:
+        # Made for a stand-in user (UploadInitView): no real user owns it.
+        return None if isinstance(request.user, User) else str(path)
+    return str(path) if getattr(request.user, "pk", None) == session.user_id else None
+
+
+def _not_staged(file_path) -> Response:
+    return Response(
+        {"error": f"Uploaded file not found: {file_path}"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _import_env(service) -> dict:
     """The environment for an import tool: libpq reads the password from it."""
     env = dict(os.environ)
@@ -452,11 +486,10 @@ class PGImportView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
         # The password goes in PGPASSWORD (see _import_env), not in the
         # command line, where any process listing would show it.
@@ -533,11 +566,10 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
         raster_cmd = [
             "raster2pgsql",
@@ -595,11 +627,10 @@ class PGDetectLayersView(APIView):
         if not file_path:
             return Response({"error": "filePath is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
         try:
             # Use ogrinfo to list layers
