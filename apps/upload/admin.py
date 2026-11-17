@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import UploadSession
+from .models import UploadJob, UploadSession
 
 
 @admin.register(UploadSession)
@@ -36,3 +36,11 @@ class UploadSessionAdmin(admin.ModelAdmin):
         "completed",
         "error",
     ]
+
+
+@admin.register(UploadJob)
+class UploadJobAdmin(admin.ModelAdmin):
+    list_display = ["output", "kind", "status", "progress", "target", "user", "created_at"]
+    list_filter = ["kind", "status"]
+    search_fields = ["output", "source_name", "target", "user__username"]
+    readonly_fields = [field.name for field in UploadJob._meta.fields]

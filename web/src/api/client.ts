@@ -697,9 +697,14 @@ export interface LayerInfo {
   }
 }
 
+// A background import (apps.upload.models.UploadJob): the request starting it
+// answers at once; poll it with getImportJobStatus / waitForImportJob.
 export interface ImportJob {
   id: string
   status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  output: string
   error?: string
 }
 
@@ -777,10 +782,7 @@ export async function detectLayers(filePath: string): Promise<Array<{ name: stri
   return data.layers.map((name) => ({ name }))
 }
 
-export async function startVectorImport(request: ImportRequest): Promise<{
-  status: string;
-  error?: string;
-}> {
+export async function startVectorImport(request: ImportRequest): Promise<ImportJob> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/pg/import`, {
     method: 'POST',
@@ -788,13 +790,10 @@ export async function startVectorImport(request: ImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ status: string; error?: string }>(response)
+  return handleResponse<ImportJob>(response)
 }
 
-export async function startRasterImport(request: RasterImportRequest): Promise<{
-  status: string;
-  error?: string;
-}> {
+export async function startRasterImport(request: RasterImportRequest): Promise<ImportJob> {
   const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || ''
   const response = await fetch(`${API_BASE}/pg/import/raster`, {
     method: 'POST',
@@ -802,12 +801,38 @@ export async function startRasterImport(request: RasterImportRequest): Promise<{
     credentials: 'include',
     body: JSON.stringify(request),
   })
-  return handleResponse<{ status: string; error?: string }>(response)
+  return handleResponse<ImportJob>(response)
 }
 
 export async function getImportJobStatus(jobId: string): Promise<ImportJob> {
-  const response = await fetch(`${API_BASE}/pg/import/${jobId}`, { credentials: 'include' })
+  const response = await fetch(`${API_BASE}/upload/jobs/${jobId}`, { credentials: 'include' })
   return handleResponse<ImportJob>(response)
+}
+
+/**
+ * Polls an import job until it has completed or failed, calling `onUpdate`
+ * with each state. A few failed polls in a row (a flaky connection) are
+ * retried before giving up.
+ */
+export async function waitForImportJob(
+  job: ImportJob,
+  onUpdate?: (job: ImportJob) => void,
+  intervalMs = 2000,
+): Promise<ImportJob> {
+  let current = job
+  let failures = 0
+  onUpdate?.(current)
+  while (current.status === 'pending' || current.status === 'running') {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    try {
+      current = await getImportJobStatus(job.id)
+      failures = 0
+      onUpdate?.(current)
+    } catch (err) {
+      if (++failures >= 5) throw err
+    }
+  }
+  return current
 }
 
 // ============================================================================

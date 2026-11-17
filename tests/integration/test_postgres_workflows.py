@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.core.models import PGService
 from apps.postgres.client import PGServiceClient
+from apps.upload.jobs import _run
 
 
 @pytest.fixture
@@ -303,6 +304,11 @@ class TestPostgresImportWorkflow:
         assert "Service not found" in response.json()["error"]
 
 
+def _job_status(client: APIClient, response) -> str:
+    """The status of the import job `response` started."""
+    return client.get(f"/api/upload/jobs/{response.json()['id']}").json()["status"]
+
+
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestPostgresImportCleanup:
@@ -320,8 +326,16 @@ class TestPostgresImportCleanup:
         """PGImportView requires IsAuthenticated; force_authenticate skips
         the real auth backend so no DB-backed user is needed.
         """
-        api_client.force_authenticate(user=get_user_model()())
+        api_client.force_authenticate(user=get_user_model().objects.create(username="importer"))
         return api_client
+
+    @pytest.fixture(autouse=True)
+    def jobs_run_inline(self):
+        """Run each import job in the request instead of a background thread."""
+        with patch(
+            "apps.postgres.views.start_job", side_effect=lambda job, work: _run(job.id, work)
+        ):
+            yield
 
     @pytest.fixture
     def mock_pg_import_client(self):
@@ -355,8 +369,8 @@ class TestPostgresImportCleanup:
         """Default behaviour (no cleanupSource) must not delete the source,
         since another layer of the same upload may still need it.
         """
-        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (0, "")
             response = authenticated_client.post(
                 "/api/pg/import",
                 {
@@ -368,7 +382,8 @@ class TestPostgresImportCleanup:
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert _job_status(authenticated_client, response) == "completed"
         assert uploaded_gpkg.exists()
 
     def test_import_with_cleanup_flag_removes_file(
@@ -380,8 +395,8 @@ class TestPostgresImportCleanup:
         """cleanupSource=True (the last layer) must remove the whole
         upload dir, including the source file.
         """
-        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (0, "")
             response = authenticated_client.post(
                 "/api/pg/import",
                 {
@@ -394,7 +409,8 @@ class TestPostgresImportCleanup:
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert _job_status(authenticated_client, response) == "completed"
         assert not uploaded_gpkg.parent.exists()
 
     def test_import_promotes_to_multi(
@@ -407,8 +423,8 @@ class TestPostgresImportCleanup:
         mixes single and multi parts (e.g. a shapefile) doesn't fail on the
         first multi feature against a single-type column.
         """
-        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (0, "")
             response = authenticated_client.post(
                 "/api/pg/import",
                 {
@@ -419,9 +435,44 @@ class TestPostgresImportCleanup:
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         cmd = mock_run.call_args[0][0]
         assert "-nlt" in cmd and cmd[cmd.index("-nlt") + 1] == "PROMOTE_TO_MULTI"
+
+    def test_password_is_kept_out_of_the_command_line(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (0, "")
+            authenticated_client.post(
+                "/api/pg/import",
+                {"serviceName": "test_service", "filePath": str(uploaded_gpkg)},
+                format="json",
+            )
+        cmd = mock_run.call_args[0][0]
+        assert not any("testpass" in arg for arg in cmd)
+        assert mock_run.call_args.kwargs["env"]["PGPASSWORD"] == "testpass"
+
+    def test_a_failed_import_reports_why(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        uploaded_gpkg: Path,
+    ) -> None:
+        """The import "succeeded" without a table: a failure must show as one."""
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (1, "ERROR 1: COPY statement failed")
+            response = authenticated_client.post(
+                "/api/pg/import",
+                {"serviceName": "test_service", "filePath": str(uploaded_gpkg)},
+                format="json",
+            )
+        job = authenticated_client.get(f"/api/upload/jobs/{response.json()['id']}").json()
+        assert job["status"] == "failed"
+        assert "COPY statement failed" in job["error"]
 
     def test_multi_layer_import_sequence(
         self,
@@ -431,8 +482,8 @@ class TestPostgresImportCleanup:
     ) -> None:
         """Mirrors PGUploadDialog's per-layer loop for a 3-layer GeoPackage."""
         layers = ["aoi", "boundary_lines", "camps"]
-        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("apps.postgres.tasks.run_command") as mock_run:
+            mock_run.return_value = (0, "")
             for i, layer in enumerate(layers):
                 response = authenticated_client.post(
                     "/api/pg/import",
@@ -446,7 +497,7 @@ class TestPostgresImportCleanup:
                     format="json",
                 )
                 assert (
-                    response.status_code == status.HTTP_200_OK
+                    _job_status(authenticated_client, response) == "completed"
                 ), f"layer {layer} failed: {response.json()}"
                 if i < len(layers) - 1:
                     assert uploaded_gpkg.exists(), f"source must survive after layer {layer}"

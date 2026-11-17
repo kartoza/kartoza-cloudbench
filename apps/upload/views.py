@@ -24,7 +24,7 @@ from apps.core.config import get_cache_dir
 from apps.core.exceptions import UploadError
 from apps.geoserver.client import get_geoserver_client
 
-from .models import UploadSession
+from .models import UploadJob, UploadSession
 
 User = get_user_model()
 
@@ -414,3 +414,13 @@ class SimpleUploadView(APIView):
                 {"error": f"Upload failed: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class UploadJobView(APIView):
+    """An upload job's status, for the dialog that started it to poll."""
+
+    def get(self, request, job_id):
+        job = UploadJob.objects.filter(pk=job_id, user=request.user).first()
+        if job is None:
+            return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(job.to_dict())

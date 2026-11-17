@@ -51,6 +51,13 @@ import { useTreeStore } from '../../stores/treeStore'
 import * as api from '../../api'
 import type { LayerMetadataUpdate, MetadataLink } from '../../types'
 
+// GeoServer gives a style as {name, href}; the API flattens it to its name.
+function styleName(style: unknown): string {
+  if (typeof style === 'string') return style
+  if (style && typeof style === 'object' && 'name' in style) return String((style as { name: unknown }).name ?? '')
+  return ''
+}
+
 export default function LayerDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
   const dialogData = useUIStore((state) => state.dialogData)
@@ -438,7 +445,7 @@ export default function LayerDialog() {
                             </Box>
                             <Box>
                               <Text fontSize="xs" color="gray.500">Default Style</Text>
-                              <Text fontWeight="medium">{metadata?.defaultStyle || 'None'}</Text>
+                              <Text fontWeight="medium">{styleName(metadata?.defaultStyle) || 'None'}</Text>
                             </Box>
                             <Box>
                               <Text fontSize="xs" color="gray.500">Native CRS</Text>
