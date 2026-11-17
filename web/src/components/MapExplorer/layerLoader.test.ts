@@ -64,3 +64,25 @@ describe('cogStyleFrom', () => {
     ).toEqual({ hash: '', paint: {} })
   })
 })
+
+describe('applyPmtilesVectorStyle', () => {
+  it('draws each geometry type with its own layer, so lines are never filled', async () => {
+    const { applyPmtilesVectorStyle, isRenderedIdFor } = await import('./layerLoader')
+    const added: Record<string, unknown>[] = []
+    const map = {
+      getStyle: () => ({ layers: [] }),
+      getLayer: () => undefined,
+      removeLayer: vi.fn(),
+      addLayer: (layer: Record<string, unknown>) => added.push(layer),
+    } as never
+
+    applyPmtilesVectorStyle(map, 'l1', 'paths', '#f90', 80, null)
+
+    expect(added.map((l) => [l.id, l.type, l.filter])).toEqual([
+      ['l1-fill', 'fill', ['==', '$type', 'Polygon']],
+      ['l1-line', 'line', ['in', '$type', 'LineString', 'Polygon']],
+      ['l1-circle', 'circle', ['==', '$type', 'Point']],
+    ])
+    expect(added.every((l) => isRenderedIdFor(l.id as string, 'l1'))).toBe(true)
+  })
+})

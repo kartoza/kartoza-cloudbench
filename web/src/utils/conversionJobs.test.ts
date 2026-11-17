@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ConversionJob } from '../types'
-import { jobKindLabel, layerConversionStatuses } from './conversionJobs'
+import { jobKindLabel, layerConversionStatuses, skippedLayers } from './conversionJobs'
 
 function job(extra: Partial<ConversionJob>): ConversionJob {
   return {
@@ -33,5 +33,29 @@ describe('conversion job helpers', () => {
       job({ targetFormat: 'mosaic', progress: 50, layers: ['a.tif', 'b.tif', 'c.tif', 'd.tif'] })
     )
     expect(statuses?.map((tile) => tile.status)).toEqual(['done', 'done', 'active', 'pending'])
+  })
+
+  it('marks the layers CloudNativeGIS skipped, with why', () => {
+    const statuses = layerConversionStatuses(
+      job({
+        targetFormat: 'pmtiles',
+        status: 'deprovisioning',
+        progress: 98,
+        layers: ['roads', 'empty'],
+        skipped: [{ name: 'empty', error: 'no features' }],
+      })
+    )
+    expect(statuses).toEqual([
+      { name: 'roads', status: 'done' },
+      { name: 'empty', status: 'skipped', error: 'no features' },
+    ])
+  })
+
+  it("reads an older job's skipped layers from its error", () => {
+    expect(skippedLayers(job({ status: 'completed', error: 'a: no features; b: bad: geometry' }))).toEqual([
+      { name: 'a', error: 'no features' },
+      { name: 'b', error: 'bad: geometry' },
+    ])
+    expect(skippedLayers(job({ status: 'failed', error: 'boom' }))).toEqual([])
   })
 })

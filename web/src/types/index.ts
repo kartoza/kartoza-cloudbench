@@ -605,6 +605,9 @@ export interface ConversionJob {
   // GeoPackage -> pmtiles jobs only: the vector layers being converted, in
   // the order cng-lite processes them.
   layers?: string[] | null
+  // The layers/tables CloudNativeGIS couldn't convert, and why (known once
+  // it has finished converting; the job itself still completes).
+  skipped?: { name: string; error: string }[]
   sourceFormat: string
   targetFormat: string
   status: ConversionJobStatus

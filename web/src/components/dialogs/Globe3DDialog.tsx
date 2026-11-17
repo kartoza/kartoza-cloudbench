@@ -33,6 +33,7 @@ import {
 } from '@chakra-ui/react'
 import { FiGlobe, FiMap, FiBox, FiEye, FiEyeOff, FiRefreshCw, FiMaximize2, FiLayers, FiChevronDown, FiInfo } from 'react-icons/fi'
 import * as Cesium from 'cesium'
+import { addGlobeBasemap } from '../../config/globeBasemap'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -136,16 +137,10 @@ export function Globe3DDialog() {
 
         console.log('[Globe3D] Viewer created, adding base layer...')
 
-        // Add CartoDB Positron as base layer (CORS-friendly, light theme)
-        viewer.imageryLayers.addImageryProvider(
-          new Cesium.UrlTemplateImageryProvider({
-            url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-            subdomains: ['a', 'b', 'c', 'd'],
-            credit: new Cesium.Credit('Map tiles by CartoDB, under CC BY 3.0. Data by OpenStreetMap, under ODbL.'),
-          })
-        )
+        // Bundled Natural Earth imagery: no API key, no outside host.
+        addGlobeBasemap(viewer)
 
-        console.log('[Globe3D] CartoDB base layer added')
+        console.log('[Globe3D] Base layer added')
 
         viewerRef.current = viewer
 

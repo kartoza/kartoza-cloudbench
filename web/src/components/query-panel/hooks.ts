@@ -1,7 +1,7 @@
 // Custom hooks for QueryPanel
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { SchemaInfo, QueryResult, AIResponse } from './types'
+import type { SchemaInfo, QueryResult, AIResponse, ColumnInfo } from './types'
 import { getApiBase } from '../../config/env'
 
 /**
@@ -94,7 +94,10 @@ export function useQueryExecution(serviceName: string, limit: number) {
 
       if (data.success) {
         const rows = data.result?.rows || []
-        const columns = data.result?.columns || []
+        // The API answers column names as plain strings; the results table wants objects.
+        const columns: ColumnInfo[] = (data.result?.columns || []).map(
+          (col: string | ColumnInfo) => (typeof col === 'string' ? { name: col, type: '', nullable: true } : col),
+        )
 
         if (appendResults && result) {
           setResult({

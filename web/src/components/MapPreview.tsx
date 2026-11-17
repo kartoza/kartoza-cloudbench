@@ -26,6 +26,7 @@ import { FiInfo, FiRefreshCw, FiX, FiDroplet, FiBox, FiGlobe, FiMap, FiChevronDo
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import * as api from '../api'
+import { applyBasemap } from '../config/basemap'
 import { useUIStore } from '../stores/uiStore'
 
 interface MapPreviewProps {
@@ -195,30 +196,6 @@ export default function MapPreview({
     }
   }, [connectionId, workspace, layerName])
 
-  // Check if two bounding boxes overlap
-  const boundsOverlap = (
-    a: [number, number, number, number],
-    b: [number, number, number, number]
-  ): boolean => {
-    // Bounds format: [minX, minY, maxX, maxY]
-    return !(a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1])
-  }
-
-  // Check if current map view intersects with bounds
-  const currentViewOverlapsBounds = (
-    bounds: [number, number, number, number]
-  ): boolean => {
-    if (!map.current) return false
-    const mapBounds = map.current.getBounds()
-    const currentBounds: [number, number, number, number] = [
-      mapBounds.getWest(),
-      mapBounds.getSouth(),
-      mapBounds.getEast(),
-      mapBounds.getNorth(),
-    ]
-    return boundsOverlap(currentBounds, bounds)
-  }
-
   // Build WMS tile URL with current style - not a callback since we use it in effects
   const buildWmsTileUrl = (info: LayerInfo, style?: string): string => {
     const layerFullName = `${info.workspace}:${info.name}`
@@ -271,33 +248,15 @@ export default function MapPreview({
       (bounds[1] + bounds[3]) / 2,
     ]
 
+    // No style here: the Kartoza basemap is loaded below (CARTO's tiles
+    // now only answer "API key required").
+    lastBoundsRef.current = null
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'basemap': {
-            type: 'raster',
-            tiles: [
-              'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-            ],
-            tileSize: 256,
-            attribution: '© <a href="https://carto.com/">CARTO</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-          },
-        },
-        layers: [
-          {
-            id: 'basemap-tiles',
-            type: 'raster',
-            source: 'basemap',
-            minzoom: 0,
-            maxzoom: 19,
-          },
-        ],
-      },
       center,
       zoom: 2,
     })
+    applyBasemap(map.current)
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.current.addControl(new maplibregl.ScaleControl(), 'bottom-left')
@@ -369,9 +328,10 @@ export default function MapPreview({
 
       console.log('[MapPreview] Layer bounds (lat/lon):', newBounds)
 
-      // Check if current view overlaps with new layer bounds
-      // If they overlap, keep the current view; otherwise, fit to new bounds
-      const shouldFitBounds = !currentViewOverlapsBounds(newBounds)
+      // Zoom to the layer the first time its bounds are known (they arrive
+      // after the map is made); after that (a style change) keep the view.
+      const last = lastBoundsRef.current
+      const shouldFitBounds = !last || last.some((value, i) => value !== newBounds[i])
 
       console.log('[MapPreview] Should fit to bounds:', shouldFitBounds)
 
@@ -384,7 +344,6 @@ export default function MapPreview({
     } else {
       console.log('[MapPreview] No bounds available in metadata')
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapLoaded, layerInfo, currentStyle, metadata?.latlon_bbox])
 
   // Update view mode (2D/3D/Globe)
@@ -393,11 +352,15 @@ export default function MapPreview({
 
     switch (viewMode) {
       case '2d':
-        map.current.easeTo({
-          pitch: 0,
-          bearing: 0,
-          duration: 500,
-        })
+        // Only when tilted/rotated: an easeTo would cut short the zoom to the
+        // layer (fitBounds) that starts as the map loads.
+        if (map.current.getPitch() !== 0 || map.current.getBearing() !== 0) {
+          map.current.easeTo({
+            pitch: 0,
+            bearing: 0,
+            duration: 500,
+          })
+        }
         map.current.setMaxPitch(0)
         break
       case '3d':

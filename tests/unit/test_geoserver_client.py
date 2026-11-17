@@ -320,10 +320,16 @@ class TestLayerMetadata:
         http_mock.add(
             "GET",
             r"featuretypes/ly\.json",
-            json={"featureType": {"nativeBoundingBox": {"minx": 1}}},
+            json={
+                "featureType": {
+                    "nativeBoundingBox": {"minx": 1},
+                    "latLonBoundingBox": {"minx": -9.5},
+                }
+            },
         )
         meta = client.get_layer_metadata("ws", "ly")
         assert meta["bbox"] == {"minx": 1}
+        assert meta["latLonBbox"] == {"minx": -9.5}
         assert meta["name"] == "ly"
 
     def test_coverage_bbox_falls_back_to_latlon(self, client, http_mock):

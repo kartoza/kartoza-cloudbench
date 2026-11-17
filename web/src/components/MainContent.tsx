@@ -393,6 +393,8 @@ export default function MainContent() {
       )
     case 'pgtable':
     case 'pgview':
+    case 'pgcolumn':
+      // A column shows the data of its table (its node carries the table's name).
       return (
         <PGTablePanel
           serviceName={selectedNode.serviceName!}

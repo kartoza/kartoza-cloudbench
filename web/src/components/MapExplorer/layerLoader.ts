@@ -86,7 +86,12 @@ export async function addCogLayer(
 }
 
 export function isRenderedIdFor(renderedId: string, layerId: string): boolean {
-  return renderedId === `${layerId}-fill` || renderedId === `${layerId}-line` || renderedId.startsWith(`${layerId}-custom-`)
+  return (
+    renderedId === `${layerId}-fill` ||
+    renderedId === `${layerId}-line` ||
+    renderedId === `${layerId}-circle` ||
+    renderedId.startsWith(`${layerId}-custom-`)
+  )
 }
 
 /** Removes any rendered layer(s) previously added for this id (default fill/line, or a custom style's layers). */
@@ -125,11 +130,15 @@ export function applyPmtilesVectorStyle(
     return
   }
 
+  // Each geometry type gets its own layer: a fill drawn over lines would
+  // close every line into a polygon (the long "triangles" across the map).
+  // `$type` matches the Multi* variants too.
   mapInstance.addLayer({
     id: `${layerId}-fill`,
     type: 'fill',
     source: layerId,
     'source-layer': sourceLayerName,
+    filter: ['==', '$type', 'Polygon'],
     paint: { 'fill-color': color, 'fill-opacity': opacity / 100 },
   })
   mapInstance.addLayer({
@@ -137,7 +146,22 @@ export function applyPmtilesVectorStyle(
     type: 'line',
     source: layerId,
     'source-layer': sourceLayerName,
-    paint: { 'line-color': color, 'line-width': 1 },
+    filter: ['in', '$type', 'LineString', 'Polygon'],
+    paint: { 'line-color': color, 'line-width': 1.5, 'line-opacity': opacity / 100 },
+  })
+  mapInstance.addLayer({
+    id: `${layerId}-circle`,
+    type: 'circle',
+    source: layerId,
+    'source-layer': sourceLayerName,
+    filter: ['==', '$type', 'Point'],
+    paint: {
+      'circle-color': color,
+      'circle-radius': 4,
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 1,
+      'circle-opacity': opacity / 100,
+    },
   })
 }
 

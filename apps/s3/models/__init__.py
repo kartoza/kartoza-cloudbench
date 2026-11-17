@@ -9,6 +9,7 @@ from .cng_lite_job import (
     CngLiteJob,
     CngLiteJobStatus,
     JobCancelled,
+    readable_layer_error,
 )
 from .cng_lite_job_log import CngLiteJobLog
 from .cng_lite_server import CngLiteServer
@@ -26,4 +27,5 @@ __all__ = [
     "CngLiteJobStatus",
     "JobCancelled",
     "S3Connection",
+    "readable_layer_error",
 ]

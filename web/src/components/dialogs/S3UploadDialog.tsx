@@ -1062,20 +1062,24 @@ export default function S3UploadDialog() {
           )}
         </ModalBody>
 
-        <S3UploadDialogProgress
-          gpkgItems={gpkgItems}
-          selectedLayerNames={selectedLayerNames}
-          onSelectedLayerNamesChange={setSelectedLayerNames}
-          inLayerPickerMode={inLayerPickerMode}
-          isUploading={isUploading}
-          uploadProgress={uploadProgress}
-          uploadResult={uploadResult}
-          conversionJob={conversionJob}
-          conversionJobError={conversionJobError}
-          conversionJobId={conversionJobId}
-          conversionJobIds={conversionJobIds}
-          earlierJobs={earlierJobs}
-        />
+        {/* Outside the body, so it scrolls on its own: a long list of layers
+            or output files mustn't push the footer out of the (90vh) modal. */}
+        <Box overflowY="auto" minH={0} maxH="60vh" flexShrink={1}>
+          <S3UploadDialogProgress
+            gpkgItems={gpkgItems}
+            selectedLayerNames={selectedLayerNames}
+            onSelectedLayerNamesChange={setSelectedLayerNames}
+            inLayerPickerMode={inLayerPickerMode}
+            isUploading={isUploading}
+            uploadProgress={uploadProgress}
+            uploadResult={uploadResult}
+            conversionJob={conversionJob}
+            conversionJobError={conversionJobError}
+            conversionJobId={conversionJobId}
+            conversionJobIds={conversionJobIds}
+            earlierJobs={earlierJobs}
+          />
+        </Box>
 
         {pendingReplace && (
           // Not shrunk to fit a tall body (the modal is capped at 90vh):

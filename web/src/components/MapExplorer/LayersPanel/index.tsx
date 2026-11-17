@@ -181,11 +181,11 @@ export default function LayersPanel({
               <Select
                 size="xs"
                 mb={2}
-                value={layer.styleMode ?? 'custom'}
+                value={layer.styleMode ?? 'default'}
                 onChange={(e) => onStyleModeChange(layer.id, e.target.value as 'default' | 'custom')}
               >
-                <option value="custom">Custom style</option>
                 <option value="default">Default style</option>
+                <option value="custom">Custom style</option>
               </Select>
             )}
             <HStack justify="space-between" mb={1}>
