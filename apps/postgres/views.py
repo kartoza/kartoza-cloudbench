@@ -8,16 +8,19 @@ Provides endpoints for:
 - Data import via ogr2ogr
 """
 
+import os
 import subprocess
 import time
 from pathlib import Path
 
-from celery.result import AsyncResult
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import PGService
+from apps.upload.jobs import finish_job, start_job, update_job
+from apps.upload.models import UploadJob
 from apps.upload.views import _assemble_file, _get_session
 
 from .client import (
@@ -29,6 +32,8 @@ from .client import (
     update_pg_service,
 )
 from .tasks import run_raster_import, run_vector_import
+
+User = get_user_model()
 
 # === PostgreSQL Services ===
 
@@ -412,12 +417,46 @@ class PGQueryView(APIView):
 
 # === Data Import ===
 
-_CELERY_STATE_MAP = {
-    "PENDING": "pending",
-    "STARTED": "running",
-    "SUCCESS": "completed",
-    "FAILURE": "failed",
-}
+
+def _staged_file(request, file_path) -> str | None:
+    """`file_path` if it's a file the user uploaded for import, else None.
+
+    The import endpoints take the path the upload answered with
+    (PGUploadCompleteView): it must be in the upload directory of one of the
+    user's own upload sessions. Without this check a caller could have any
+    file the process can read imported, and with cleanupSource have its
+    directory deleted.
+    """
+    try:
+        path = Path(str(file_path)).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not path.is_file():
+        return None
+    session = _get_session(path.parent.name)
+    if not session or Path(session.upload_dir).resolve() != path.parent:
+        return None
+    if session.user_id is None:
+        # Made for a stand-in user (UploadInitView): no real user owns it.
+        return None if isinstance(request.user, User) else str(path)
+    return str(path) if getattr(request.user, "pk", None) == session.user_id else None
+
+
+def _not_staged(file_path) -> Response:
+    return Response(
+        {"error": f"Uploaded file not found: {file_path}"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _import_env(service) -> dict:
+    """The environment for an import tool: libpq reads the password from it."""
+    env = dict(os.environ)
+    if service.password:
+        env["PGPASSWORD"] = service.password
+    if getattr(service, "sslmode", ""):
+        env["PGSSLMODE"] = service.sslmode
+    return env
 
 
 class PGImportView(APIView):
@@ -447,14 +486,18 @@ class PGImportView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
-        pg_conn = f"PG:host={service.host} port={service.port} dbname={service.dbname} user={service.user} password={service.password}"
-        cmd = ["ogr2ogr", "-f", "PostgreSQL", pg_conn, file_path]
+        # The password goes in PGPASSWORD (see _import_env), not in the
+        # command line, where any process listing would show it.
+        pg_conn = (
+            f"PG:host={service.host} port={service.port} dbname={service.dbname} "
+            f"user={service.user}"
+        )
+        cmd = ["ogr2ogr", "-progress", "-f", "PostgreSQL", pg_conn, file_path]
         cmd.append("-overwrite" if overwrite else "-append")
         # A layer whose features mix single and multi geometries (common in
         # shapefiles) otherwise creates a single-type column and then fails on
@@ -468,32 +511,34 @@ class PGImportView(APIView):
         if srid:
             cmd.extend(["-t_srs", f"EPSG:{srid}"])
 
-        result = run_vector_import(cmd, file_path, delete_source=cleanup_source)
-        if result.get("status") == "completed":
-            return Response({"status": "completed"}, status=status.HTTP_200_OK)
-        return Response(
-            {"status": "failed", "error": result.get("error", "")},
-            status=status.HTTP_400_BAD_REQUEST,
+        output = f"{target_schema}.{table_name or source_layer or Path(file_path).stem}"
+        job = UploadJob.objects.create(
+            user=request.user if request.user.is_authenticated else None,
+            kind=UploadJob.Kind.POSTGIS_VECTOR,
+            target=service_name,
+            output=output,
+            source_name=source_layer or Path(file_path).name,
+            message="Starting the import",
         )
+        env = _import_env(service)
 
+        def work(job_id):
+            def on_progress(percent):
+                update_job(job_id, progress=percent, message=f"Importing {output}")
 
-class PGImportStatusView(APIView):
-    """Get import job status."""
+            result = run_vector_import(
+                cmd, file_path, delete_source=cleanup_source, env=env, on_progress=on_progress
+            )
+            if result.get("status") == "completed":
+                finish_job(job_id, message=f"Imported {output}")
+            else:
+                finish_job(job_id, error=result.get("error") or "Import failed")
 
-    def get(self, _request, job_id):
-        result = AsyncResult(job_id)
-        job_status = _CELERY_STATE_MAP.get(result.state, result.state.lower())
-
-        resp: dict = {"id": job_id, "status": job_status}
-
-        if result.state == "SUCCESS" and isinstance(result.result, dict):
-            if result.result.get("status") == "failed":
-                resp["status"] = "failed"
-                resp["error"] = result.result.get("error", "")
-        elif result.state == "FAILURE":
-            resp["error"] = str(result.result)
-
-        return Response(resp)
+        # A large file takes longer than a request may last (the GeoPackage
+        # import that "succeeded" without a table): the import runs in the
+        # background and the dialog polls GET /api/upload/jobs/<id>.
+        start_job(job, work)
+        return Response(job.to_dict(), status=status.HTTP_202_ACCEPTED)
 
 
 class PGImportRasterView(APIView):
@@ -521,11 +566,10 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
         raster_cmd = [
             "raster2pgsql",
@@ -547,13 +591,25 @@ class PGImportRasterView(APIView):
             "dbname": service.dbname,
         }
 
-        result = run_raster_import(raster_cmd, conn_params, file_path)
-        if result.get("status") == "completed":
-            return Response({"status": "completed"}, status=status.HTTP_200_OK)
-        return Response(
-            {"status": "failed", "error": result.get("error", "")},
-            status=status.HTTP_400_BAD_REQUEST,
+        output = f"{target_schema}.{table_name}"
+        job = UploadJob.objects.create(
+            user=request.user if request.user.is_authenticated else None,
+            kind=UploadJob.Kind.POSTGIS_RASTER,
+            target=service_name,
+            output=output,
+            source_name=Path(file_path).name,
+            message=f"Importing {output}",
         )
+
+        def work(job_id):
+            result = run_raster_import(raster_cmd, conn_params, file_path)
+            if result.get("status") == "completed":
+                finish_job(job_id, message=f"Imported {output}")
+            else:
+                finish_job(job_id, error=result.get("error") or "Import failed")
+
+        start_job(job, work)
+        return Response(job.to_dict(), status=status.HTTP_202_ACCEPTED)
 
 
 class PGDetectLayersView(APIView):
@@ -571,11 +627,10 @@ class PGDetectLayersView(APIView):
         if not file_path:
             return Response({"error": "filePath is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not Path(file_path).exists():
-            return Response(
-                {"error": f"File not found: {file_path}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        staged = _staged_file(request, file_path)
+        if not staged:
+            return _not_staged(file_path)
+        file_path = staged
 
         try:
             # Use ogrinfo to list layers

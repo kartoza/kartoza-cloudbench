@@ -81,14 +81,22 @@ class LayerCountView(APIView):
 
 
 class LayerMetadataView(APIView):
-    """Get layer metadata including bounding box."""
+    """A layer's editable metadata (the Edit Layer dialog): read and save."""
 
     def get(self, request, conn_id, workspace, layer):
         """Get layer metadata."""
         try:
             client = get_geoserver_client(conn_id, request.user)
-            metadata = client.get_layer_metadata(workspace, layer)
-            return Response(metadata)
+            return Response(client.get_layer_full_metadata(workspace, layer))
+        except GeoServerError as e:
+            return handle_geoserver_error(e)
+
+    def put(self, request, conn_id, workspace, layer):
+        """Save layer metadata."""
+        try:
+            client = get_geoserver_client(conn_id, request.user)
+            client.update_layer_metadata(workspace, layer, request.data)
+            return Response(client.get_layer_full_metadata(workspace, layer))
         except GeoServerError as e:
             return handle_geoserver_error(e)
 

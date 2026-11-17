@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import MainContent from './components/MainContent'
 import Dialogs from './components/dialogs'
 import Login from './components/Login'
+import { ErrorBoundary } from './components/common/ErrorBoundary'
 import { SearchModal, useSearchShortcut } from './components/SearchModal'
 import { HelpPanel, useHelpShortcut } from './components/HelpPanel'
 import MapExplorerView from './components/MapExplorer'
@@ -35,6 +36,10 @@ function App() {
   // show the login screen instead of the main app.
   const [isAuthed, setIsAuthed] = useState(() => !!localStorage.getItem('token'))
   const restoreNode = useTreeStore((state) => state.restoreNode)
+  // Keys for the error boundaries: a new item or dialog renders afresh.
+  const selectedNodeId = useTreeStore((state) => state.selectedNode?.id ?? 'none')
+  const activeDialog = useUIStore((state) => state.activeDialog)
+  const closeDialog = useUIStore((state) => state.closeDialog)
   const mapExplorerLayerRequest = useUIStore((state) => state.mapExplorerLayerRequest)
   const clearMapExplorerLayerRequest = useUIStore((state) => state.clearMapExplorerLayerRequest)
   // True only when this session itself pushed the history entry that opened
@@ -108,9 +113,13 @@ function App() {
         onHelpClick={() => setIsHelpOpen(true)}
         onMapClick={openMapExplorer}
       >
-        <MainContent />
+        <ErrorBoundary key={selectedNodeId} label="this item">
+          <MainContent />
+        </ErrorBoundary>
       </Layout>
-      <Dialogs />
+      <ErrorBoundary key={activeDialog ?? 'none'} label="this dialog" asModal onReset={closeDialog}>
+        <Dialogs />
+      </ErrorBoundary>
       <SearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}

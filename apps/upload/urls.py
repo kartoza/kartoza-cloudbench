@@ -19,6 +19,8 @@ urlpatterns = [
         views.UploadCancelView.as_view(),
         name="upload-cancel",
     ),
+    # Background work on an uploaded file (e.g. a PostGIS import): its status
+    path("upload/jobs/<uuid:job_id>", views.UploadJobView.as_view(), name="upload-job"),
     # Simple upload endpoint
     path("upload", views.SimpleUploadView.as_view(), name="upload-simple"),
 ]
