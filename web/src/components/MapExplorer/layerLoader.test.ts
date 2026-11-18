@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { getS3ProxyURL } from '../../api/s3'
-import { cogStyleFrom, layerNameFromKey, loadLayerOntoMap } from './layerLoader'
+import { POINTS_ONLY, POLYGONS_ONLY } from '../../utils/geometryFilters'
+import {
+  applyPmtilesVectorStyle,
+  cogStyleFrom,
+  isRenderedIdFor,
+  layerNameFromKey,
+  loadLayerOntoMap,
+} from './layerLoader'
 
 describe('layerLoader point clouds', () => {
   beforeEach(() => {
@@ -62,5 +69,61 @@ describe('cogStyleFrom', () => {
         layers: [{ type: 'raster' }],
       })
     ).toEqual({ hash: '', paint: {} })
+  })
+})
+
+// The layers applyPmtilesVectorStyle adds, by type.
+function renderVectorLayer(customStyle: Record<string, unknown> | null) {
+  const added: Record<string, unknown>[] = []
+  const map = {
+    getStyle: () => ({ layers: [] }),
+    getLayer: () => undefined,
+    addLayer: (layer: Record<string, unknown>) => added.push(layer),
+  } as unknown as Parameters<typeof applyPmtilesVectorStyle>[0]
+  applyPmtilesVectorStyle(map, 'lyr', 'water_lines', '#ff0000', 80, customStyle)
+  return added
+}
+
+describe('applyPmtilesVectorStyle (#1197: lines drawn as filled shapes)', () => {
+  it('fills only polygons and draws points as circles with the default style', () => {
+    const layers = renderVectorLayer(null)
+    const byType = Object.fromEntries(layers.map((l) => [l.type, l]))
+
+    expect(Object.keys(byType).sort()).toEqual(['circle', 'fill', 'line'])
+    expect(byType.fill.filter).toEqual(POLYGONS_ONLY)
+    expect(byType.circle.filter).toEqual(POINTS_ONLY)
+    // Lines, and the polygons' outlines.
+    expect(byType.line.filter).toBeUndefined()
+    expect(layers.every((l) => l.source === 'lyr' && l['source-layer'] === 'water_lines')).toBe(true)
+    expect(byType.circle.paint).toMatchObject({ 'circle-color': '#ff0000', 'circle-opacity': 0.8 })
+  })
+
+  it("keeps a saved style's unfiltered fill and circle layers to their own geometries", () => {
+    const layers = renderVectorLayer({
+      layers: [
+        { id: 'background', type: 'background' },
+        { id: 'fill', type: 'fill', paint: {} },
+        { id: 'line', type: 'line', paint: {} },
+        { id: 'circle', type: 'circle', paint: {} },
+      ],
+    })
+
+    expect(layers.map((l) => [l.type, l.filter])).toEqual([
+      ['fill', POLYGONS_ONLY],
+      ['line', undefined],
+      ['circle', POINTS_ONLY],
+    ])
+  })
+
+  it("leaves a saved style's own filters alone", () => {
+    const own = ['==', ['get', 'kind'], 'river']
+    const layers = renderVectorLayer({ layers: [{ id: 'fill', type: 'fill', filter: own }] })
+
+    expect(layers[0].filter).toEqual(own)
+  })
+
+  it('counts the default circle layer as part of its layer (opacity, feature popups)', () => {
+    expect(isRenderedIdFor('lyr-circle', 'lyr')).toBe(true)
+    expect(isRenderedIdFor('other-circle', 'lyr')).toBe(false)
   })
 })
