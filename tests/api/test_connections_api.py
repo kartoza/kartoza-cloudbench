@@ -425,7 +425,10 @@ class TestGeoNodeConnectionsAPI:
         """The map preview's tiles: forwarded to the GeoNode's GeoServer, image returned."""
         conn_id = self._geonode_id(api_client)
         upstream = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
-        with patch("apps.geonode.views.httpx.get", return_value=upstream) as get:
+        with (
+            patch("apps.geonode.views.get_access_token", return_value="") as token,
+            patch("apps.geonode.views.httpx.get", return_value=upstream) as get,
+        ):
             response = api_client.get(
                 f"/api/geonode/connections/{conn_id}/wms",
                 {"SERVICE": "WMS", "REQUEST": "GetMap", "LAYERS": "geonode:roads"},
@@ -435,7 +438,63 @@ class TestGeoNodeConnectionsAPI:
         assert response.content == b"PNG"
         assert get.call_args.args[0] == "https://gn.example/geoserver/ows"
         assert get.call_args.kwargs["params"]["LAYERS"] == "geonode:roads"
+        # No token to be had (login failed): asked anonymously.
         assert "Authorization" not in get.call_args.kwargs["headers"]
+        token.assert_called_once_with("https://gn.example/", "u", "p")
+
+    def test_wms_proxy_logs_in_for_a_password_connection(self, api_client: APIClient) -> None:
+        """GeoServer won't take GeoNode basic auth: the login's token goes as Bearer."""
+        conn_id = self._geonode_id(api_client)
+        upstream = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
+        with (
+            patch("apps.geonode.views.get_access_token", return_value="login-tok"),
+            patch("apps.geonode.views.httpx.get", return_value=upstream) as get,
+        ):
+            api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+            )
+        assert get.call_count == 1
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer login-tok"
+
+    def test_wms_proxy_retries_a_hidden_layer_with_a_fresh_token(
+        self, api_client: APIClient
+    ) -> None:
+        """An expired token reads as anonymous ("Could not find layer"): log in again."""
+        conn_id = self._geonode_id(api_client)
+        hidden = httpx.Response(
+            200,
+            content=b'<ServiceException code="LayerNotDefined">Could not find layer x</ServiceException>',
+            headers={"content-type": "application/vnd.ogc.se_xml"},
+        )
+        image = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
+        with (
+            patch("apps.geonode.views.get_access_token", side_effect=["old", "new"]) as token,
+            patch("apps.geonode.views.httpx.get", side_effect=[hidden, image]) as get,
+        ):
+            response = api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+            )
+        assert response.content == b"PNG"
+        assert token.call_args.kwargs == {"refresh": True}
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer new"
+
+    def test_wms_proxy_no_retry_when_the_token_is_the_same(self, api_client: APIClient) -> None:
+        """A layer that's really hidden (or missing) isn't asked for twice."""
+        conn_id = self._geonode_id(api_client)
+        hidden = httpx.Response(
+            200,
+            content=b'<ServiceException code="LayerNotDefined"/>',
+            headers={"content-type": "application/vnd.ogc.se_xml"},
+        )
+        with (
+            patch("apps.geonode.views.get_access_token", return_value="tok"),
+            patch("apps.geonode.views.httpx.get", return_value=hidden) as get,
+        ):
+            response = api_client.get(
+                f"/api/geonode/connections/{conn_id}/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+            )
+        assert b"LayerNotDefined" in response.content
+        assert get.call_count == 1
 
     def test_wms_proxy_sends_the_geonode_token(self, api_client: APIClient) -> None:
         """A token connection's tiles carry its token, so private layers draw."""
@@ -445,11 +504,15 @@ class TestGeoNodeConnectionsAPI:
             format="json",
         ).json()["id"]
         upstream = httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
-        with patch("apps.geonode.views.httpx.get", return_value=upstream) as get:
+        with (
+            patch("apps.geonode.views.get_access_token") as login,
+            patch("apps.geonode.views.httpx.get", return_value=upstream) as get,
+        ):
             api_client.get(
                 f"/api/geonode/connections/{conn_id}/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
             )
         assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer tok"
+        login.assert_not_called()
 
     def test_wms_proxy_only_forwards_wms_reads(self, api_client: APIClient) -> None:
         conn_id = self._geonode_id(api_client)

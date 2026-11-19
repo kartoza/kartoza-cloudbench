@@ -22,6 +22,7 @@ from rest_framework.views import APIView
 from apps.core.config import GeoNodeConnection, get_config
 from apps.upload.views import _assemble_file, _get_session
 
+from .access_token import get_access_token
 from .client import GeoNodeClient, get_geonode_client
 from .remote_service import get_remote_service
 from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
@@ -290,14 +291,14 @@ class GeoNodeWMSProxyView(APIView):
     """Proxy the map preview's WMS requests to the GeoNode's GeoServer.
 
     The browser can't fetch the GeoServer tiles itself (CORS), so they go
-    through CloudBench, to ``<GeoNode>/geoserver/ows``, with the
-    connection's GeoNode OAuth2 token, if it has one, as a Bearer token:
-    GeoServer checks it with GeoNode, so private layers draw too. Username and
-    password aren't sent: GeoServer only takes its own users' basic auth, not
-    GeoNode's, so a password-only connection draws public layers only. (GeoNode's
-    ``/gs/ows`` proxy does take GeoNode's basic auth, but a map's worth of tiles
-    at once hangs GeoNode: each holds a GeoNode worker while GeoServer waits on
-    another for the token check.)
+    through CloudBench, to ``<GeoNode>/geoserver/ows``, with a GeoNode OAuth2
+    token as a Bearer token: GeoServer checks it with GeoNode, so private
+    layers the user may see draw too. A token connection sends its token; a
+    username/password connection logs in to GeoNode for one
+    (``access_token``), since GeoServer doesn't take a GeoNode user's basic
+    auth. (GeoNode's ``/gs/ows`` proxy does take basic auth, but a map's worth
+    of tiles at once hangs GeoNode: each holds a GeoNode worker while
+    GeoServer waits on another for the token check.)
     """
 
     def get(self, request, conn_id):
@@ -316,18 +317,18 @@ class GeoNodeWMSProxyView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        headers = {"User-Agent": "CloudBench WMS proxy"}
-        if conn.api_key:
-            headers["Authorization"] = f"Bearer {conn.api_key}"
-
+        logs_in = not conn.api_key and bool(conn.username and conn.password)
+        token = conn.api_key or (
+            get_access_token(conn.url, conn.username, conn.password) if logs_in else ""
+        )
         try:
-            upstream = httpx.get(
-                f"{conn.url.rstrip('/')}/geoserver/ows",
-                params=request.query_params,
-                headers=headers,
-                timeout=30.0,
-                follow_redirects=True,
-            )
+            upstream = self._forward(conn.url, request.query_params, token)
+            # GeoServer treats an expired token as no token: a layer it won't
+            # show may just need a fresh one.
+            if logs_in and _layer_hidden(upstream):
+                fresh = get_access_token(conn.url, conn.username, conn.password, refresh=True)
+                if fresh and fresh != token:
+                    upstream = self._forward(conn.url, request.query_params, fresh)
         except httpx.HTTPError as e:
             return Response(
                 {"error": f"Failed to fetch from GeoServer: {e}"},
@@ -341,6 +342,28 @@ class GeoNodeWMSProxyView(APIView):
         )
         response["Cross-Origin-Resource-Policy"] = "cross-origin"
         return response
+
+    @staticmethod
+    def _forward(url: str, params, token: str) -> httpx.Response:
+        headers = {"User-Agent": "CloudBench WMS proxy"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return httpx.get(
+            f"{url.rstrip('/')}/geoserver/ows",
+            params=params,
+            headers=headers,
+            timeout=30.0,
+            follow_redirects=True,
+        )
+
+
+def _layer_hidden(response: httpx.Response) -> bool:
+    """Whether GeoServer refused the layer: denied, or "not found" (private)."""
+    if response.status_code in (401, 403):
+        return True
+    if response.headers.get("content-type", "").startswith("image/"):
+        return False
+    return b"LayerNotDefined" in response.content or b"Could not find layer" in response.content
 
 
 class GeoNodeUploadCompleteView(APIView):

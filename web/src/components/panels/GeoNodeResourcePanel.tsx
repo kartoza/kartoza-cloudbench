@@ -74,6 +74,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
       title: node.name,
       connectionId: node.geonodeConnectionId,
       detailUrl: node.geonodeDetailUrl,
+      bounds: node.geonodeBounds,
     })
   }
 
@@ -253,6 +254,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
               colorScheme="teal"
               variant="outline"
               _hover={{ textDecor: 'none', bg: 'teal.50' }}
+              gridColumn="1 / -1"
             >
               Open in GeoNode
             </Button>

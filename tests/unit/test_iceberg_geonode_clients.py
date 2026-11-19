@@ -196,6 +196,12 @@ class TestGeoNodeClient:
                         "alternate": "geonode:n",
                         "detail_url": "https://gn/catalogue/#/dataset/1",
                         "thumbnail_url": "https://gn/thumb.jpg",
+                        "ll_bbox_polygon": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [[115.1, -8.8], [115.1, -8.6], [115.3, -8.6], [115.3, -8.8]]
+                            ],
+                        },
                     },
                     {"pk": 2, "name": None, "category": None, "owner": None},
                 ],
@@ -216,6 +222,9 @@ class TestGeoNodeClient:
         assert first["detail_url"] == "https://gn/catalogue/#/dataset/1"
         assert first["thumbnail_url"] == "https://gn/thumb.jpg"
         assert second["alternate"] == "" and second["name"] == ""
+        # Its lon/lat bounds, [west, south, east, north], for the preview to zoom to.
+        assert first["ll_bbox"] == [115.1, -8.8, 115.3, -8.6]
+        assert second["ll_bbox"] == []
         url = str(http_mock.calls[0].url)
         assert "category__identifier" in url and "owner__username" in url
 
