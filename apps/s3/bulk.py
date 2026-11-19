@@ -37,6 +37,7 @@ from .cng_lite import (
     TargetExists,
     cancel_job,
     check_target,
+    expire_stalled_job,
     finish_job,
     job_directory,
     run_conversion,
@@ -490,13 +491,19 @@ def run_batch(batch_id):
     One per batch, in a thread of the process that started it (or the
     resume_conversions command, for one a restart interrupted). Idempotent
     over the jobs' statuses, so it can be run again to carry a batch on.
+
+    A failing step is logged and retried next poll.
     """
     close_old_connections()
     try:
-        while step_batch(batch_id):
+        while True:
+            try:
+                if not step_batch(batch_id):
+                    break
+            except Exception:
+                logger.exception("Bulk upload %s: step failed, retrying", batch_id)
+                close_old_connections()
             time.sleep(settings.CLOUDNATIVEGIS_POLL_INTERVAL)
-    except Exception:
-        logger.exception("Bulk upload %s stopped unexpectedly", batch_id)
     finally:
         close_old_connections()
 
@@ -518,6 +525,11 @@ def step_batch(batch_id):
     jobs = list(batch.jobs.order_by("created_at", "source_name"))
     queued = [job for job in jobs if job.status == CngLiteJobStatus.QUEUED]
     running = [job for job in jobs if job.status in ACTIVE_CNG_LITE_JOB_STATUSES]
+    # A job's own thread can die without reporting anything
+    for job in running:
+        if job.status != CngLiteJobStatus.CANCELLING:
+            expire_stalled_job(job)
+    running = [job for job in running if job.status in ACTIVE_CNG_LITE_JOB_STATUSES]
 
     if batch.status == CngLiteBatch.Status.CANCELLING:
         _cancel_queued(queued, "Conversion cancelled")
