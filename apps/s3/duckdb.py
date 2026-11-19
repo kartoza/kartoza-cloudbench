@@ -3,13 +3,9 @@
 Provides functionality to query Parquet, GeoParquet, CSV, and JSON
 files stored in S3-compatible storage using DuckDB.
 
-Users send their own SQL, so every query runs on a fresh in-memory connection
-holding only that user's S3 credentials (a temporary secret), closed once the
-query is done: nothing it set, created or loaded reaches the next query. The
-connection can read s3:// and nothing else - no local files (CloudBench's
-database, its settings), no http(s) URLs (inside a cluster, those reach its
-internal services) - with a memory limit, and the query can't change any of
-it (lock_configuration).
+Users send their own SQL, so each query gets its own in-memory connection with
+only that user's S3 credentials, closed afterwards. It reads s3:// only (no local
+files, no http(s) URLs into the cluster), memory-limited and locked.
 """
 
 import json

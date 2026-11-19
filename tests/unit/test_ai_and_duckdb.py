@@ -362,8 +362,7 @@ class TestDuckDBSandbox:
             access_key="AKIA_ALICE",
             secret_key="alices-secret",
         )
-        # s3:// gets past the sandbox, with alice's credentials, to the network
-        # (nothing listens there).
+        # s3:// passes the sandbox with alice's credentials (nothing listens on :9).
         with pytest.raises(duckdb.IOException, match="127.0.0.1:9"):
             sandbox.execute_query(
                 "SELECT * FROM read_parquet('s3://b/a.parquet')", str(s3.id), user=owner

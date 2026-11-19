@@ -923,11 +923,7 @@ class S3DuckDBQueryView(APIView):
 
 
 class _DuckDBFileMixin:
-    """The query panel's file: the Parquet/GeoParquet ``?key=``, called ``data``.
-
-    Its queries run on the sandboxed DuckDB connection (apps/s3/duckdb.py):
-    S3 only, this user's credentials, memory-limited.
-    """
+    """The query panel's file: the Parquet/GeoParquet ``?key=``, called ``data``."""
 
     MAX_LIMIT = 1000
 
