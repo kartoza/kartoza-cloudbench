@@ -636,6 +636,52 @@ def test_a_batch_where_everything_fails_fails(owner, connection, s3, manual):
 
 
 @pytest.mark.django_db
+def test_a_stalled_job_is_expired_and_its_slot_freed(owner, connection, s3, manual, settings):
+    # No real thread ever runs the job in this test, standing in for one
+    # whose thread died silently (a worker restart, an uncaught error
+    # outside run()'s own try/except): it stays "pending" forever unless
+    # step_batch notices it has gone quiet for too long.
+    settings.CLOUDNATIVEGIS_CONVERSION_TIMEOUT = 1
+    seed(s3, ["a.zip", "b.zip"])
+    batch = start(owner, connection, ["a.zip", "b.zip"], concurrency=1)
+
+    bulk.step_batch(batch.pk)  # a starts; b has no free slot yet
+    assert statuses(batch) == {"a.zip": "pending", "b.zip": "queued"}
+    age(batch)  # long past CLOUDNATIVEGIS_CONVERSION_TIMEOUT + 120
+
+    bulk.step_batch(batch.pk)
+
+    jobs = jobs_by_name(batch)
+    assert jobs["a.zip"].status == Status.FAILED
+    assert jobs["a.zip"].completed_at is not None
+    # a's slot was freed in the same step: b didn't have to wait another poll.
+    assert jobs["b.zip"].status == Status.PENDING
+
+
+@pytest.mark.django_db
+def test_run_batch_survives_a_step_that_raises(owner, connection, s3, manual):
+    seed(s3, ["a.zip"])
+    batch = start(owner, connection, ["a.zip"], concurrency=1)
+    set_status(batch, "a.zip", Status.COMPLETED)
+    real_step_batch = bulk.step_batch
+    calls = []
+
+    def flaky(batch_id):
+        calls.append(batch_id)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return real_step_batch(batch_id)
+
+    with patch("apps.s3.bulk.step_batch", side_effect=flaky):
+        bulk.run_batch(batch.pk)
+
+    # The first (raising) call didn't end the coordinator: it came back for more.
+    assert len(calls) >= 2
+    batch.refresh_from_db()
+    assert batch.status == "completed"
+
+
+@pytest.mark.django_db
 def test_a_layer_that_cant_be_staged_fails_alone(owner, connection, s3, manual):
     # Only a GeoPackage stages a copy of its original (it's moved into its
     # layer group once converted) - a plain file converts where it already
