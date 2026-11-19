@@ -77,6 +77,11 @@ urlpatterns = [
         views.GeoNodeWMSProxyView.as_view(),
         name="geonode-wms-proxy",
     ),
+    path(
+        "geonode/connections/<str:conn_id>/download/<int:pk>/<str:alternate>",
+        views.GeoNodeDatasetDownloadView.as_view(),
+        name="geonode-dataset-download",
+    ),
     # Resources
     path(
         "geonode/connections/<str:conn_id>/<str:resource_type>",

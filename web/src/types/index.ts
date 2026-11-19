@@ -347,6 +347,7 @@ export interface TreeNode {
   geonodeResourcePk?: number
   geonodeResourceUuid?: string
   geonodeResourceType?: string
+  geonodeSubtype?: string // vector, raster…: which download formats apply
   geonodeThumbnailUrl?: string
   geonodeDetailUrl?: string
   geonodeAlternate?: string // For datasets: workspace:layer_name format

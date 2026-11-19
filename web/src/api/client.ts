@@ -1289,18 +1289,27 @@ export async function uploadGeoNodeDataset(
   return handleResponse(response)
 }
 
+/** A GeoNode dataset's download formats: vectors' (WFS) and a raster's (GeoTIFF, WCS). */
+export type GeoNodeDownloadFormat = 'gpkg' | 'shp' | 'csv' | 'json' | 'xlsx' | 'tif'
+
 export async function downloadGeoNodeDataset(
   connectionId: string,
   datasetPk: number,
   alternate: string,
-  format: 'gpkg' | 'shp' | 'csv' | 'json' | 'xlsx' = 'gpkg'
+  format: GeoNodeDownloadFormat = 'gpkg'
 ): Promise<{ blob: Blob; filename: string }> {
   const url = `${API_BASE}/geonode/connections/${connectionId}/download/${datasetPk}/${encodeURIComponent(alternate)}?format=${format}`
   const response = await fetch(url)
 
   if (!response.ok) {
-    const error = await response.text()
-    throw new Error(error || `HTTP ${response.status}`)
+    const text = await response.text()
+    let message = text
+    try {
+      message = (JSON.parse(text) as { error?: string }).error || text
+    } catch {
+      // Not JSON: keep the text as is.
+    }
+    throw new Error(message || `HTTP ${response.status}`)
   }
 
   const blob = await response.blob()
