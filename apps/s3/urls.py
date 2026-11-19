@@ -64,6 +64,17 @@ urlpatterns = [
         views.S3DuckDBQueryView.as_view(),
         name="s3-duckdb-query",
     ),
+    # The query panel, on one file (?key=)
+    path(
+        "s3/duckdb/geojson/<str:conn_id>",
+        views.S3DuckDBGeoJSONView.as_view(),
+        name="s3-duckdb-geojson",
+    ),
+    path(
+        "s3/duckdb/<str:conn_id>",
+        views.S3DuckDBFileView.as_view(),
+        name="s3-duckdb-file",
+    ),
     # Conversion
     path(
         "s3/conversion/tools",

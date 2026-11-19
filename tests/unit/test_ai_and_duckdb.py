@@ -281,6 +281,7 @@ class TestDuckDBEngine:
 
     def test_connect_installs_once_then_loads_and_locks(self, monkeypatch, settings):
         settings.DUCKDB_MEMORY_LIMIT = "512MB"
+        monkeypatch.setattr(ddb, "_ca_bundle", lambda: "/etc/ssl/certs/ca.crt")
         ddb.DuckDBQueryEngine._instance = None
         monkeypatch.setattr(ddb.DuckDBQueryEngine, "_installed", False)
         conns = []
@@ -304,6 +305,8 @@ class TestDuckDBEngine:
             "LOAD httpfs",
             "LOAD spatial",
             "SET allowed_directories=['s3://']",
+            # https:// S3 endpoints need the CA bundle to verify TLS.
+            "SET allowed_paths=['/etc/ssl/certs/ca.crt']",
             "SET enable_external_access=false",
             "SET memory_limit='512MB'",
             "SET lock_configuration=true",
@@ -375,3 +378,86 @@ class TestDuckDBSandbox:
         )["rows"]
         assert "alices-secret" not in secret["secret_string"]
         assert "secret=redacted" in secret["secret_string"]
+
+
+@pytest.fixture
+def panel(monkeypatch, tmp_path):
+    """The query panel's engine on plain connections with the spatial extension,
+    and a GeoParquet (`geo`) and a plain Parquet (`plain`) file to query."""
+    ddb.DuckDBQueryEngine._instance = None
+    instance = ddb.DuckDBQueryEngine()
+
+    def spatial(connection_id=None, user=None):
+        conn = duckdb.connect(":memory:")
+        conn.execute("LOAD spatial")
+        return conn
+
+    try:
+        spatial().close()
+    except duckdb.Error as e:
+        pytest.skip(f"DuckDB spatial extension unavailable: {e}")
+    monkeypatch.setattr(instance, "connect", spatial)
+
+    geo, plain = str(tmp_path / "districts.parquet"), str(tmp_path / "plain.parquet")
+    conn = spatial()
+    conn.execute(
+        "COPY (SELECT i AS id, 'd' || i AS name, ST_Point(110 + i, -8) AS geometry "
+        f"FROM range(5) t(i)) TO '{geo}' (FORMAT parquet)"
+    )
+    conn.execute(f"COPY (SELECT i AS id FROM range(3) t(i)) TO '{plain}' (FORMAT parquet)")
+    conn.close()
+    yield {"geo": geo, "plain": plain}
+    ddb.DuckDBQueryEngine._instance = None
+
+
+@pytest.mark.unit
+class TestQueryPanel:
+    """The query panel's `data`: table info, paged queries and GeoJSON."""
+
+    def test_table_info(self, panel):
+        info = ddb.data_table_info(panel["geo"])
+        assert [c["name"] for c in info["columns"]] == ["id", "name", "geometry"]
+        assert info["rowCount"] == 5
+        assert info["geometryColumn"] == "geometry"
+        assert info["sampleQueries"][0] == "SELECT * FROM data LIMIT 100"
+        assert len(info["sampleQueries"]) == 3
+
+    def test_table_info_without_geometry(self, panel):
+        info = ddb.data_table_info(panel["plain"])
+        assert info["rowCount"] == 3
+        assert "geometryColumn" not in info and "bbox" not in info
+        assert len(info["sampleQueries"]) == 2
+
+    def test_query_pages_and_shows_geometry_as_wkt(self, panel):
+        first = ddb.query_data(panel["geo"], "SELECT * FROM data ORDER BY id;", limit=2)
+        assert first["columns"] == ["id", "name", "geometry"]
+        assert first["columnTypes"][2].upper().startswith("GEOMETRY")
+        assert first["rows"][0] == {"id": 0, "name": "d0", "geometry": "POINT (110 -8)"}
+        assert first["rowCount"] == 2 and first["hasMore"] is True
+        assert first["geometryColumn"] == "geometry"
+        last = ddb.query_data(panel["geo"], "SELECT * FROM data ORDER BY id", limit=2, offset=4)
+        assert [r["id"] for r in last["rows"]] == [4] and last["hasMore"] is False
+
+    def test_query_without_geometry(self, panel):
+        result = ddb.query_data(panel["geo"], "SELECT count(*) AS n FROM data")
+        assert result["rows"] == [{"n": 5}] and "geometryColumn" not in result
+
+    def test_geojson(self, panel):
+        fc = ddb.query_data_geojson(panel["geo"], "SELECT * FROM data WHERE id < 2 ORDER BY id")
+        assert fc["type"] == "FeatureCollection"
+        assert fc["features"][0] == {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [110.0, -8.0]},
+            "properties": {"id": 0, "name": "d0"},
+        }
+        assert len(fc["features"]) == 2
+
+    def test_geojson_without_geometry_is_empty(self, panel):
+        fc = ddb.query_data_geojson(panel["plain"], "SELECT * FROM data")
+        assert fc == {"type": "FeatureCollection", "features": []}
+
+    def test_bad_sql_and_empty_sql(self, panel):
+        with pytest.raises(duckdb.Error):
+            ddb.query_data(panel["geo"], "SELECT nope FROM data")
+        with pytest.raises(ValueError):
+            ddb.query_data(panel["geo"], " ; ")
