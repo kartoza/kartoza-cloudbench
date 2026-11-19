@@ -42,6 +42,7 @@ export function GeoNodeResourceNode({
       : undefined,
     geonodeAlternate: isDataset ? datasetResource.alternate : undefined,
     geonodeUrl: connectionUrl,
+    geonodeBounds: resource.ll_bbox?.length === 4 ? resource.ll_bbox : undefined,
   }
 
   const isSelected = selectedNode?.id === nodeId

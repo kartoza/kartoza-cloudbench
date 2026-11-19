@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 import httpx
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,7 @@ from rest_framework.views import APIView
 from apps.core.config import GeoNodeConnection, get_config
 from apps.upload.views import _assemble_file, _get_session
 
+from .access_token import get_access_token
 from .client import GeoNodeClient, get_geonode_client
 from .remote_service import get_remote_service
 from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
@@ -279,6 +281,89 @@ class GeoNodeResourceDetailView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+# The WMS requests the map preview makes; the proxy forwards nothing else.
+WMS_PROXY_REQUESTS = {"getmap", "getcapabilities", "getlegendgraphic"}
+
+
+class GeoNodeWMSProxyView(APIView):
+    """Proxy the map preview's WMS requests to the GeoNode's GeoServer.
+
+    The browser can't fetch the GeoServer tiles itself (CORS), so they go
+    through CloudBench, to ``<GeoNode>/geoserver/ows``, with a GeoNode OAuth2
+    token as a Bearer token: GeoServer checks it with GeoNode, so private
+    layers the user may see draw too. A token connection sends its token; a
+    username/password connection logs in to GeoNode for one
+    (``access_token``), since GeoServer doesn't take a GeoNode user's basic
+    auth. (GeoNode's ``/gs/ows`` proxy does take basic auth, but a map's worth
+    of tiles at once hangs GeoNode: each holds a GeoNode worker while
+    GeoServer waits on another for the token check.)
+    """
+
+    def get(self, request, conn_id):
+        """Forward one WMS request and return GeoServer's answer as is."""
+        conn = get_config(request.user).get_geonode_connection(conn_id)
+        if not conn:
+            return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        params = {key.upper(): value for key, value in request.query_params.items()}
+        if (
+            params.get("SERVICE", "").upper() != "WMS"
+            or params.get("REQUEST", "").lower() not in WMS_PROXY_REQUESTS
+        ):
+            return Response(
+                {"error": "Only WMS GetMap, GetCapabilities and GetLegendGraphic are proxied."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        logs_in = not conn.api_key and bool(conn.username and conn.password)
+        token = conn.api_key or (
+            get_access_token(conn.url, conn.username, conn.password) if logs_in else ""
+        )
+        try:
+            upstream = self._forward(conn.url, request.query_params, token)
+            # GeoServer treats an expired token as no token: a layer it won't
+            # show may just need a fresh one.
+            if logs_in and _layer_hidden(upstream):
+                fresh = get_access_token(conn.url, conn.username, conn.password, refresh=True)
+                if fresh and fresh != token:
+                    upstream = self._forward(conn.url, request.query_params, fresh)
+        except httpx.HTTPError as e:
+            return Response(
+                {"error": f"Failed to fetch from GeoServer: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        response = HttpResponse(
+            upstream.content,
+            status=upstream.status_code,
+            content_type=upstream.headers.get("content-type", "application/octet-stream"),
+        )
+        response["Cross-Origin-Resource-Policy"] = "cross-origin"
+        return response
+
+    @staticmethod
+    def _forward(url: str, params, token: str) -> httpx.Response:
+        headers = {"User-Agent": "CloudBench WMS proxy"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return httpx.get(
+            f"{url.rstrip('/')}/geoserver/ows",
+            params=params,
+            headers=headers,
+            timeout=30.0,
+            follow_redirects=True,
+        )
+
+
+def _layer_hidden(response: httpx.Response) -> bool:
+    """Whether GeoServer refused the layer: denied, or "not found" (private)."""
+    if response.status_code in (401, 403):
+        return True
+    if response.headers.get("content-type", "").startswith("image/"):
+        return False
+    return b"LayerNotDefined" in response.content or b"Could not find layer" in response.content
 
 
 class GeoNodeUploadCompleteView(APIView):
