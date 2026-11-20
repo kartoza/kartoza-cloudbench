@@ -10,6 +10,7 @@ Provides endpoints for:
 
 import subprocess
 import time
+import zipfile
 from pathlib import Path
 
 from celery.result import AsyncResult
@@ -28,7 +29,7 @@ from .client import (
     list_pg_services,
     update_pg_service,
 )
-from .tasks import run_raster_import, run_vector_import
+from .tasks import ogr_source_path, run_raster_import, run_vector_import
 
 # === PostgreSQL Services ===
 
@@ -527,6 +528,12 @@ class PGImportRasterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if file_path.lower().endswith(".zip"):
+            return Response(
+                {"error": "Raster import needs a .tif/.tiff file."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         raster_cmd = [
             "raster2pgsql",
             "-s",
@@ -564,7 +571,7 @@ class PGDetectLayersView(APIView):
 
         Expected body:
         {
-            "filePath": "/path/to/file.gpkg"
+            "filePath": "/path/to/file.gpkg"  (or a .zip of shapefiles)
         }
         """
         file_path = request.data.get("filePath")
@@ -580,7 +587,7 @@ class PGDetectLayersView(APIView):
         try:
             # Use ogrinfo to list layers
             result = subprocess.run(
-                ["ogrinfo", "-so", "-al", file_path],
+                ["ogrinfo", "-so", "-al", ogr_source_path(file_path)],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -601,6 +608,13 @@ class PGDetectLayersView(APIView):
 
             return Response({"layers": layers, "file": file_path})
 
+        except zipfile.BadZipFile:
+            return Response(
+                {"error": "Invalid or corrupted zip file."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except FileNotFoundError:
             return Response(
                 {"error": "ogrinfo not found. Please install GDAL."},
