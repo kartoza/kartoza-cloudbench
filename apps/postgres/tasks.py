@@ -56,6 +56,14 @@ def run_vector_import(cmd: list, file_path: str, delete_source: bool = False) ->
         _cleanup(file_path, delete_source)
 
 
+def _split_vacuum(sql: str) -> tuple[str, list[str]]:
+    """Separate raster2pgsql's VACUUM lines from the rest of its SQL."""
+    rest, vacuums = [], []
+    for line in sql.splitlines():
+        (vacuums if line.lstrip().upper().startswith("VACUUM") else rest).append(line)
+    return "\n".join(rest), vacuums
+
+
 def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> dict:
     try:
         import psycopg2  # noqa: PLC0415
@@ -66,13 +74,19 @@ def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> di
         if raster_result.returncode != 0:
             return {"status": "failed", "error": raster_result.stderr}
 
+        sql, vacuums = _split_vacuum(raster_result.stdout)
         conn = psycopg2.connect(**conn_params)
         try:
             conn.autocommit = False
             with conn.cursor() as cur:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS postgis_raster;")
-                cur.execute(raster_result.stdout)
+                cur.execute(sql)
             conn.commit()
+            # VACUUM (from raster2pgsql -M) can't run inside a transaction block.
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                for statement in vacuums:
+                    cur.execute(statement)
         finally:
             conn.close()
 
