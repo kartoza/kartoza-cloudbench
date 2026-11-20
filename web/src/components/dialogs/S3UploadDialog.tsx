@@ -246,6 +246,12 @@ export default function S3UploadDialog() {
   // LAS/LAZ point clouds -> COPC, converted by CloudNativeGIS.
   const isPointCloud = !!selectedFile && /\.(las|laz)$/i.test(selectedFile.name)
   const showCOPC = isPointCloud && cngLiteConnected
+  // The format CloudNativeGIS converts this file to, if any (a GeoPackage's
+  // layers are picked once it has been read).
+  const cngFormat = isGpkgFile ? null : showPMTiles ? 'pmtiles' : showCOG ? 'cog' : showCOPC ? 'copc' : null
+  // Whether Upload runs a conversion (on demand: starts a billed server).
+  const converts = isMosaic ||
+    (cngLiteConnected && convertToCloudNative && (isGpkgFile || (!!cngFormat && targetFormat === cngFormat)))
 
   // Poll for conversion job status
   const { data: conversionJob, error: conversionJobError } = useQuery({
@@ -318,15 +324,14 @@ export default function S3UploadDialog() {
   // Update recommended format when file changes
   useEffect(() => {
     if (selectedFile) {
-      const recommended = showPMTiles
-        ? 'pmtiles'
-        : showCOG
-          ? 'cog'
-          : detectRecommendedConversion(selectedFile.name)
+      // Connected, only what CloudNativeGIS converts: a file it doesn't is stored as it is.
+      const recommended = cngLiteConnected
+        ? showPMTiles ? 'pmtiles' : showCOG ? 'cog' : showCOPC ? 'copc' : null
+        : detectRecommendedConversion(selectedFile.name)
       setRecommendedFormat(recommended)
       setTargetFormat(recommended || '')
     }
-  }, [selectedFile, showPMTiles, showCOG])
+  }, [selectedFile, cngLiteConnected, showPMTiles, showCOG, showCOPC])
 
   const handleFileSelect = useCallback((picked: File[]) => {
     if (isUploading || isConverting) return
@@ -393,7 +398,6 @@ export default function S3UploadDialog() {
     if (isUploading || isConverting || isInspecting) return
     // On demand, a conversion on a new server: first (as Upload is clicked)
     // warn what becomes of the server, and its bill, once the job is done.
-    const converts = isMosaic || (cngLiteConnected && convertToCloudNative && (isGpkgFile || !!targetFormat))
     if (!serverConfirmed && isOnDemand && isNewServer && converts) {
       setPendingServerWarning({ replace })
       return
@@ -435,7 +439,7 @@ export default function S3UploadDialog() {
       return
     }
 
-    if (!replace && (isMosaic || convertToCloudNative) && cngLiteConnected) {
+    if (!replace && converts) {
       try {
         // A mosaic publishes into a folder named after it, as a file does after itself.
         const target = isMosaic
@@ -733,9 +737,8 @@ export default function S3UploadDialog() {
               )}
             </HStack>
           ) : (
-            /* Cloud-Native Conversion Options are only shown when cng-lite
-                is disconnected — when it's connected, conversion just
-                happens automatically using the recommended format. */
+            /* With cng-lite connected, the convert switch sits above the server
+                pickers it decides; without it, the format picker is the right column. */
             <HStack spacing={4} align="stretch">
               {/* Left column: File selection */}
               <VStack spacing={3} flex="1" align="stretch">
@@ -786,9 +789,9 @@ export default function S3UploadDialog() {
                             Also selected: {companionFiles.map((file) => file.name).join(', ')}
                           </Text>
                         )}
-                        {recommendedFormat && (
+                        {(cngLiteConnected ? converts : convertingNow) && (
                           <Badge colorScheme="orange" fontSize="xs">
-                            → {recommendedFormat.toUpperCase()}
+                            → {isGpkgFile && cngLiteConnected ? 'PMTILES / COG' : targetFormat.toUpperCase()}
                           </Badge>
                         )}
                       </VStack>
@@ -922,10 +925,35 @@ export default function S3UploadDialog() {
                   )}
                 </HStack>
 
+                {cngLiteConnected && !isMosaic && (isGpkgFile || cngFormat) && (
+                  <FormControl>
+                    <HStack justify="space-between">
+                      <FormLabel htmlFor="convert-cloud-native" mb={0} fontWeight="500" color="gray.700" fontSize="sm">
+                        Convert to cloud-native
+                      </FormLabel>
+                      <Switch
+                        id="convert-cloud-native"
+                        isChecked={convertToCloudNative}
+                        isDisabled={isUploading || isConverting || isInspecting}
+                        onChange={(e) => setConvertToCloudNative(e.target.checked)}
+                        colorScheme="orange"
+                        size="sm"
+                      />
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      {!convertToCloudNative
+                        ? `Uploaded as it is, without conversion${isOnDemand ? ': no server is started' : ''}.`
+                        : isGpkgFile
+                          ? 'You pick the layers to convert once the GeoPackage has been read.'
+                          : `Converted to ${cngFormat?.toUpperCase()} by CloudNativeGIS.`}
+                    </Text>
+                  </FormControl>
+                )}
+
                 {/* On-demand CloudNativeGIS: the server the conversion runs on - one
                     already running, or a new one (its type, and whether it's
                     deleted once the conversion is done) */}
-                {isOnDemand && instanceServers.length > 0 && (
+                {converts && isOnDemand && instanceServers.length > 0 && (
                   <FormControl>
                     <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Existing Server</FormLabel>
                     <Select
@@ -951,7 +979,7 @@ export default function S3UploadDialog() {
                     )}
                   </FormControl>
                 )}
-                {isOnDemand && isNewServer && onDemandServers.length > 0 && (
+                {converts && isOnDemand && isNewServer && onDemandServers.length > 0 && (
                   <>
                     <FormControl>
                       <FormLabel fontWeight="500" color="gray.700" fontSize="sm">Server type</FormLabel>
@@ -1159,7 +1187,7 @@ export default function S3UploadDialog() {
                   !selectedFile ||
                   shapefileBlocked ||
                   (convertToCloudNative && !!targetFormat && !canConvert(targetFormat)) ||
-                  (isOnDemand && isNewServer && !pickedServerId)
+                  (converts && isOnDemand && isNewServer && !pickedServerId)
                 }
                 borderRadius="lg"
                 px={6}
