@@ -212,6 +212,7 @@ export default function MainContent() {
           title={activeGeoNodePreview.title}
           connectionId={activeGeoNodePreview.connectionId}
           detailUrl={activeGeoNodePreview.detailUrl}
+          bounds={activeGeoNodePreview.bounds}
           onClose={() => setGeoNodePreview(null)}
         />
       </Box>

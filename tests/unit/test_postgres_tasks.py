@@ -187,6 +187,33 @@ class TestRunRasterImport:
         assert result["status"] == "failed"
         assert not uploaded_file.parent.exists()
 
+    @patch("psycopg2.connect")
+    @patch("apps.postgres.tasks.subprocess.run")
+    def test_vacuum_runs_after_commit_in_autocommit(
+        self, mock_run: MagicMock, mock_connect: MagicMock, uploaded_file: Path
+    ) -> None:
+        sql = (
+            'BEGIN;\nINSERT INTO "public"."dem" VALUES (1);\nEND;\nVACUUM ANALYZE "public"."dem";\n'
+        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=sql, stderr="")
+        conn = MagicMock()
+        mock_connect.return_value = conn
+        executed = []
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.execute.side_effect = lambda stmt: executed.append((stmt, conn.autocommit))
+
+        result = run_raster_import(
+            ["raster2pgsql", "-M", str(uploaded_file)],
+            {"host": "localhost", "port": 5432, "user": "u", "password": "p", "dbname": "d"},
+            str(uploaded_file),
+        )
+
+        assert result == {"status": "completed"}
+        script, in_transaction = executed[1]
+        assert "VACUUM" not in script and in_transaction is False
+        assert executed[2] == ('VACUUM ANALYZE "public"."dem";', True)
+        conn.commit.assert_called_once()
+
 
 @pytest.mark.unit
 class TestOgrSourcePath:

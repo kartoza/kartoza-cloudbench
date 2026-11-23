@@ -6,7 +6,7 @@ for managing geospatial data catalog and services.
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -35,9 +35,41 @@ class GeoNodeResource:
     date: str = ""
     thumbnail_url: str = ""
     detail_url: str = ""
+    resource_type: str = ""
+    subtype: str = ""
+    # A dataset's layer name, "workspace:name": the map preview's WMS layer.
+    alternate: str = ""
+    # [west, south, east, north] in lon/lat: the map preview zooms to it.
+    ll_bbox: list[float] = field(default_factory=list)
+
+    @classmethod
+    def from_api(cls, item: dict[str, Any]) -> "GeoNodeResource":
+        """Build from one resource of GeoNode's API (``/resources``, ``/datasets/<pk>``…)."""
+        category = item.get("category") or {}
+        owner = item.get("owner") or {}
+        return cls(
+            pk=item.get("pk", 0),
+            uuid=item.get("uuid", ""),
+            name=item.get("name") or "",
+            title=item.get("title", ""),
+            abstract=item.get("abstract", ""),
+            category=category.get("identifier", ""),
+            owner=owner.get("username", ""),
+            date=item.get("date", ""),
+            thumbnail_url=item.get("thumbnail_url") or "",
+            detail_url=item.get("detail_url") or "",
+            resource_type=item.get("resource_type") or "",
+            subtype=item.get("subtype") or "",
+            alternate=item.get("alternate") or "",
+            ll_bbox=_ll_bbox(item),
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        GeoNode's own field names: the frontend reads them as GeoNode sends
+        them (web/src/types: GeoNodeResource / GeoNodeDataset).
+        """
         return {
             "pk": self.pk,
             "uuid": self.uuid,
@@ -47,9 +79,26 @@ class GeoNodeResource:
             "category": self.category,
             "owner": self.owner,
             "date": self.date,
-            "thumbnailUrl": self.thumbnail_url,
-            "detailUrl": self.detail_url,
+            "thumbnail_url": self.thumbnail_url,
+            "detail_url": self.detail_url,
+            "resource_type": self.resource_type,
+            "subtype": self.subtype,
+            "alternate": self.alternate,
+            "ll_bbox": self.ll_bbox,
         }
+
+
+def _ll_bbox(item: dict[str, Any]) -> list[float]:
+    """A resource's lon/lat bounds, from GeoNode's ``ll_bbox_polygon``; [] if none."""
+    try:
+        ring = (item.get("ll_bbox_polygon") or {}).get("coordinates")[0]
+        xs = [float(point[0]) for point in ring]
+        ys = [float(point[1]) for point in ring]
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return []
+    if not xs:
+        return []
+    return [min(xs), min(ys), max(xs), max(ys)]
 
 
 class GeoNodeClient:
@@ -68,7 +117,8 @@ class GeoNodeClient:
             url: GeoNode server URL
             username: Username for authentication
             password: Password for authentication
-            api_key: API key (alternative to username/password)
+            api_key: GeoNode OAuth2 access token (alternative to username/password),
+                sent as a Bearer token
         """
         self.url = url.rstrip("/")
         self.username = username
@@ -78,7 +128,7 @@ class GeoNodeClient:
         # Create HTTP client
         headers = {}
         if api_key:
-            headers["Authorization"] = f"ApiKey {api_key}"
+            headers["Authorization"] = f"Bearer {api_key}"
 
         auth = None
         if username and password:
@@ -191,29 +241,7 @@ class GeoNodeClient:
         response.raise_for_status()
 
         data = response.json()
-        resources = []
-
-        for item in data.get("resources", []):
-            resources.append(
-                GeoNodeResource(
-                    pk=item.get("pk", 0),
-                    uuid=item.get("uuid", ""),
-                    name=item.get("name", ""),
-                    title=item.get("title", ""),
-                    abstract=item.get("abstract", ""),
-                    category=(
-                        item.get("category", {}).get("identifier", "")
-                        if item.get("category", {})
-                        else ""
-                    ),
-                    owner=(
-                        item.get("owner", {}).get("username", "") if item.get("owner", {}) else ""
-                    ),
-                    date=item.get("date", ""),
-                    thumbnail_url=item.get("thumbnail_url", ""),
-                    detail_url=item.get("detail_url", ""),
-                )
-            )
+        resources = [GeoNodeResource.from_api(item) for item in data.get("resources", [])]
 
         return {
             resource_type: [r.to_dict() for r in resources],
@@ -377,22 +405,7 @@ class GeoNodeClient:
         """
         response = self.client.get(f"/{resource_type}/{resource_id}")
         response.raise_for_status()
-        item = response.json().get(resource_type.rstrip("s"), {})
-
-        return GeoNodeResource(
-            pk=item.get("pk", 0),
-            uuid=item.get("uuid", ""),
-            name=item.get("name", ""),
-            title=item.get("title", ""),
-            abstract=item.get("abstract", ""),
-            category=(
-                item.get("category", {}).get("identifier", "") if item.get("category", {}) else ""
-            ),
-            owner=item.get("owner", {}).get("username", "") if item.get("owner", {}) else "",
-            date=item.get("date", ""),
-            thumbnail_url=item.get("thumbnail_url", ""),
-            detail_url=item.get("detail_url", ""),
-        )
+        return GeoNodeResource.from_api(response.json().get(resource_type.rstrip("s"), {}))
 
 
 def get_geonode_client(connection_id: str, user: "User") -> GeoNodeClient:

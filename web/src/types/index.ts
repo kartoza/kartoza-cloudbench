@@ -347,10 +347,12 @@ export interface TreeNode {
   geonodeResourcePk?: number
   geonodeResourceUuid?: string
   geonodeResourceType?: string
+  geonodeSubtype?: string // vector, raster…: which download formats apply
   geonodeThumbnailUrl?: string
   geonodeDetailUrl?: string
   geonodeAlternate?: string // For datasets: workspace:layer_name format
   geonodeUrl?: string // Base URL of the GeoNode instance
+  geonodeBounds?: number[] // [west, south, east, north] in lon/lat
   // Iceberg-specific fields
   icebergConnectionId?: string
   icebergNamespace?: string
@@ -866,6 +868,8 @@ export interface GeoNodeResource {
   bbox_polygon?: GeoNodeBBox
   srid?: string
   ll_bbox_polygon?: GeoNodeBBox
+  /** [west, south, east, north] in lon/lat, from CloudBench (empty if unknown). */
+  ll_bbox?: number[]
   data?: Record<string, unknown>
 }
 
