@@ -12,6 +12,7 @@ import type { LidarControl } from 'maplibre-gl-lidar'
 import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
 import { stretchRange } from '../../utils/rasterStretch'
+import { withGeometryFilter } from '../../utils/geometryFilters'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -120,10 +121,15 @@ export async function addCogLayer(
 }
 
 export function isRenderedIdFor(renderedId: string, layerId: string): boolean {
-  return renderedId === `${layerId}-fill` || renderedId === `${layerId}-line` || renderedId.startsWith(`${layerId}-custom-`)
+  return (
+    renderedId === `${layerId}-fill` ||
+    renderedId === `${layerId}-line` ||
+    renderedId === `${layerId}-circle` ||
+    renderedId.startsWith(`${layerId}-custom-`)
+  )
 }
 
-/** Removes any rendered layer(s) previously added for this id (default fill/line, or a custom style's layers). */
+/** Removes any rendered layer(s) previously added for this id (default fill/line/circle, or a custom style's layers). */
 export function removeRenderedLayers(mapInstance: maplibregl.Map, layerId: string): void {
   const ids = (mapInstance.getStyle()?.layers ?? [])
     .map((l) => l.id)
@@ -133,7 +139,7 @@ export function removeRenderedLayers(mapInstance: maplibregl.Map, layerId: strin
   }
 }
 
-/** Renders a vector PMTiles source either with the default fill/line paint, or a saved custom style's own layers. */
+/** Renders a vector PMTiles source either with the default fill/line/circle paint, or a saved custom style's own layers. */
 export function applyPmtilesVectorStyle(
   mapInstance: maplibregl.Map,
   layerId: string,
@@ -150,7 +156,7 @@ export function applyPmtilesVectorStyle(
       .filter((layerDef) => layerDef.type !== 'background')
       .forEach((layerDef, i) => {
         mapInstance.addLayer({
-          ...layerDef,
+          ...withGeometryFilter(layerDef),
           id: `${layerId}-custom-${i}`,
           source: layerId,
           'source-layer': (layerDef['source-layer'] as string | undefined) || sourceLayerName,
@@ -159,19 +165,28 @@ export function applyPmtilesVectorStyle(
     return
   }
 
-  mapInstance.addLayer({
-    id: `${layerId}-fill`,
-    type: 'fill',
-    source: layerId,
-    'source-layer': sourceLayerName,
-    paint: { 'fill-color': color, 'fill-opacity': opacity / 100 },
-  })
-  mapInstance.addLayer({
-    id: `${layerId}-line`,
-    type: 'line',
-    source: layerId,
-    'source-layer': sourceLayerName,
-    paint: { 'line-color': color, 'line-width': 1 },
+  const defaults: Record<string, unknown>[] = [
+    { id: `${layerId}-fill`, type: 'fill', paint: { 'fill-color': color, 'fill-opacity': opacity / 100 } },
+    // Lines, and the polygons' outlines.
+    { id: `${layerId}-line`, type: 'line', paint: { 'line-color': color, 'line-width': 1 } },
+    {
+      id: `${layerId}-circle`,
+      type: 'circle',
+      paint: {
+        'circle-color': color,
+        'circle-opacity': opacity / 100,
+        'circle-radius': 4,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1,
+      },
+    },
+  ]
+  defaults.forEach((layerDef) => {
+    mapInstance.addLayer({
+      ...withGeometryFilter(layerDef),
+      source: layerId,
+      'source-layer': sourceLayerName,
+    } as maplibregl.LayerSpecification)
   })
 }
 

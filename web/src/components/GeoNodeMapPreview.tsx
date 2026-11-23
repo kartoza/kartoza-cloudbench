@@ -14,6 +14,9 @@ import {
   useColorModeValue,
   ButtonGroup,
   Divider,
+  Alert,
+  AlertIcon,
+  AlertDescription,
 } from '@chakra-ui/react'
 import { FiRefreshCw, FiX, FiBox, FiMap, FiExternalLink } from 'react-icons/fi'
 import { TbWorld } from 'react-icons/tb'
@@ -21,6 +24,11 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useUIStore, type MapViewState } from '../stores/uiStore'
 import { applyBasemap } from '../config/basemap'
+import { wmsProblem, type WmsProblem } from '../utils/wmsProblem'
+import { previewBounds } from '../utils/previewBounds'
+
+// The whole world in EPSG:3857, for the one GetMap that checks the layer draws.
+const WORLD_3857 = '-20037508.34,-20037508.34,20037508.34,20037508.34'
 
 interface GeoNodeMapPreviewProps {
   geonodeUrl: string      // Base URL of GeoNode (e.g., https://mygeocommunity.org) - kept for reference only
@@ -28,6 +36,7 @@ interface GeoNodeMapPreviewProps {
   title: string           // Display title
   connectionId: string    // GeoNode connection ID - used for WMS proxy
   detailUrl?: string      // Full URL to view this resource in GeoNode
+  bounds?: number[]       // [west, south, east, north] in lon/lat: zoomed to on open
   onClose?: () => void
 }
 
@@ -39,6 +48,7 @@ export default function GeoNodeMapPreview({
   title,
   connectionId,
   detailUrl,
+  bounds,
   onClose,
 }: GeoNodeMapPreviewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
@@ -46,6 +56,7 @@ export default function GeoNodeMapPreview({
   const [mapLoaded, setMapLoaded] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('2d')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [layerProblem, setLayerProblem] = useState<WmsProblem>(null)
 
   // Get stored map view state
   const geonodeMapView = useUIStore((state) => state.geonodeMapView)
@@ -165,10 +176,41 @@ export default function GeoNodeMapPreview({
       },
     })
 
-    // Try to get layer bounds from GeoServer capabilities
-    // For now, we'll just keep the world view
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapLoaded, layerName, connectionId, refreshKey])
+
+  // Zoom to the layer when it opens, as the S3 preview does. Not on refresh,
+  // so a view the user moved to is kept.
+  const boundsKey = bounds?.join(',')
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    const lngLat = previewBounds(bounds)
+    if (lngLat) map.current.fitBounds(lngLat, { padding: 50, maxZoom: 15, duration: 0 })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, layerName, boundsKey])
+
+  // Check the layer draws at all: GeoServer answers a tile it can't draw with
+  // an XML exception, which the map just shows as nothing. One small GetMap
+  // tells a private layer (or another error) apart from an empty view.
+  useEffect(() => {
+    let cancelled = false
+    setLayerProblem(null)
+    const url = buildWmsTileUrl(refreshKey > 0 ? String(refreshKey) : undefined)
+      .replace('{bbox-epsg-3857}', WORLD_3857)
+    fetch(url)
+      .then(async (response) => {
+        const contentType = response.headers.get('content-type') ?? ''
+        const body = contentType.startsWith('image/') ? '' : await response.text()
+        if (!cancelled) setLayerProblem(wmsProblem(response.status, contentType, body))
+      })
+      .catch(() => {
+        // A network failure shows up on the map's own tiles too; nothing to add.
+      })
+    return () => {
+      cancelled = true
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layerName, connectionId, refreshKey])
 
   // Update view mode (2D/3D)
   useEffect(() => {
@@ -312,6 +354,26 @@ export default function GeoNodeMapPreview({
           right={0}
           bottom={0}
         />
+        {layerProblem && (
+          <Alert
+            status="warning"
+            position="absolute"
+            top={3}
+            left={3}
+            right={14}
+            width="auto"
+            zIndex={1}
+            borderRadius="md"
+            boxShadow="md"
+          >
+            <AlertIcon />
+            <AlertDescription fontSize="sm">
+              {layerProblem === 'private'
+                ? 'GeoServer won\'t show this layer to this connection: it is probably private, and either the connection\'s user may not see it, or its credentials (username/password or API token) didn\'t get a GeoNode token. You can still open it in GeoNode.'
+                : `GeoServer couldn't draw this layer: ${layerProblem}`}
+            </AlertDescription>
+          </Alert>
+        )}
         {!mapLoaded && (
           <Box
             position="absolute"

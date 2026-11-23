@@ -199,6 +199,57 @@ describe('S3UploadDialog', () => {
       expect(api.uploadToS3).not.toHaveBeenCalled()
     })
 
+    it('uploads as it is, without a server, with Convert off', async () => {
+      const upload = await uploadButton([{ ...cx23, available: true }])
+      expect(screen.getByText('Converted to COG by CloudNativeGIS.')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Convert to cloud-native' }))
+      expect(
+        screen.getByText('Uploaded as it is, without conversion: no server is started.')
+      ).toBeInTheDocument()
+      expect(screen.queryByText('Server type')).not.toBeInTheDocument()
+      expect(screen.queryByText('→ COG')).not.toBeInTheDocument()
+      await userEvent.click(upload)
+
+      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+      expect(screen.queryByText('The server will be destroyed after this job')).not.toBeInTheDocument()
+      expect(api.checkPortolanTarget).not.toHaveBeenCalled()
+      const [, , , convert, targetFormat] = api.uploadToS3.mock.calls[0]
+      expect(convert).toBe(false)
+      expect(targetFormat).toBeUndefined()
+      expect(api.uploadToS3.mock.calls[0].slice(-3)).toEqual([undefined, undefined, undefined])
+    })
+
+    it('still uploads as it is when every server is out of stock', async () => {
+      const upload = await uploadButton([{ ...cx23, available: false }])
+      expect(upload).toBeDisabled()
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Convert to cloud-native' }))
+      await waitFor(() => expect(upload).toBeEnabled())
+    })
+
+    it('warns of no server for a file CloudNativeGIS does not convert', async () => {
+      api.getConversionToolStatus.mockResolvedValue({
+        cloudnativegis: { available: true, onDemand: true, servers: [{ ...cx23, available: true }] },
+      })
+      api.getConversionServers.mockResolvedValue([])
+      useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
+      render(
+        <ChakraProvider>
+          <QueryClientProvider client={new QueryClient()}>
+            <S3UploadDialog />
+          </QueryClientProvider>
+        </ChakraProvider>
+      )
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [new File(['a,b'], 'points.csv', { type: 'text/csv' })] } })
+      const upload = await screen.findByRole('button', { name: 'Upload' })
+      await waitFor(() => expect(upload).toBeEnabled())
+      expect(screen.queryByRole('checkbox', { name: 'Convert to cloud-native' })).not.toBeInTheDocument()
+      await userEvent.click(upload)
+
+      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
+      expect(screen.queryByText('The server will be destroyed after this job')).not.toBeInTheDocument()
+    })
+
     const kept = {
       instanceId: 'aaaaaaaa-1111-2222-3333-444444444444', status: 'ready', autoDestroy: false,
       typeId: 72, specification: { cores: 2, memory: 4, disk: 40 },

@@ -441,11 +441,37 @@ def test_thumbnail_is_listed_apart_from_data_files():
     assert set(collection["assets"]) == {"data", "thumbnail", "style-default"}
 
 
+def _style_layer(style, kind):
+    return next(layer for layer in style["layers"] if layer["type"] == kind)
+
+
 def test_default_vector_style_draws_points():
     style = portolan.default_style_for_pmtiles("default", "roads.pmtiles")
-    circle = next(layer for layer in style["layers"] if layer["type"] == "circle")
-    assert circle["filter"] == ["==", ["geometry-type"], "Point"]
+    circle = _style_layer(style, "circle")
+    assert circle["filter"] == portolan.POINTS_ONLY
     assert circle["paint"]["circle-color"] == "#2d7d9b"
+
+
+def test_default_vector_style_fills_only_polygons():
+    """A fill layer without a filter fills lines as closed shapes (#1197)."""
+    style = portolan.default_style_for_pmtiles("default", "roads.pmtiles")
+
+    assert _style_layer(style, "fill")["filter"] == [
+        "match",
+        ["geometry-type"],
+        ["Polygon", "MultiPolygon"],
+        True,
+        False,
+    ]
+    assert _style_layer(style, "circle")["filter"] == [
+        "match",
+        ["geometry-type"],
+        ["Point", "MultiPoint"],
+        True,
+        False,
+    ]
+    # Lines and polygon outlines both draw.
+    assert "filter" not in _style_layer(style, "line")
 
 
 @pytest.mark.parametrize(

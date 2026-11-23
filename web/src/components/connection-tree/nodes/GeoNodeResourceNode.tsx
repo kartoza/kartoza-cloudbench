@@ -34,6 +34,7 @@ export function GeoNodeResourceNode({
     geonodeResourcePk: resource.pk,
     geonodeResourceUuid: resource.uuid,
     geonodeResourceType: resource.resource_type,
+    geonodeSubtype: resource.subtype,
     geonodeThumbnailUrl: resource.thumbnail_url,
     geonodeDetailUrl: resource.detail_url
       ? (resource.detail_url.startsWith('http://') || resource.detail_url.startsWith('https://'))
@@ -42,6 +43,7 @@ export function GeoNodeResourceNode({
       : undefined,
     geonodeAlternate: isDataset ? datasetResource.alternate : undefined,
     geonodeUrl: connectionUrl,
+    geonodeBounds: resource.ll_bbox?.length === 4 ? resource.ll_bbox : undefined,
   }
 
   const isSelected = selectedNode?.id === nodeId
