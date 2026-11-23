@@ -92,11 +92,6 @@ urlpatterns = [
         views.PGImportRasterView.as_view(),
         name="pg-import-raster",
     ),
-    path(
-        "pg/import/<str:job_id>",
-        views.PGImportStatusView.as_view(),
-        name="pg-import-status",
-    ),
     # Layer Detection
     path(
         "pg/detect-layers",

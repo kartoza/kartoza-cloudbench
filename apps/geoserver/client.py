@@ -17,6 +17,45 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
 
+def _text(value: Any) -> str:
+    """GeoServer's text values come as a string or as {"@class": ..., "$": text}."""
+    if isinstance(value, dict):
+        return str(value.get("$") or "")
+    return str(value or "")
+
+
+def _keywords(value: Any) -> list[str]:
+    """{"string": [...]} or {"string": "one"}, each maybe "word\\@language=..\\;"."""
+    words = (value or {}).get("string") if isinstance(value, dict) else value
+    if isinstance(words, str):
+        words = [words]
+    return [str(w).split("\\@", 1)[0] for w in words or [] if w]
+
+
+def _bbox(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or "minx" not in value:
+        return None
+    box = {k: float(value[k]) for k in ("minx", "miny", "maxx", "maxy") if k in value}
+    if value.get("crs"):
+        box["crs"] = _text(value["crs"])
+    return box
+
+
+def _metadata_links(value: Any) -> list[dict[str, str]]:
+    links = (value or {}).get("metadataLink") if isinstance(value, dict) else value
+    if isinstance(links, dict):
+        links = [links]
+    return [
+        {
+            "type": str(link.get("type") or ""),
+            "metadataType": str(link.get("metadataType") or ""),
+            "content": str(link.get("content") or ""),
+        }
+        for link in links or []
+        if isinstance(link, dict)
+    ]
+
+
 class GeoServerClient:
     """Client for GeoServer REST API operations."""
 
@@ -706,15 +745,20 @@ class GeoServerClient:
             style_format: Style format ('sld' or 'css')
             workspace: Optional workspace name
         """
-        # First create the style entry
+        # First create the style entry. GeoServer (2.24) needs its file name,
+        # and the collection URL without ".json": with it, the JSON body is
+        # taken for the style itself ("No such style handler: format =
+        # application/json").
+        ext = {"sld": "sld", "css": "css", "mbstyle": "json"}.get(style_format, "sld")
         payload = {
             "style": {
                 "name": name,
+                "filename": f"{name}.{ext}",
                 "format": style_format,
             }
         }
 
-        path = f"/rest/workspaces/{workspace}/styles.json" if workspace else "/rest/styles.json"
+        path = f"/rest/workspaces/{workspace}/styles" if workspace else "/rest/styles"
 
         response = self._request("POST", path, json=payload)
         if response.status_code >= 400:
@@ -948,6 +992,100 @@ class GeoServerClient:
             "bbox": bbox,
             "resource": resource,
         }
+
+    def _layer_resource(self, workspace: str, layer: str) -> tuple[dict, str, str, dict]:
+        """The layer, its resource's REST path and kind, and the resource itself."""
+        layer_data = self.get_layer(workspace, layer)
+        resource = layer_data.get("resource") or {}
+        kind = "coverage" if "coverage" in (resource.get("@class") or "") else "featureType"
+        href = resource.get("href") or ""
+        path = href[href.index("/rest/") :] if "/rest/" in href else ""
+        data = self._get_json(path).get(kind, {}) if path else {}
+        return layer_data, path, kind, data
+
+    def get_layer_full_metadata(self, workspace: str, layer: str) -> dict[str, Any]:
+        """A layer's editable metadata, flattened for the layer dialog.
+
+        GeoServer nests and varies these (a keyword list or a single string,
+        a CRS as text or as {"$": ...}, the default style as {name, href}):
+        every value here is plain, so the dialog can show it as is.
+        """
+        layer_data, _path, kind, res = self._layer_resource(workspace, layer)
+        attribution = layer_data.get("attribution") or {}
+        store = (res.get("store") or {}).get("name") or ""
+        return {
+            "name": layer_data.get("name") or layer,
+            "nativeName": res.get("nativeName") or res.get("name") or layer,
+            "workspace": workspace,
+            "store": store.split(":", 1)[-1],
+            "storeType": "coveragestore" if kind == "coverage" else "datastore",
+            "title": res.get("title") or "",
+            "abstract": res.get("abstract") or "",
+            "keywords": _keywords(res.get("keywords")),
+            "nativeCRS": _text(res.get("nativeCRS")),
+            "srs": res.get("srs") or "",
+            "enabled": res.get("enabled", True) is not False,
+            "advertised": res.get("advertised", True) is not False,
+            "queryable": layer_data.get("queryable", True) is not False,
+            "nativeBoundingBox": _bbox(res.get("nativeBoundingBox")),
+            "latLonBoundingBox": _bbox(res.get("latLonBoundingBox")),
+            "attributionTitle": attribution.get("title") or "",
+            "attributionHref": attribution.get("href") or "",
+            "metadataLinks": _metadata_links(res.get("metadataLinks")),
+            "defaultStyle": (layer_data.get("defaultStyle") or {}).get("name") or "",
+            "maxFeatures": res.get("maxFeatures") or 0,
+            "numDecimals": res.get("numDecimals") or 0,
+        }
+
+    def update_layer_metadata(self, workspace: str, layer: str, data: dict[str, Any]) -> None:
+        """Save the layer dialog's metadata: the resource's, then the layer's own."""
+        layer_data, path, kind, _res = self._layer_resource(workspace, layer)
+        if not path:
+            raise GeoServerError(f"Layer {workspace}:{layer} has no resource to update")
+
+        resource: dict[str, Any] = {}
+        for field in ("title", "abstract", "srs", "enabled", "advertised"):
+            if field in data:
+                resource[field] = data[field]
+        if "keywords" in data:
+            resource["keywords"] = {"string": [k for k in data["keywords"] or [] if k]}
+        if "metadataLinks" in data:
+            resource["metadataLinks"] = {
+                "metadataLink": [
+                    {
+                        "type": link.get("type") or "text/xml",
+                        "metadataType": link.get("metadataType") or "ISO19115:2003",
+                        "content": link.get("content"),
+                    }
+                    for link in data["metadataLinks"] or []
+                    if link.get("content")
+                ]
+            }
+        if resource:
+            response = self._request("PUT", path, json={kind: resource})
+            if response.status_code >= 400:
+                raise GeoServerError(
+                    f"Failed to update layer metadata: {response.text}",
+                    status_code=response.status_code,
+                )
+
+        own: dict[str, Any] = {}
+        if "queryable" in data:
+            own["queryable"] = data["queryable"]
+        if "attributionTitle" in data or "attributionHref" in data:
+            attribution = dict(layer_data.get("attribution") or {})
+            attribution["title"] = data.get("attributionTitle") or ""
+            attribution["href"] = data.get("attributionHref") or ""
+            own["attribution"] = attribution
+        if own:
+            response = self._request(
+                "PUT", f"/rest/workspaces/{workspace}/layers/{layer}", json={"layer": own}
+            )
+            if response.status_code >= 400:
+                raise GeoServerError(
+                    f"Failed to update layer: {response.text}",
+                    status_code=response.status_code,
+                )
 
     # === File Uploads ===
 

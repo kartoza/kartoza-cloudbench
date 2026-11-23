@@ -258,9 +258,18 @@ class TestStyles:
         http_mock.add("*", ".*", status=201)
         client.create_style("st", "body", style_format="css", workspace="ws")
         methods = [(r.method, r.url.path) for r in http_mock.calls]
-        assert methods[0] == ("POST", "/geoserver/rest/workspaces/ws/styles.json")
+        assert methods[0] == ("POST", "/geoserver/rest/workspaces/ws/styles")
+        assert json.loads(http_mock.calls[0].content) == {
+            "style": {"name": "st", "filename": "st.css", "format": "css"}
+        }
         assert methods[1] == ("PUT", "/geoserver/rest/workspaces/ws/styles/st.css")
         assert http_mock.calls[1].headers["content-type"] == "application/vnd.geoserver.geocss+css"
+
+    def test_create_global_sld_style(self, client, http_mock):
+        http_mock.add("*", ".*", status=201)
+        client.create_style("st", "<sld/>")
+        assert http_mock.calls[0].url.path == "/geoserver/rest/styles"
+        assert json.loads(http_mock.calls[0].content)["style"]["filename"] == "st.sld"
 
     def test_delete_style_workspace_purge(self, client, http_mock):
         http_mock.add("DELETE", ".*", status=200)
@@ -385,3 +394,104 @@ class TestClientManager:
         with pytest.raises(GeoServerError) as exc:
             get_geoserver_client("nope", config_manager._user)
         assert exc.value.status_code == 404
+
+
+LAYER_JSON = {
+    "layer": {
+        "name": "states",
+        "queryable": True,
+        "defaultStyle": {"name": "population", "href": f"{BASE}/rest/styles/population.json"},
+        "attribution": {"title": "Census", "logoWidth": 0},
+        "resource": {
+            "@class": "featureType",
+            "name": "topp:states",
+            "href": f"{BASE}/rest/workspaces/topp/datastores/shp/featuretypes/states.json",
+        },
+    }
+}
+FEATURE_TYPE_JSON = {
+    "featureType": {
+        "name": "states",
+        "nativeName": "states",
+        "title": "USA Population",
+        "keywords": {"string": "census\\@language=en\\;"},
+        "nativeCRS": {"@class": "projected", "$": "PROJCS[...]"},
+        "srs": "EPSG:3763",
+        "nativeBoundingBox": {
+            "minx": 1,
+            "miny": 2,
+            "maxx": 3,
+            "maxy": 4,
+            "crs": {"$": "EPSG:3763"},
+        },
+        "latLonBoundingBox": {"minx": -9, "miny": 38, "maxx": -8, "maxy": 39, "crs": "EPSG:4326"},
+        "enabled": True,
+        "store": {"@class": "dataStore", "name": "topp:shp"},
+        "metadataLinks": {"metadataLink": {"type": "text/xml", "content": "https://m"}},
+    }
+}
+
+
+@pytest.mark.unit
+class TestLayerFullMetadata:
+    def test_flattens_what_geoserver_nests(self, client, http_mock):
+        http_mock.add("GET", r"layers/states\.json", json=LAYER_JSON)
+        http_mock.add("GET", r"featuretypes/states\.json", json=FEATURE_TYPE_JSON)
+        meta = client.get_layer_full_metadata("topp", "states")
+        assert meta["defaultStyle"] == "population"  # not {name, href}: the dialog crashed on it
+        assert meta["store"] == "shp" and meta["storeType"] == "datastore"
+        assert meta["keywords"] == ["census"]
+        assert meta["nativeCRS"] == "PROJCS[...]"
+        assert meta["nativeBoundingBox"] == {
+            "minx": 1.0,
+            "miny": 2.0,
+            "maxx": 3.0,
+            "maxy": 4.0,
+            "crs": "EPSG:3763",
+        }
+        assert meta["metadataLinks"] == [
+            {"type": "text/xml", "metadataType": "", "content": "https://m"}
+        ]
+        assert meta["attributionTitle"] == "Census" and meta["advertised"] is True
+
+    def test_update_saves_the_resource_then_the_layer(self, client, http_mock):
+        http_mock.add("GET", r"layers/states\.json", json=LAYER_JSON)
+        http_mock.add("GET", r"featuretypes/states\.json", json=FEATURE_TYPE_JSON)
+        http_mock.add("PUT", ".*", status=200)
+        client.update_layer_metadata(
+            "topp",
+            "states",
+            {
+                "title": "T",
+                "keywords": ["a", ""],
+                "queryable": False,
+                "attributionTitle": "K",
+                "attributionHref": "https://k",
+                "metadataLinks": [{"type": "text/html", "content": "https://m"}, {"content": ""}],
+            },
+        )
+        puts = [c for c in http_mock.calls if c.method == "PUT"]
+        assert puts[0].url.path.endswith("/featuretypes/states.json")
+        assert json.loads(puts[0].content) == {
+            "featureType": {
+                "title": "T",
+                "keywords": {"string": ["a"]},
+                "metadataLinks": {
+                    "metadataLink": [
+                        {
+                            "type": "text/html",
+                            "metadataType": "ISO19115:2003",
+                            "content": "https://m",
+                        }
+                    ]
+                },
+            }
+        }
+        assert puts[1].url.path == "/geoserver/rest/workspaces/topp/layers/states"
+        layer = json.loads(puts[1].content)["layer"]
+        assert layer["queryable"] is False
+        assert layer["attribution"] == {
+            "title": "K",
+            "href": "https://k",
+            "logoWidth": 0,
+        }

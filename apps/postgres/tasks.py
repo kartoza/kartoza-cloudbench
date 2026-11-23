@@ -3,6 +3,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+from apps.upload.jobs import run_command
+
 
 def _cleanup(file_path: str, delete_source: bool = False) -> None:
     """Remove per-call scratch state, and the uploaded source once it's done.
@@ -35,19 +37,30 @@ def _resolve_source(file_path: str) -> str:
     return str(extract_dir)
 
 
-def run_vector_import(cmd: list, file_path: str, delete_source: bool = False) -> dict:
+def run_vector_import(
+    cmd: list,
+    file_path: str,
+    delete_source: bool = False,
+    *,
+    env: dict | None = None,
+    on_progress=None,
+) -> dict:
+    """Run ogr2ogr (`cmd`) on the uploaded `file_path`, with no time limit.
+
+    It runs in a background job (apps.upload.jobs), so a large file can take
+    as long as it needs: `on_progress` gets ogr2ogr's percentage. The PostgreSQL password comes in `env`
+    (PGPASSWORD), not in `cmd`, where any process listing would show it.
+    """
     try:
         source = _resolve_source(file_path)
         # Replace the file_path entry in cmd with the resolved source
         cmd = [source if arg == file_path else arg for arg in cmd]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode == 0:
+        returncode, stderr = run_command(cmd, env=env, on_progress=on_progress)
+        if returncode == 0:
             return {"status": "completed"}
-        return {"status": "failed", "error": result.stderr}
+        return {"status": "failed", "error": stderr or f"ogr2ogr exited with {returncode}"}
     except zipfile.BadZipFile:
         return {"status": "failed", "error": "Invalid or corrupted zip file."}
-    except subprocess.TimeoutExpired:
-        return {"status": "failed", "error": "Import timed out after 10 minutes"}
     except FileNotFoundError:
         return {"status": "failed", "error": "ogr2ogr not found. Please install GDAL."}
     except Exception as e:
@@ -70,7 +83,7 @@ def run_raster_import(raster_cmd: list, conn_params: dict, file_path: str) -> di
 
         source = _resolve_source(file_path)
         raster_cmd = [source if arg == file_path else arg for arg in raster_cmd]
-        raster_result = subprocess.run(raster_cmd, capture_output=True, text=True, timeout=600)
+        raster_result = subprocess.run(raster_cmd, capture_output=True, text=True, timeout=3600)
         if raster_result.returncode != 0:
             return {"status": "failed", "error": raster_result.stderr}
 

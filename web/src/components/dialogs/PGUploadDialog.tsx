@@ -145,6 +145,13 @@ export default function PGUploadDialog() {
   const [ogrStatus, setOgrStatus] = useState<api.OGR2OGRStatus | null>(null)
   const [ogrLoading, setOgrLoading] = useState(false)
   const [importResults, setImportResults] = useState<ImportResult[]>([])
+  const [importProgress, setImportProgress] = useState<{
+    label: string
+    index: number
+    total: number
+    progress: number
+    message: string
+  } | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
   const isPausedRef = useRef(false)
@@ -177,6 +184,7 @@ export default function PGUploadDialog() {
     setTargetSRID(undefined)
     setRasterTableName('')
     setImportResults([])
+    setImportProgress(null)
     sessionIdRef.current = null
     isPausedRef.current = false
     isCancelledRef.current = false
@@ -327,6 +335,23 @@ export default function PGUploadDialog() {
     setPhase('cancelled')
   }
 
+  // An import runs in the background (a large file takes longer than a
+  // request may last): wait for its job, showing its progress, and report
+  // how it really ended.
+  const importResult = async (
+    label: string,
+    job: api.ImportJob,
+    index: number,
+    total: number,
+  ): Promise<ImportResult> => {
+    const done = await api.waitForImportJob(job, (current) =>
+      setImportProgress({ label, index, total, progress: current.progress, message: current.message }),
+    )
+    return done.status === 'completed'
+      ? { label, status: 'completed' }
+      : { label, status: 'failed', error: done.error || 'Import failed' }
+  }
+
   const handleImport = async () => {
     if (!serviceName || !assembledPath) return
     setPhase('importing')
@@ -334,24 +359,25 @@ export default function PGUploadDialog() {
     const results: ImportResult[] = []
 
     if (isRaster) {
+      const label = selectedFile?.name ?? 'Raster import'
       try {
-        await api.startRasterImport({
+        const job = await api.startRasterImport({
           filePath: assembledPath,
           serviceName,
           schema: targetSchema,
           tableName: rasterTableName,
           overwrite,
         })
-        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'completed' })
+        results.push(await importResult(label, job, 1, 1))
       } catch (err) {
-        results.push({ label: selectedFile?.name ?? 'Raster import', status: 'failed', error: (err as Error).message })
+        results.push({ label, status: 'failed', error: (err as Error).message })
       }
     } else {
       const layersToImport = selectedLayers.filter((l) => l.selected)
       for (let i = 0; i < layersToImport.length; i++) {
         const layer = layersToImport[i]
         try {
-          await api.startVectorImport({
+          const job = await api.startVectorImport({
             filePath: assembledPath,
             serviceName,
             schema: targetSchema,
@@ -361,13 +387,14 @@ export default function PGUploadDialog() {
             srid: targetSRID,
             cleanupSource: i === layersToImport.length - 1,
           })
-          results.push({ label: layer.name, status: 'completed' })
+          results.push(await importResult(layer.name, job, i + 1, layersToImport.length))
         } catch (err) {
           results.push({ label: layer.name, status: 'failed', error: (err as Error).message })
         }
       }
     }
 
+    setImportProgress(null)
     setImportResults(results)
     setPhase('done')
     queryClient.invalidateQueries({ queryKey: ['pgschemas', serviceName] })
@@ -676,6 +703,22 @@ export default function PGUploadDialog() {
             )}
 
             {/* Import results */}
+            {phase === 'importing' && importProgress && (
+              <Box w="100%" p={3} bg={dropzoneBg} borderRadius="md" border="1px solid" borderColor="blue.200">
+                <HStack justify="space-between" mb={2}>
+                  <Text fontSize="sm" fontWeight="500" noOfLines={1}>
+                    Importing {importProgress.label}
+                    {importProgress.total > 1 ? ` (${importProgress.index} of ${importProgress.total})` : ''}
+                  </Text>
+                  <Text fontSize="sm" color="gray.600">{importProgress.progress}%</Text>
+                </HStack>
+                <Progress value={importProgress.progress} size="sm" colorScheme="blue" borderRadius="sm" hasStripe isAnimated />
+                <Text fontSize="xs" color="gray.500" mt={2}>
+                  A large file can take several minutes. Keep this dialog open until it finishes.
+                </Text>
+              </Box>
+            )}
+
             {phase === 'done' && importResults.length > 0 && (
               <>
                 <Divider />

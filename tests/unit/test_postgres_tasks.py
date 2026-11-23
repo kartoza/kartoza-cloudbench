@@ -55,22 +55,22 @@ class TestCleanup:
 class TestRunVectorImport:
     """Tests for run_vector_import(), the entry point PGImportView calls."""
 
-    @patch("apps.postgres.tasks.subprocess.run")
+    @patch("apps.postgres.tasks.run_command")
     def test_success_keeps_source_by_default(
         self, mock_run: MagicMock, uploaded_file: Path
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.return_value = (0, "")
 
         result = run_vector_import(["ogr2ogr", str(uploaded_file)], str(uploaded_file))
 
         assert result == {"status": "completed"}
         assert uploaded_file.exists()
 
-    @patch("apps.postgres.tasks.subprocess.run")
+    @patch("apps.postgres.tasks.run_command")
     def test_success_deletes_source_when_flagged(
         self, mock_run: MagicMock, uploaded_file: Path
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.return_value = (0, "")
 
         result = run_vector_import(
             ["ogr2ogr", str(uploaded_file)], str(uploaded_file), delete_source=True
@@ -79,31 +79,31 @@ class TestRunVectorImport:
         assert result == {"status": "completed"}
         assert not uploaded_file.parent.exists()
 
-    @patch("apps.postgres.tasks.subprocess.run")
+    @patch("apps.postgres.tasks.run_command")
     def test_failure_still_cleans_up_when_flagged(
         self, mock_run: MagicMock, uploaded_file: Path
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="ogr2ogr exploded")
+        mock_run.return_value = (1, "ogr2ogr exploded")
 
         result = run_vector_import(
             ["ogr2ogr", str(uploaded_file)], str(uploaded_file), delete_source=True
         )
 
-        assert result["status"] == "failed"
+        assert result == {"status": "failed", "error": "ogr2ogr exploded"}
         assert not uploaded_file.parent.exists()
 
-    @patch("apps.postgres.tasks.subprocess.run")
+    @patch("apps.postgres.tasks.run_command")
     def test_failure_without_flag_keeps_source(
         self, mock_run: MagicMock, uploaded_file: Path
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="ogr2ogr exploded")
+        mock_run.return_value = (1, "ogr2ogr exploded")
 
         result = run_vector_import(["ogr2ogr", str(uploaded_file)], str(uploaded_file))
 
         assert result["status"] == "failed"
         assert uploaded_file.exists()
 
-    @patch("apps.postgres.tasks.subprocess.run")
+    @patch("apps.postgres.tasks.run_command")
     def test_multi_layer_sequence_keeps_source_until_last_layer(
         self, mock_run: MagicMock, uploaded_file: Path
     ) -> None:
@@ -111,7 +111,7 @@ class TestRunVectorImport:
         one request per layer, all sharing the same uploaded file, with
         delete_source only true on the last one.
         """
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.return_value = (0, "")
         cmd = ["ogr2ogr", str(uploaded_file)]
 
         run_vector_import(cmd, str(uploaded_file), delete_source=False)  # layer 1: aoi
@@ -124,6 +124,25 @@ class TestRunVectorImport:
         assert not uploaded_file.parent.exists(), "source must be removed after the last layer"
 
         assert mock_run.call_count == 3
+
+    @patch("apps.postgres.tasks.run_command")
+    def test_passes_env_and_progress_to_the_tool(
+        self, mock_run: MagicMock, uploaded_file: Path
+    ) -> None:
+        mock_run.return_value = (0, "")
+        on_progress = MagicMock()
+
+        run_vector_import(
+            ["ogr2ogr", str(uploaded_file)],
+            str(uploaded_file),
+            env={"PGPASSWORD": "secret"},
+            on_progress=on_progress,
+        )
+
+        assert mock_run.call_args.kwargs == {
+            "env": {"PGPASSWORD": "secret"},
+            "on_progress": on_progress,
+        }
 
 
 class TestRunRasterImport:
