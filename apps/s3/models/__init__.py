@@ -1,5 +1,6 @@
 """S3 connections and persistent status for CloudNativeGIS-to-S3 conversions."""
 
+from .cng_lite_batch import CngLiteBatch
 from .cng_lite_job import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
     AWAITING_LAYER_SELECTION,
@@ -8,6 +9,7 @@ from .cng_lite_job import (
     CngLiteJob,
     CngLiteJobStatus,
     JobCancelled,
+    readable_layer_error,
 )
 from .cng_lite_job_log import CngLiteJobLog
 from .cng_lite_server import CngLiteServer
@@ -18,10 +20,12 @@ __all__ = [
     "AWAITING_LAYER_SELECTION",
     "CANCELLABLE_CNG_LITE_JOB_STATUSES",
     "CONVERSION_FORMATS",
+    "CngLiteBatch",
     "CngLiteServer",
     "CngLiteJob",
     "CngLiteJobLog",
     "CngLiteJobStatus",
     "JobCancelled",
     "S3Connection",
+    "readable_layer_error",
 ]

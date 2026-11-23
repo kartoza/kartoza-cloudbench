@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
+import duckdb
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -53,7 +54,7 @@ from .cog import (
     start_geopackage_conversion as start_cog_geopackage_conversion,
 )
 from .copc import start_conversion as start_copc_conversion
-from .duckdb import get_duckdb_engine
+from .duckdb import data_table_info, get_duckdb_engine, query_data, query_data_geojson
 from .geopackage_convert import start_geopackage_conversion as start_geopackage_conversions
 from .models import (
     ACTIVE_CNG_LITE_JOB_STATUSES,
@@ -924,6 +925,74 @@ class S3DuckDBQueryView(APIView):
             )
 
 
+class _DuckDBFileMixin:
+    """The query panel's file: the Parquet/GeoParquet ``?key=``, called ``data``."""
+
+    MAX_LIMIT = 1000
+
+    def _source(self, request, conn_id):
+        key = request.query_params.get("key", "")
+        if not key.lower().endswith((".parquet", ".geoparquet")):
+            raise ValueError("Only Parquet and GeoParquet files can be queried.")
+        return f"s3://{get_s3_client(conn_id, request.user).bucket}/{key}"
+
+
+class S3DuckDBFileView(_DuckDBFileMixin, APIView):
+    """The query panel (DuckDBQueryPanel) on one file.
+
+    GET -> its columns, row count, geometry column, bbox and sample queries.
+    POST {sql, limit, offset} -> one page of the query's rows.
+    """
+
+    def get(self, request, conn_id):
+        try:
+            source = self._source(request, conn_id)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(data_table_info(source, conn_id, request.user))
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def post(self, request, conn_id):
+        try:
+            source = self._source(request, conn_id)
+            limit = max(1, min(int(request.data.get("limit") or 100), self.MAX_LIMIT))
+            offset = max(0, int(request.data.get("offset") or 0))
+        except (ValueError, TypeError) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        sql = request.data.get("sql") or ""
+        try:
+            result = query_data(source, sql, conn_id, request.user, limit, offset)
+        except duckdb.Error as e:
+            # The user's SQL: its error is the answer, shown in the panel.
+            return Response({"error": str(e), "sql": sql}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({**result, "sql": sql})
+
+
+class S3DuckDBGeoJSONView(_DuckDBFileMixin, APIView):
+    """POST {sql, limit} -> the query's rows as a GeoJSON FeatureCollection (the panel's map)."""
+
+    def post(self, request, conn_id):
+        try:
+            source = self._source(request, conn_id)
+            limit = max(1, min(int(request.data.get("limit") or 1000), self.MAX_LIMIT))
+        except (ValueError, TypeError) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(
+                query_data_geojson(
+                    source, request.data.get("sql") or "", conn_id, request.user, limit
+                )
+            )
+        except (duckdb.Error, ValueError) as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # ============================================================================
 # Conversion Views
 # ============================================================================
@@ -1101,11 +1170,12 @@ def _recent_conversion_jobs(user):
     Lets progress be followed from anywhere in the app - not just the
     upload dialog that started it, which may have been closed or the page
     refreshed. A GeoPackage still waiting for its layers to be picked is
-    left out: that step belongs to the open upload dialog. A running job
+    left out: that step belongs to the open upload dialog. So are the layers
+    of a bulk upload, which is listed as one entry (see S3BulkListView). A running job
     that stopped reporting is marked failed first (see expire_stalled_job).
     """
     jobs = list(
-        CngLiteJob.objects.filter(owner=user)
+        CngLiteJob.objects.filter(owner=user, batch__isnull=True)
         .select_related("instance_server")
         .filter(
             Q(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)

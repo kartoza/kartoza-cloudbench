@@ -18,9 +18,54 @@ import {
   Td,
   Checkbox,
 } from '@chakra-ui/react'
-import { FiCheckCircle, FiAlertCircle, FiRefreshCw, FiCircle } from 'react-icons/fi'
+import { FiCheckCircle, FiAlertCircle, FiAlertTriangle, FiRefreshCw, FiCircle } from 'react-icons/fi'
 import type { ConversionJob } from '../../types'
-import { isActiveStatus, layerConversionStatuses } from '../../utils/conversionJobs'
+import { isActiveStatus, layerConversionStatuses, skippedLayers } from '../../utils/conversionJobs'
+
+// The job's layers (or a mosaic's tiles), each done/converting/to do, or
+// skipped with why. Scrolls once there are many.
+function LayerStatusList({ job, size }: { job: ConversionJob; size: 'sm' | 'xs' }) {
+  const layerStatuses = layerConversionStatuses(job)
+  if (!layerStatuses) return null
+  const iconSize = size === 'sm' ? 4 : 3
+  return (
+    <VStack
+      align="stretch"
+      spacing={size === 'sm' ? 1 : 0.5}
+      mt={size === 'sm' ? 3 : 2}
+      pt={size === 'sm' ? 3 : 2}
+      borderTop="1px solid"
+      borderColor="blue.100"
+      maxH={size === 'sm' ? '300px' : '200px'}
+      overflowY="auto"
+    >
+      {layerStatuses.map((layer) => (
+        <HStack key={layer.name} spacing={2} align="start">
+          {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={iconSize} mt="2px" />}
+          {layer.status === 'active' && (
+            <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={iconSize} mt="2px" />
+          )}
+          {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={iconSize} mt="2px" />}
+          {layer.status === 'skipped' && (
+            <Icon as={FiAlertTriangle} color="orange.500" boxSize={iconSize} mt="2px" />
+          )}
+          <Text
+            fontSize={size}
+            color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
+            fontWeight={layer.status === 'active' ? '600' : '400'}
+          >
+            {layer.name}
+            {layer.status === 'skipped' && (
+              <Text as="span" color="orange.600">
+                {' '}— skipped{layer.error ? `: ${layer.error}` : ''}
+              </Text>
+            )}
+          </Text>
+        </HStack>
+      ))}
+    </VStack>
+  )
+}
 
 // A row in the GeoPackage picker: a vector layer (-> PMTiles) or raster table (-> COG).
 export interface GpkgItem {
@@ -188,30 +233,7 @@ export default function S3UploadDialogProgress({
           <Text fontSize="xs" color="gray.500" mt={1}>
             You can close this dialog: the conversion carries on, and its progress stays under Jobs in the header.
           </Text>
-          {(() => {
-            const layerStatuses = layerConversionStatuses(conversionJob)
-            if (!layerStatuses) return null
-            return (
-              <VStack align="stretch" spacing={1} mt={3} pt={3} borderTop="1px solid" borderColor="blue.100" maxH="300px" overflowY="auto">
-                {layerStatuses.map((layer) => (
-                  <HStack key={layer.name} spacing={2}>
-                    {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={4} />}
-                    {layer.status === 'active' && (
-                      <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={4} />
-                    )}
-                    {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={4} />}
-                    <Text
-                      fontSize="sm"
-                      color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
-                      fontWeight={layer.status === 'active' ? '600' : '400'}
-                    >
-                      {layer.name}
-                    </Text>
-                  </HStack>
-                ))}
-              </VStack>
-            )
-          })()}
+          <LayerStatusList job={conversionJob} size="sm" />
         </Box>
       )}
 
@@ -257,30 +279,7 @@ export default function S3UploadDialogProgress({
           <Text fontSize="xs" color="gray.500">
             You can close this dialog: progress stays under Jobs in the header.
           </Text>
-          {(() => {
-            const layerStatuses = layerConversionStatuses(conversionJob)
-            if (!layerStatuses) return null
-            return (
-              <VStack align="stretch" spacing={0.5} mt={2} pt={2} borderTop="1px solid" borderColor="blue.100">
-                {layerStatuses.map((layer) => (
-                  <HStack key={layer.name} spacing={2}>
-                    {layer.status === 'done' && <Icon as={FiCheckCircle} color="green.500" boxSize={3} />}
-                    {layer.status === 'active' && (
-                      <Icon as={FiRefreshCw} className="spin" color="blue.500" boxSize={3} />
-                    )}
-                    {layer.status === 'pending' && <Icon as={FiCircle} color="gray.300" boxSize={3} />}
-                    <Text
-                      fontSize="xs"
-                      color={layer.status === 'pending' ? 'gray.400' : 'gray.700'}
-                      fontWeight={layer.status === 'active' ? '600' : '400'}
-                    >
-                      {layer.name}
-                    </Text>
-                  </HStack>
-                ))}
-              </VStack>
-            )
-          })()}
+          <LayerStatusList job={conversionJob} size="xs" />
         </Box>
       )}
 
@@ -354,25 +353,33 @@ export default function S3UploadDialogProgress({
                     <Text fontSize="xs" color="gray.600">
                       {conversionJob.outputPaths?.length ?? 0} files created:
                     </Text>
-                    {conversionJob.outputPaths?.map((path) => (
-                      <Text key={path} fontSize="xs" color="gray.600" noOfLines={1}>
-                        {path}
-                      </Text>
-                    ))}
+                    <Box maxH="160px" overflowY="auto" pr={2}>
+                      {conversionJob.outputPaths?.map((path) => (
+                        <Text key={path} fontSize="xs" color="gray.600" noOfLines={1} title={path}>
+                          {path}
+                        </Text>
+                      ))}
+                    </Box>
                   </>
                 )}
               </Box>
             </Alert>
-            {conversionJob.error && (
+            {skippedLayers(conversionJob).length > 0 && (
               <Alert status="warning" borderRadius="lg" variant="subtle" py={2} mt={2}>
                 <AlertIcon boxSize={4} />
                 <Box>
-                  <Text fontSize="xs" fontWeight="500">Some layers were skipped</Text>
-                  {conversionJob.error.split('; ').map((line) => (
-                    <Text key={line} fontSize="xs" color="gray.600">
-                      {line}
-                    </Text>
-                  ))}
+                  <Text fontSize="xs" fontWeight="500">
+                    {skippedLayers(conversionJob).length} skipped
+                  </Text>
+                  <Box maxH="160px" overflowY="auto" pr={2}>
+                    {skippedLayers(conversionJob).map((layer) => (
+                      <Text key={`${layer.name}:${layer.error}`} fontSize="xs" color="gray.600">
+                        {layer.name ? <b>{layer.name}</b> : null}
+                        {layer.name ? ': ' : ''}
+                        {layer.error}
+                      </Text>
+                    ))}
+                  </Box>
                 </Box>
               </Alert>
             )}

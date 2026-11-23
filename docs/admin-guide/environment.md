@@ -39,6 +39,15 @@ Format: `postgres://user:password@host:port/dbname`
 Uploads to GeoServer/GeoNode need every worker in **one container** (they meet over
 a Unix socket): run more replicas only with sticky sessions per upload.
 
+## S3 Queries (DuckDB)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DUCKDB_MEMORY_LIMIT` | The most memory one query on S3 data may use | `1GB` |
+
+Each query runs on its own connection that can read `s3://` only (no local files,
+no `http(s)://` URLs), with only the querying user's S3 credentials.
+
 ## Security
 
 | Variable | Description | Default |

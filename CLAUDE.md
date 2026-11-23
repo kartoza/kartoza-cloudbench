@@ -146,7 +146,8 @@ Still to do:
 Deferred:
 
 - Internal/private network to the cng servers (public IP for now).
-- A limit on how many servers (and how much cost) can run at once.
+- A limit on how many servers (and how much cost) can run at once (a bulk upload has
+  its own, `CLOUDNATIVEGIS_BULK_MAX_SERVERS`, per batch).
 - One server for both of a GeoPackage's jobs (vector + raster).
 - Reading a GeoPackage's layers straight from S3. The upload dialog's
   inspection (`inspect_geopackage`) no longer asks CloudNativeGIS: CloudBench

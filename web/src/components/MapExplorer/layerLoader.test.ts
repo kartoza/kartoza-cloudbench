@@ -1,7 +1,46 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import { fromUrl } from 'geotiff'
 import { getS3ProxyURL } from '../../api/s3'
-import { cogStyleFrom, layerNameFromKey, loadLayerOntoMap } from './layerLoader'
+import { POINTS_ONLY, POLYGONS_ONLY } from '../../utils/geometryFilters'
+import {
+  applyPmtilesVectorStyle,
+  cogStyleFrom,
+  defaultCogHash,
+  isRenderedIdFor,
+  layerNameFromKey,
+  loadLayerOntoMap,
+} from './layerLoader'
+
+vi.mock('geotiff', () => ({ fromUrl: vi.fn() }))
+
+interface FakeImage {
+  width: number
+  bands?: number
+  bits?: number
+  format?: number
+  mask?: boolean
+  noData?: number | null
+  data?: number[]
+}
+
+/** A geotiff.js GeoTIFF whose images are the given ones (full resolution first). */
+function fakeTiff(images: FakeImage[]) {
+  const made = images.map((img) => ({
+    getWidth: () => img.width,
+    getSamplesPerPixel: () => img.bands ?? 1,
+    getBitsPerSample: () => img.bits ?? 32,
+    getSampleFormat: () => img.format ?? 3,
+    getGDALNoData: () => img.noData ?? null,
+    fileDirectory: { loadValue: async () => (img.mask ? 4 : 0) },
+    readRasters: vi.fn(async () => [Float32Array.from(img.data ?? [])]),
+  }))
+  vi.mocked(fromUrl).mockResolvedValue({
+    getImage: async (i = 0) => made[i],
+    getImageCount: async () => made.length,
+  } as never)
+  return made
+}
 
 describe('layerLoader point clouds', () => {
   beforeEach(() => {
@@ -62,5 +101,88 @@ describe('cogStyleFrom', () => {
         layers: [{ type: 'raster' }],
       })
     ).toEqual({ hash: '', paint: {} })
+  })
+})
+
+describe('defaultCogHash', () => {
+  it('gives a one-band Float32 COG (a DEM) a grey min–max ramp, from its smallest overview', async () => {
+    const images = fakeTiff([
+      { width: 1200, noData: -9999 },
+      { width: 300, data: [12, -9999, NaN, Infinity, 845.5, 300] },
+      { width: 150, mask: true },
+    ])
+    expect(await defaultCogHash('/api/s3/proxy/c/dem_3857.tif')).toBe('#color:BrewerGreys9,12,845.5,-c')
+    expect(images[1].readRasters).toHaveBeenCalled()
+    expect(images[0].readRasters).not.toHaveBeenCalled()
+  })
+
+  it('leaves 8-bit and multi-band COGs to the default rendering', async () => {
+    fakeTiff([{ width: 100, bits: 8, format: 1 }])
+    expect(await defaultCogHash('/x.tif')).toBe('')
+    fakeTiff([{ width: 100, bands: 3, bits: 8, format: 1 }])
+    expect(await defaultCogHash('/x.tif')).toBe('')
+  })
+
+  it('gives up when there is no valid pixel, and widens a flat range', async () => {
+    fakeTiff([{ width: 100, data: [NaN, NaN] }])
+    expect(await defaultCogHash('/x.tif')).toBe('')
+    fakeTiff([{ width: 100, bits: 16, format: 1, data: [7, 7] }])
+    expect(await defaultCogHash('/x.tif')).toBe('#color:BrewerGreys9,7,8,-c')
+  })
+})
+
+// The layers applyPmtilesVectorStyle adds, by type.
+function renderVectorLayer(customStyle: Record<string, unknown> | null) {
+  const added: Record<string, unknown>[] = []
+  const map = {
+    getStyle: () => ({ layers: [] }),
+    getLayer: () => undefined,
+    addLayer: (layer: Record<string, unknown>) => added.push(layer),
+  } as unknown as Parameters<typeof applyPmtilesVectorStyle>[0]
+  applyPmtilesVectorStyle(map, 'lyr', 'water_lines', '#ff0000', 80, customStyle)
+  return added
+}
+
+describe('applyPmtilesVectorStyle (#1197: lines drawn as filled shapes)', () => {
+  it('fills only polygons and draws points as circles with the default style', () => {
+    const layers = renderVectorLayer(null)
+    const byType = Object.fromEntries(layers.map((l) => [l.type, l]))
+
+    expect(Object.keys(byType).sort()).toEqual(['circle', 'fill', 'line'])
+    expect(byType.fill.filter).toEqual(POLYGONS_ONLY)
+    expect(byType.circle.filter).toEqual(POINTS_ONLY)
+    // Lines, and the polygons' outlines.
+    expect(byType.line.filter).toBeUndefined()
+    expect(layers.every((l) => l.source === 'lyr' && l['source-layer'] === 'water_lines')).toBe(true)
+    expect(byType.circle.paint).toMatchObject({ 'circle-color': '#ff0000', 'circle-opacity': 0.8 })
+  })
+
+  it("keeps a saved style's unfiltered fill and circle layers to their own geometries", () => {
+    const layers = renderVectorLayer({
+      layers: [
+        { id: 'background', type: 'background' },
+        { id: 'fill', type: 'fill', paint: {} },
+        { id: 'line', type: 'line', paint: {} },
+        { id: 'circle', type: 'circle', paint: {} },
+      ],
+    })
+
+    expect(layers.map((l) => [l.type, l.filter])).toEqual([
+      ['fill', POLYGONS_ONLY],
+      ['line', undefined],
+      ['circle', POINTS_ONLY],
+    ])
+  })
+
+  it("leaves a saved style's own filters alone", () => {
+    const own = ['==', ['get', 'kind'], 'river']
+    const layers = renderVectorLayer({ layers: [{ id: 'fill', type: 'fill', filter: own }] })
+
+    expect(layers[0].filter).toEqual(own)
+  })
+
+  it('counts the default circle layer as part of its layer (opacity, feature popups)', () => {
+    expect(isRenderedIdFor('lyr-circle', 'lyr')).toBe(true)
+    expect(isRenderedIdFor('other-circle', 'lyr')).toBe(false)
   })
 })

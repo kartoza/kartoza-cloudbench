@@ -9,7 +9,7 @@ import pytest
 
 from apps.s3 import portolan
 from apps.s3.cng_lite import CNGProcessingClient, job_directory, resume_interrupted_conversions
-from apps.s3.models import CngLiteJob, CngLiteJobStatus, S3Connection
+from apps.s3.models import CngLiteBatch, CngLiteJob, CngLiteJobStatus, S3Connection
 from apps.s3.pmtiles import CONTENT_TYPE, PARQUET_CONTENT_TYPE
 from tests.unit.fake_s3 import FakeS3, converting_cng
 
@@ -356,3 +356,87 @@ def test_an_unreachable_cloudnativegis_is_logged(job):
     assert (log.step, log.method, log.status_code) == ("pushing", "POST", None)
     assert "refused" in log.error
     assert pushing.status == CngLiteJobStatus.FAILED
+
+
+# -- a bulk-upload batch's shared sub-catalog --------------------------------
+
+
+def in_batch(instance, **fields):
+    """Attach a CngLiteBatch to `instance` (its owner and connection), and save it."""
+    batch = CngLiteBatch.objects.create(
+        owner=instance.owner, connection=instance.connection, source_prefix="incoming/", **fields
+    )
+    instance.batch = batch
+    instance.save(update_fields=["batch"])
+    return batch
+
+
+@pytest.mark.django_db
+def test_batch_folder_is_blank_without_a_batch(job):
+    instance = job()
+    assert CNGProcessingClient(instance)._batch_folder() == ("", "")
+
+
+@pytest.mark.django_db
+def test_batch_folder_is_blank_at_the_bucket_top_level(job):
+    instance = job(output_key="roads.pmtiles")
+    in_batch(instance)
+
+    assert CNGProcessingClient(instance)._batch_folder() == ("", "")
+
+
+@pytest.mark.django_db
+def test_batch_folder_is_the_named_destination_folder(job):
+    instance = job(output_key="mydata/roads.pmtiles")
+    in_batch(instance, destination_prefix="mydata/")
+
+    assert CNGProcessingClient(instance)._batch_folder() == ("mydata", "Mydata")
+
+
+@pytest.mark.django_db
+def test_batch_folder_falls_back_to_the_source_folder_beside_each_file(job):
+    # A recursive "beside each file" upload: this file sits deeper than
+    # source_prefix, but every job of the batch still shares one folder.
+    instance = job(output_key="incoming/region1/roads.pmtiles")
+    in_batch(instance)
+
+    assert CNGProcessingClient(instance)._batch_folder() == ("incoming", "Incoming")
+
+
+@pytest.mark.django_db
+def test_a_batchs_layer_is_published_into_its_shared_sub_catalog(job):
+    instance = job(status=CngLiteJobStatus.POLLING, output_key="mydata/roads.pmtiles")
+    in_batch(instance, destination_prefix="mydata/")
+    s3 = FakeS3()
+    outputs = already_uploaded(s3, folder="mydata/roads")
+
+    _requests, _s3, finalize_layer = run(instance, done(outputs), s3)
+
+    assert instance.status == CngLiteJobStatus.COMPLETED, instance.error
+    kwargs = finalize_layer.call_args.kwargs
+    assert (kwargs["catalog_folder"], kwargs["catalog_title"]) == ("mydata", "Mydata")
+    assert kwargs["parent_folder"] == ""
+
+
+@pytest.mark.django_db
+def test_a_batchs_geopackage_group_nests_in_its_shared_sub_catalog(job):
+    instance = job(
+        status=CngLiteJobStatus.POLLING,
+        source_name="Castelo Branco.gpkg",
+        output_key="mydata/Castelo Branco.gpkg",
+        layers=["roads"],
+    )
+    in_batch(instance, destination_prefix="mydata/")
+    s3 = FakeS3()
+    outputs = already_uploaded(s3, folder="mydata/castelo-branco/roads", layer_id="roads")
+    outputs[0]["layer"] = "roads"
+
+    _requests, _s3, finalize_layer = run(instance, done(outputs), s3)
+
+    assert instance.status == CngLiteJobStatus.COMPLETED, instance.error
+    kwargs = finalize_layer.call_args.kwargs
+    assert (kwargs["catalog_folder"], kwargs["catalog_title"]) == (
+        "mydata/castelo-branco",
+        "Castelo Branco",
+    )
+    assert (kwargs["parent_folder"], kwargs["parent_title"]) == ("mydata", "Mydata")

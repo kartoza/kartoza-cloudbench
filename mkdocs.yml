@@ -85,6 +85,7 @@ nav:
     - Upload Passthrough: dev-guide/upload-passthrough.md
     - S3 Upload Passthrough: dev-guide/s3-upload-passthrough.md
     - Connection Permissions: dev-guide/connection-permissions.md
+    - Bulk upload (plan): dev-guide/bulk-upload.md
     - Testing: dev-guide/testing.md
     - Contributing: dev-guide/contributing.md
   - About:

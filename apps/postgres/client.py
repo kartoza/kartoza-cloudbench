@@ -4,6 +4,7 @@ Provides an object-oriented client for PostgreSQL operations,
 wrapping psycopg2 connections via pg_service.conf entries.
 """
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import psycopg2
@@ -686,9 +687,13 @@ class PGServiceClient:
         limit: int = 1000,
     ) -> dict[str, Any]:
         with self._connect() as conn, conn.cursor() as cur:
-            query_lower = query.lower().strip()
-            if "limit" not in query_lower and query_lower.startswith("select"):
-                query = f"{query.rstrip(';')} LIMIT {limit}"
+            query = query.strip().rstrip(";").strip()
+            query_lower = query.lower()
+            # A trailing LIMIT (optionally with OFFSET) is the query's own; a column
+            # that happens to be called e.g. "speed_limit" isn't.
+            has_limit = re.search(r"\blimit\s+(\d+|all)(\s+offset\s+\d+)?$", query_lower)
+            if not has_limit and query_lower.startswith(("select", "with")):
+                query = f"{query}\nLIMIT {limit}"
 
             cur.execute(query, params)
             columns = [desc[0] for desc in cur.description] if cur.description else []

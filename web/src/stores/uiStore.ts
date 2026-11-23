@@ -28,6 +28,7 @@ export type DialogType =
   | 'pgupload'
   | 's3connection'
   | 's3upload'
+  | 's3bulk'
   | 's3verify'
   | 'pointcloud'
   | 'qgisproject'
@@ -108,6 +109,7 @@ interface GeoNodePreviewState {
   title: string         // Display title
   connectionId: string  // GeoNode connection ID
   detailUrl?: string    // Full URL to view this resource in GeoNode
+  bounds?: number[]     // [west, south, east, north] in lon/lat: the map zooms to it
 }
 
 interface DuckDBQueryState {

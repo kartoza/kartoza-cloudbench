@@ -2,7 +2,7 @@
 
 from django.urls import path, re_path
 
-from . import views
+from . import bulk_views, views
 
 urlpatterns = [
     # S3 Connections (each connection is scoped to one bucket)
@@ -64,6 +64,17 @@ urlpatterns = [
         views.S3DuckDBQueryView.as_view(),
         name="s3-duckdb-query",
     ),
+    # The query panel, on one file (?key=)
+    path(
+        "s3/duckdb/geojson/<str:conn_id>",
+        views.S3DuckDBGeoJSONView.as_view(),
+        name="s3-duckdb-geojson",
+    ),
+    path(
+        "s3/duckdb/<str:conn_id>",
+        views.S3DuckDBFileView.as_view(),
+        name="s3-duckdb-file",
+    ),
     # Conversion
     path(
         "s3/conversion/tools",
@@ -84,6 +95,38 @@ urlpatterns = [
         "s3/conversion/jobs/<str:job_id>",
         views.S3ConversionJobsView.as_view(),
         name="s3-conversion-job-detail",
+    ),
+    # Bulk upload: a folder's layers, converted N at a time
+    path(
+        "s3/bulk/folders/<str:conn_id>",
+        bulk_views.S3BulkFoldersView.as_view(),
+        name="s3-bulk-folders",
+    ),
+    path(
+        "s3/bulk/preview/<str:conn_id>",
+        bulk_views.S3BulkPreviewView.as_view(),
+        name="s3-bulk-preview",
+    ),
+    path(
+        "s3/bulk/start/<str:conn_id>",
+        bulk_views.S3BulkStartView.as_view(),
+        name="s3-bulk-start",
+    ),
+    path("s3/bulk", bulk_views.S3BulkListView.as_view(), name="s3-bulk-list"),
+    path(
+        "s3/bulk/<str:batch_id>",
+        bulk_views.S3BulkDetailView.as_view(),
+        name="s3-bulk-detail",
+    ),
+    path(
+        "s3/bulk/<str:batch_id>/retry",
+        bulk_views.S3BulkRetryView.as_view(),
+        name="s3-bulk-retry",
+    ),
+    path(
+        "s3/bulk/<str:batch_id>/restart",
+        bulk_views.S3BulkRestartView.as_view(),
+        name="s3-bulk-restart",
     ),
     # Upload
     path(

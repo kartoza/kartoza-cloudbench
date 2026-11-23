@@ -144,6 +144,8 @@ describe('API sweep', () => {
   })
 
   it('injects the auth token into API requests only', async () => {
+    // An earlier test stubs window.location; same-origin checks need the real one.
+    if (realLocation) Object.defineProperty(window, 'location', realLocation)
     vi.resetModules()
     const original = window.fetch
     const spy = vi.fn().mockResolvedValue(new Response('{}'))
@@ -159,6 +161,17 @@ describe('API sweep', () => {
       expect(headers.get('X-Test')).toBe('1')
       await window.fetch('https://other.test/x')
       expect(spy.mock.calls[1][1]).toBeUndefined()
+
+      // MapLibre resolves tile URLs to absolute same-origin ones and fetches
+      // a Request carrying its own headers (the GeoNode WMS preview): still
+      // an API request, and its headers are kept.
+      const tile = new Request(`${window.location.origin}/api/geonode/connections/c/wms?BBOX=1`, {
+        headers: { Accept: 'image/png' },
+      })
+      await window.fetch(tile)
+      const tileHeaders = new Headers((spy.mock.calls[2][1] as RequestInit).headers)
+      expect(tileHeaders.get('Authorization')).toBe('Token abc')
+      expect(tileHeaders.get('Accept')).toBe('image/png')
     } finally {
       localStorage.removeItem('token')
       window.fetch = original

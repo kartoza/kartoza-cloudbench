@@ -3,30 +3,42 @@
 Covers the fix for a bug where importing a multi-layer file (e.g. a
 GeoPackage with several layers) deleted the shared uploaded source file
 after the first layer's import, breaking every subsequent layer with a
-"File not found" error.
+"File not found" error. Also covers zip sources, which are read in place
+through GDAL's /vsizip/ instead of being extracted.
 """
 
+import json
+import shutil
+import subprocess
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from apps.postgres.tasks import _cleanup, run_raster_import, run_vector_import
+from apps.postgres.tasks import _cleanup, ogr_source_path, run_raster_import, run_vector_import
+
+requires_gdal = pytest.mark.skipif(
+    not (shutil.which("ogr2ogr") and shutil.which("ogrinfo")), reason="needs GDAL"
+)
 
 
 @pytest.fixture
 def uploaded_file(tmp_path: Path) -> Path:
-    """An uploaded file in its own session dir, plus a stale 'extracted'
-    scratch dir left over from a previous zip-shapefile extraction.
-    """
+    """An uploaded file in its own session dir."""
     upload_dir = tmp_path / "uploads" / "session-123"
     upload_dir.mkdir(parents=True)
     file_path = upload_dir / "data.gpkg"
     file_path.write_bytes(b"fake gpkg content")
-    extracted_dir = upload_dir / "extracted"
-    extracted_dir.mkdir()
-    (extracted_dir / "data.shp").write_bytes(b"fake shp content")
     return file_path
+
+
+def _make_zip(path: Path, members: list) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        for name in members:
+            zf.writestr(name, b"x")
+    return path
 
 
 class TestCleanup:
@@ -36,20 +48,11 @@ class TestCleanup:
         _cleanup(str(uploaded_file))
 
         assert uploaded_file.exists()
-        assert not (uploaded_file.parent / "extracted").exists()
 
     def test_deletes_source_when_requested(self, uploaded_file: Path) -> None:
         _cleanup(str(uploaded_file), delete_source=True)
 
         assert not uploaded_file.parent.exists()
-
-    def test_missing_extracted_dir_is_not_an_error(self, tmp_path: Path) -> None:
-        file_path = tmp_path / "data.geojson"
-        file_path.write_bytes(b"{}")
-
-        _cleanup(str(file_path))  # no "extracted" dir was ever created
-
-        assert file_path.exists()
 
 
 class TestRunVectorImport:
@@ -125,6 +128,29 @@ class TestRunVectorImport:
 
         assert mock_run.call_count == 3
 
+    @patch("apps.postgres.tasks.subprocess.run")
+    def test_zip_source_is_passed_as_vsizip(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        zip_path = _make_zip(tmp_path / "up" / "x.zip", ["a.shp", "a.shx", "a.dbf"])
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        result = run_vector_import(["ogr2ogr", "out", str(zip_path), "a"], str(zip_path))
+
+        assert result == {"status": "completed"}
+        cmd = mock_run.call_args[0][0]
+        assert f"/vsizip/{zip_path.resolve()}" in cmd
+        assert str(zip_path) not in cmd
+        assert not (zip_path.parent / "extracted").exists()
+
+    def test_corrupt_zip_fails_cleanly(self, tmp_path: Path) -> None:
+        bad = tmp_path / "up" / "bad.zip"
+        bad.parent.mkdir()
+        bad.write_text("not a zip")
+
+        result = run_vector_import(["ogr2ogr", "out", str(bad)], str(bad), delete_source=True)
+
+        assert result == {"status": "failed", "error": "Invalid or corrupted zip file."}
+        assert not bad.parent.exists()
+
 
 class TestRunRasterImport:
     """Tests for run_raster_import(), always a single call per uploaded file."""
@@ -160,3 +186,134 @@ class TestRunRasterImport:
 
         assert result["status"] == "failed"
         assert not uploaded_file.parent.exists()
+
+    @patch("psycopg2.connect")
+    @patch("apps.postgres.tasks.subprocess.run")
+    def test_vacuum_runs_after_commit_in_autocommit(
+        self, mock_run: MagicMock, mock_connect: MagicMock, uploaded_file: Path
+    ) -> None:
+        sql = (
+            'BEGIN;\nINSERT INTO "public"."dem" VALUES (1);\nEND;\nVACUUM ANALYZE "public"."dem";\n'
+        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=sql, stderr="")
+        conn = MagicMock()
+        mock_connect.return_value = conn
+        executed = []
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.execute.side_effect = lambda stmt: executed.append((stmt, conn.autocommit))
+
+        result = run_raster_import(
+            ["raster2pgsql", "-M", str(uploaded_file)],
+            {"host": "localhost", "port": 5432, "user": "u", "password": "p", "dbname": "d"},
+            str(uploaded_file),
+        )
+
+        assert result == {"status": "completed"}
+        script, in_transaction = executed[1]
+        assert "VACUUM" not in script and in_transaction is False
+        assert executed[2] == ('VACUUM ANALYZE "public"."dem";', True)
+        conn.commit.assert_called_once()
+
+
+@pytest.mark.unit
+class TestOgrSourcePath:
+    def test_non_zip_is_unchanged(self, tmp_path: Path) -> None:
+        assert ogr_source_path(str(tmp_path / "a.gpkg")) == str(tmp_path / "a.gpkg")
+
+    def test_root_shapefile_uses_zip_root(self, tmp_path: Path) -> None:
+        z = _make_zip(tmp_path / "x.zip", ["a.shp", "a.shx", "a.dbf"])
+        assert ogr_source_path(str(z)) == f"/vsizip/{z.resolve()}"
+
+    def test_shapefile_in_subfolder_points_at_folder(self, tmp_path: Path) -> None:
+        z = _make_zip(
+            tmp_path / "x.zip",
+            ["inner/x.shp", "inner/x.shx", "inner/x.dbf", "__MACOSX/inner/._x.shp"],
+        )
+        assert ogr_source_path(str(z)) == f"/vsizip/{z.resolve()}/inner"
+
+    def test_single_geopackage_member(self, tmp_path: Path) -> None:
+        z = _make_zip(tmp_path / "x.zip", ["data/p.gpkg"])
+        assert ogr_source_path(str(z)) == f"/vsizip/{z.resolve()}/data/p.gpkg"
+
+    def test_shapefiles_in_several_folders_raise(self, tmp_path: Path) -> None:
+        z = _make_zip(tmp_path / "x.zip", ["a/x.shp", "b/y.shp"])
+        with pytest.raises(ValueError, match="more than one folder"):
+            ogr_source_path(str(z))
+
+    def test_bad_zip_raises(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.zip"
+        bad.write_text("not a zip")
+        with pytest.raises(zipfile.BadZipFile):
+            ogr_source_path(str(bad))
+
+
+def _make_zipped_shapefile(
+    tmp_path: Path,
+    layer: str = "bali_districts",
+    zip_name: str = "bali_districts_shp.zip",
+    folder: str = "",
+) -> Path:
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    geojson = src / f"{layer}.geojson"
+    geojson.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"id": 1},
+                        "geometry": {"type": "Point", "coordinates": [115.0, -8.5]},
+                    }
+                ],
+            }
+        )
+    )
+    shp_dir = tmp_path / "shp"
+    shp_dir.mkdir(exist_ok=True)
+    subprocess.run(
+        ["ogr2ogr", "-f", "ESRI Shapefile", str(shp_dir / f"{layer}.shp"), str(geojson)],
+        check=True,
+        capture_output=True,
+    )
+    zip_path = tmp_path / "up" / zip_name
+    zip_path.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for f in shp_dir.glob(f"{layer}.*"):
+            zf.write(f, f"{folder}/{f.name}" if folder else f.name)
+    return zip_path
+
+
+@requires_gdal
+class TestZippedShapefileWithGdal:
+    @pytest.mark.parametrize("folder", ["", "inner"])
+    def test_detects_real_layer_name_not_zip_name(self, tmp_path: Path, folder: str) -> None:
+        zip_path = _make_zipped_shapefile(tmp_path, folder=folder)
+
+        out = subprocess.run(
+            ["ogrinfo", "-so", "-al", ogr_source_path(str(zip_path))],
+            capture_output=True,
+            text=True,
+        )
+
+        assert "Layer name: bali_districts" in out.stdout
+
+    def test_ogr2ogr_imports_detected_layer(self, tmp_path: Path) -> None:
+        zip_path = _make_zipped_shapefile(tmp_path)
+        out_gpkg = tmp_path / "out.gpkg"
+
+        def cmd(layer: str) -> list:
+            return [
+                "ogr2ogr", "-f", "GPKG", str(out_gpkg), str(zip_path),
+                "-nlt", "PROMOTE_TO_MULTI", "-nln", "bali_districts", layer,
+            ]  # fmt: skip
+
+        result = run_vector_import(cmd("bali_districts"), str(zip_path))
+        assert result == {"status": "completed"}
+        info = subprocess.run(["ogrinfo", "-so", str(out_gpkg)], capture_output=True, text=True)
+        assert "bali_districts" in info.stdout
+
+        failed = run_vector_import(cmd("bali_districts_shp"), str(zip_path))
+        assert failed["status"] == "failed"
+        assert "Couldn't fetch requested layer" in failed["error"]

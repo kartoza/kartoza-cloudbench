@@ -58,6 +58,8 @@ interface CatalogueItem {
   // S3 cards show a thumbnail slot (GeoServer layers have no published thumbnail).
   hasThumbnail?: boolean
   thumbnail?: ThumbnailTarget
+  // A GeoPackage card previews several of its layers, side by side.
+  thumbnails?: ThumbnailTarget[]
   // Every layer "Open on map" (or "Open all on map") replaces the map with.
   mapTargets?: MapTarget[]
   styleTarget?: StyleTarget
@@ -153,6 +155,10 @@ function groupItem(
     ]),
     hasThumbnail: true,
     thumbnail: group.thumbnailKey ? { connectionId: connection.connectionId, key: group.thumbnailKey } : undefined,
+    thumbnails: group.layers
+      .filter((layer) => layer.thumbnailKey)
+      .slice(0, 4)
+      .map((layer) => ({ connectionId: connection.connectionId, key: layer.thumbnailKey! })),
     mapTargets: group.layers.map((layer) => layerTarget(connection, layer)),
     onBrowse: () => onBrowse({ connection, group }),
     // The original upload, kept as the layers' source asset.
@@ -224,7 +230,15 @@ async function buildGeoServerSections(): Promise<CatalogueSection[]> {
 const THUMBNAIL_HEIGHT = '140px'
 
 // Presigned rather than proxied: an <img> can't send the API token header.
-function CatalogueThumbnail({ target, alt }: { target?: ThumbnailTarget; alt: string }) {
+function CatalogueThumbnail({
+  target,
+  alt,
+  height = THUMBNAIL_HEIGHT,
+}: {
+  target?: ThumbnailTarget
+  alt: string
+  height?: string
+}) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -245,14 +259,14 @@ function CatalogueThumbnail({ target, alt }: { target?: ThumbnailTarget; alt: st
 
   if (!target || failed) {
     return (
-      <Center h={THUMBNAIL_HEIGHT} bg="gray.50" borderRadius="sm">
+      <Center h={height} bg="gray.50" borderRadius="sm">
         <Text fontSize="xs" color="gray.400">No preview</Text>
       </Center>
     )
   }
   if (!url) {
     return (
-      <Center h={THUMBNAIL_HEIGHT} bg="gray.50" borderRadius="sm">
+      <Center h={height} bg="gray.50" borderRadius="sm">
         <Spinner size="sm" color="gray.400" />
       </Center>
     )
@@ -261,7 +275,7 @@ function CatalogueThumbnail({ target, alt }: { target?: ThumbnailTarget; alt: st
     <Image
       src={url}
       alt={alt}
-      h={THUMBNAIL_HEIGHT}
+      h={height}
       w="100%"
       objectFit="contain"
       bg="gray.50"
@@ -272,14 +286,37 @@ function CatalogueThumbnail({ target, alt }: { target?: ThumbnailTarget; alt: st
   )
 }
 
+// A GeoPackage's first few layers, in a grid of small previews.
+function CatalogueThumbnailGrid({ targets, alt }: { targets: ThumbnailTarget[]; alt: string }) {
+  return (
+    <SimpleGrid columns={2} spacing={1} h={THUMBNAIL_HEIGHT}>
+      {targets.map((target) => (
+        <CatalogueThumbnail key={target.key} target={target} alt={alt} height="68px" />
+      ))}
+    </SimpleGrid>
+  )
+}
+
 function CatalogueCard({ item, onOpenOnMap }: { item: CatalogueItem; onOpenOnMap: (targets: MapTarget[]) => void }) {
   const mapTargets = item.mapTargets ?? []
   const openLabel = item.onBrowse ? 'Open all on map' : 'Open on map'
   return (
     <VStack align="stretch" spacing={2} p={3} borderWidth="1px" borderRadius="md" bg="white">
-      {item.hasThumbnail && <CatalogueThumbnail target={item.thumbnail} alt={`${item.title} preview`} />}
+      {item.hasThumbnail &&
+        (item.thumbnails && item.thumbnails.length > 1 ? (
+          <CatalogueThumbnailGrid targets={item.thumbnails} alt={`${item.title} layer preview`} />
+        ) : (
+          <CatalogueThumbnail target={item.thumbnail} alt={`${item.title} preview`} />
+        ))}
       <HStack justify="space-between" align="start">
-        <Text fontWeight="semibold" noOfLines={2}>{item.title}</Text>
+        {item.onBrowse ? (
+          // A GeoPackage's title opens its layers, like Browse.
+          <ChakraLink fontWeight="semibold" noOfLines={2} onClick={item.onBrowse}>
+            {item.title}
+          </ChakraLink>
+        ) : (
+          <Text fontWeight="semibold" noOfLines={2}>{item.title}</Text>
+        )}
         {item.badge && (
           <Badge colorScheme={item.badge === 'GeoPackage' ? 'purple' : 'gray'} flexShrink={0}>
             {item.badge}
@@ -303,9 +340,11 @@ function CatalogueCard({ item, onOpenOnMap }: { item: CatalogueItem; onOpenOnMap
             </Tooltip>
           )}
           {item.onBrowse && (
-            <Button size="sm" variant="ghost" onClick={item.onBrowse}>
-              Browse
-            </Button>
+            <Tooltip label="See its layers, each with its own preview and style">
+              <Button size="sm" variant="ghost" onClick={item.onBrowse}>
+                Browse
+              </Button>
+            </Tooltip>
           )}
         </HStack>
         <HStack spacing={3}>

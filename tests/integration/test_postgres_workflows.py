@@ -3,6 +3,7 @@
 Tests complex interactions with PostgreSQL services using mocks.
 """
 
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import DEFAULT, MagicMock, patch
@@ -34,6 +35,14 @@ def allowed_everything():
         mocks["check_connection"].return_value = (True, "Connected: PostgreSQL 16", ALL_ALLOWED)
         mocks["check_permissions"].return_value = ALL_ALLOWED
         yield mocks
+
+
+def _zip_with(path: Path, members: list) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        for name in members:
+            zf.writestr(name, b"x")
+    return path
 
 
 @pytest.fixture
@@ -472,6 +481,82 @@ class TestPostgresImportCleanup:
                     assert uploaded_gpkg.exists(), f"source must survive after layer {layer}"
 
         assert not uploaded_gpkg.parent.exists()
+
+    def test_import_zipped_shapefile_uses_vsizip_and_layer(
+        self,
+        authenticated_client: APIClient,
+        mock_pg_import_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        zip_path = _zip_with(tmp_path / "up" / "bali_districts_shp.zip", ["bali_districts.shp"])
+        with patch("apps.postgres.tasks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            response = authenticated_client.post(
+                "/api/pg/import",
+                {
+                    "serviceName": "test_service",
+                    "filePath": str(zip_path),
+                    "sourceLayer": "bali_districts",
+                    "tableName": "bali_districts",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        cmd = mock_run.call_args[0][0]
+        assert f"/vsizip/{zip_path.resolve()}" in cmd
+        assert "bali_districts" in cmd
+        assert cmd[cmd.index("-nln") + 1] == "public.bali_districts"
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestPostgresDetectLayers:
+    @pytest.fixture
+    def authenticated_client(self, api_client: APIClient) -> APIClient:
+        api_client.force_authenticate(user=get_user_model()())
+        return api_client
+
+    def _post(self, client: APIClient, path: Path):
+        return client.post("/api/pg/detect-layers", {"filePath": str(path)}, format="json")
+
+    def test_detect_layers_reads_zip_via_vsizip(
+        self, authenticated_client: APIClient, tmp_path: Path
+    ) -> None:
+        zip_path = _zip_with(
+            tmp_path / "bali_districts_shp.zip",
+            ["bali_districts.shp", "bali_districts.shx", "bali_districts.dbf"],
+        )
+        with patch("apps.postgres.views.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Layer name: bali_districts\n", stderr=""
+            )
+            response = self._post(authenticated_client, zip_path)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["layers"] == ["bali_districts"]
+        assert mock_run.call_args[0][0][-1].startswith("/vsizip/")
+
+    def test_detect_layers_corrupt_zip_returns_400(
+        self, authenticated_client: APIClient, tmp_path: Path
+    ) -> None:
+        bad = tmp_path / "bad.zip"
+        bad.write_text("not a zip")
+
+        response = self._post(authenticated_client, bad)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"] == "Invalid or corrupted zip file."
+
+    def test_detect_layers_zip_with_shapefiles_in_two_folders_returns_400(
+        self, authenticated_client: APIClient, tmp_path: Path
+    ) -> None:
+        zip_path = _zip_with(tmp_path / "two.zip", ["a/x.shp", "b/y.shp"])
+
+        response = self._post(authenticated_client, zip_path)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "more than one folder" in response.json()["error"]
 
 
 @pytest.mark.integration

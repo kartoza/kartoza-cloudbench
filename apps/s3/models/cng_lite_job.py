@@ -1,6 +1,7 @@
 """Persistent status of CloudNativeGIS-to-S3 conversion jobs."""
 
 import logging
+import re
 import time
 import uuid
 
@@ -11,6 +12,7 @@ from django.db.models import Q
 
 from apps.core.fields import EncryptedCharField
 from apps.core.geohosting import GeoHostingClient, GeoHostingError
+from apps.core.retry import retry_if_locked
 
 from .cng_lite_server import CngLiteServer, hide_server_type
 from .s3_connection import S3Connection
@@ -30,6 +32,20 @@ CONVERSION_FORMATS = {
 GEOHOSTING_SERVERS_PAGE = "{geohosting}/#/dashboard/server-on-demand"
 
 
+def readable_layer_error(error):
+    """A skipped layer's error, short enough to show.
+
+    A tool's output (e.g. tippecanoe's) can come with its progress lines,
+    separated by carriage returns: keep what it failed with, and its last line,
+    which says why ("tippecanoe failed: Did not read any valid geometries").
+    """
+    lines = [line.strip() for line in re.split(r"[\r\n]+", str(error or "")) if line.strip()]
+    if len(lines) <= 1:
+        return lines[0] if lines else ""
+    prefix, sep, _rest = lines[0].partition(": ")
+    return f"{prefix}: {lines[-1]}" if sep else lines[-1]
+
+
 def _is_healthy(url):
     """Whether the CloudNativeGIS service at `url` answers its /health check."""
     url = url.rstrip("/")
@@ -43,6 +59,10 @@ def _is_healthy(url):
 
 
 class CngLiteJobStatus(models.TextChoices):
+    # A bulk upload's layer waiting for a free slot (see apps.s3.bulk): not
+    # active - nothing runs it, so it isn't resumed or expired as stalled -
+    # until the batch starts it, as PENDING.
+    QUEUED = "queued", "Queued"
     # Not started yet: just created (thread about to start), a GeoPackage
     # waiting for its layers to be picked (`layers` null), or a GeoPackage's
     # raster job waiting for its vector job (see geopackage_convert).
@@ -100,8 +120,12 @@ class JobCancelled(Exception):
 
 # A GeoPackage still waiting for the user to pick its layers (see
 # apps.s3.pmtiles.inspect_geopackage): pending, but not ready to run.
+# A bulk upload's GeoPackage is no such wait: it converts all its layers.
 AWAITING_LAYER_SELECTION = Q(
-    status=CngLiteJobStatus.PENDING, layers__isnull=True, source_name__iendswith=".gpkg"
+    status=CngLiteJobStatus.PENDING,
+    layers__isnull=True,
+    source_name__iendswith=".gpkg",
+    batch__isnull=True,
 )
 
 
@@ -139,6 +163,22 @@ class CngLiteJob(models.Model):
     # source to (see apps.s3.geopackage_convert).
     depends_on = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="dependents"
+    )
+    # The bulk upload this layer is part of, if any (see apps.s3.bulk), and
+    # the original it was started from: a file already in the bucket, which
+    # is copied to source_key - the job's own staged copy - when it gets a slot
+    # (or, from another bucket, read where it is: see source_in_place).
+    batch = models.ForeignKey(
+        "CngLiteBatch", null=True, blank=True, on_delete=models.SET_NULL, related_name="jobs"
+    )
+    origin_key = models.TextField(blank=True, default="")
+    # The file is converted where it is - `source_key` is its key in the bucket
+    # of `source_connection`, another than `connection`'s, which only reads
+    # it: the pipeline hands CloudNativeGIS a URL to it, and never moves or
+    # deletes it. Null once that connection is deleted: it can't run anymore.
+    source_in_place = models.BooleanField(default=False)
+    source_connection = models.ForeignKey(
+        S3Connection, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     # The fixed CLOUDNATIVEGIS_URL/API_TOKEN this job's conversion runs on,
     # its token encrypted at rest - without CLOUDNATIVEGIS_ON_DEMAND. On
@@ -285,8 +325,9 @@ class CngLiteJob(models.Model):
         else:
             self.cloudnativegis_url = settings.CLOUDNATIVEGIS_URL.rstrip("/")
             self.cloudnativegis_api_token = settings.CLOUDNATIVEGIS_API_TOKEN
-            self.save(
-                update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"]
+            retry_if_locked(
+                self.save,
+                update_fields=["cloudnativegis_url", "cloudnativegis_api_token", "updated_at"],
             )
         self.wait_until_healthy()
 
@@ -388,7 +429,7 @@ class CngLiteJob(models.Model):
         linked = self.instance_server_id == server.pk
         self.instance_server = server
         if not linked:
-            self.save(update_fields=["instance_server", "updated_at"])
+            retry_if_locked(self.save, update_fields=["instance_server", "updated_at"])
         return server
 
     def deprovision(self):
@@ -451,7 +492,7 @@ class CngLiteJob(models.Model):
         """Only message/updated_at: the status is set by the caller."""
         if self.message != message:
             self.message = message
-            self.save(update_fields=["message", "updated_at"])
+            retry_if_locked(self.save, update_fields=["message", "updated_at"])
 
     def wait_until_healthy(self):
         """Poll this job's CloudNativeGIS /health until it answers.
@@ -500,6 +541,12 @@ class CngLiteJob(models.Model):
             "inputSize": self.input_size,
             "outputSize": self.output_size,
             "layers": self.layers,
+            # The layers/tables CloudNativeGIS couldn't convert, and why.
+            "skipped": [
+                {"name": str(e.get("name", "")), "error": readable_layer_error(e.get("error"))}
+                for e in self.cng_errors or []
+                if isinstance(e, dict)
+            ],
             "startedAt": self.created_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
             # On demand: the server it runs (or ran) on.

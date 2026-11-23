@@ -13,6 +13,7 @@ import json
 import logging
 import posixpath
 import re
+import threading
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -29,6 +30,8 @@ STYLE_KEY = "styles/default.json"
 # Multihash prefix for SHA-256: function code 0x12, digest length 0x20 (32 bytes).
 _SHA256_MULTIHASH_PREFIX = "1220"
 CATALOG_KEY = "catalog.json"
+
+_CATALOG_LOCK = threading.RLock()
 
 # SPDX ids offered in the upload dialog; "other" is the safe default when
 # the uploader doesn't know (or the source data doesn't specify) a license,
@@ -275,6 +278,14 @@ def _now_iso_ms() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+# MapLibre doesn't match a layer to the geometries it suits: a fill layer
+# closes each line into a polygon and fills it (a layer of lines then shows
+# as spiky filled shapes), and a circle layer draws a circle on every vertex
+# of a line or polygon. So each layer of the default style only takes its own.
+POLYGONS_ONLY = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], True, False]
+POINTS_ONLY = ["match", ["geometry-type"], ["Point", "MultiPoint"], True, False]
+
+
 def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
     """`source_layer` must match the PMTiles file's own internal vector
     layer name (from its tippecanoe-written metadata), not the collection
@@ -290,9 +301,11 @@ def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
                 "type": "fill",
                 "source": "data",
                 "source-layer": source_layer,
+                "filter": POLYGONS_ONLY,
                 "paint": {"fill-color": "#2d7d9b", "fill-opacity": 0.5},
             },
             {
+                # Lines, and the polygons' outlines.
                 "id": "line",
                 "type": "line",
                 "source": "data",
@@ -306,7 +319,7 @@ def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
                 "type": "circle",
                 "source": "data",
                 "source-layer": source_layer,
-                "filter": ["==", ["geometry-type"], "Point"],
+                "filter": POINTS_ONLY,
                 "paint": {"circle-color": "#2d7d9b", "circle-radius": 3},
             },
         ],
@@ -770,11 +783,13 @@ def _write_root_catalog(s3_client, catalog: dict) -> None:
     _write_catalog(s3_client, catalog, "")
 
 
-def _new_catalog(folder: str, title: str, description: str) -> dict:
+def _new_catalog(folder: str, title: str, description: str, parent_folder: str = "") -> dict:
     """A fresh catalog.json: the bucket root ("" folder), or a sub-catalog.
 
-    Sub-catalogs (a GeoPackage's layer group) always sit directly under the
-    root catalog, so their `root` and `parent` are both the root.
+    A sub-catalog's `root` is always the bucket root; its `parent` is
+    `parent_folder`'s catalog ("" - the default - is the root too). A
+    bulk-upload batch's shared sub-catalog nests a GeoPackage's own layer
+    group this way (`parent_folder` is the batch's).
     """
     if not folder:
         return {
@@ -787,6 +802,11 @@ def _new_catalog(folder: str, title: str, description: str) -> dict:
             "links": [{"rel": "root", "href": "./catalog.json", "type": "application/json"}],
         }
     root_href = "../" * (folder.count("/") + 1) + CATALOG_KEY
+    parent_href = (
+        "../" * (folder.count("/") - parent_folder.count("/")) + CATALOG_KEY
+        if parent_folder
+        else root_href
+    )
     return {
         "type": "Catalog",
         "stac_version": "1.1.0",
@@ -796,7 +816,7 @@ def _new_catalog(folder: str, title: str, description: str) -> dict:
         "description": description,
         "links": [
             {"rel": "root", "href": root_href, "type": "application/json"},
-            {"rel": "parent", "href": root_href, "type": "application/json"},
+            {"rel": "parent", "href": parent_href, "type": "application/json"},
         ],
     }
 
@@ -804,14 +824,18 @@ def _new_catalog(folder: str, title: str, description: str) -> dict:
 def _add_child(
     s3_client, catalog_folder: str, child_href: str, title: str, *, new_catalog: dict
 ) -> None:
-    """Link a child from a catalog (created from `new_catalog` if missing)."""
-    catalog = _load_json(s3_client, _catalog_key(catalog_folder)) or new_catalog
-    links = catalog.setdefault("links", [])
-    if not any(link.get("href") == child_href for link in links):
-        links.append(
-            {"rel": "child", "href": child_href, "type": "application/json", "title": title}
-        )
-    _write_catalog(s3_client, catalog, catalog_folder)
+    """Link a child from a catalog (created from `new_catalog` if missing).
+
+    Locked (see _CATALOG_LOCK): read, modify and write as one step.
+    """
+    with _CATALOG_LOCK:
+        catalog = _load_json(s3_client, _catalog_key(catalog_folder)) or new_catalog
+        links = catalog.setdefault("links", [])
+        if not any(link.get("href") == child_href for link in links):
+            links.append(
+                {"rel": "child", "href": child_href, "type": "application/json", "title": title}
+            )
+        _write_catalog(s3_client, catalog, catalog_folder)
 
 
 def touch_root_catalog(s3_client) -> None:
@@ -822,9 +846,10 @@ def touch_root_catalog(s3_client) -> None:
     Best-effort: a failure is only logged.
     """
     try:
-        catalog = _load_json(s3_client, CATALOG_KEY)
-        if catalog:
-            _write_root_catalog(s3_client, catalog)
+        with _CATALOG_LOCK:
+            catalog = _load_json(s3_client, CATALOG_KEY)
+            if catalog:
+                _write_root_catalog(s3_client, catalog)
     except Exception:
         logger.exception("Failed to touch root catalog.json")
 
@@ -859,15 +884,22 @@ def ensure_sub_catalog(
     catalog_description: str,
     folder: str,
     title: str,
+    parent_folder: str = "",
+    parent_title: str = "",
+    parent_description: str = "",
 ) -> None:
-    """Link a layer from its sub-catalog, and the sub-catalog from the root.
+    """Link a layer from its sub-catalog, and the sub-catalog from its parent (the root, by default).
 
     For a GeoPackage's layers: `catalog_folder` ("castelo-branco") holds a
     catalog.json listing each layer folder inside it (`folder`,
-    "castelo-branco/highway"), and the root catalog links that catalog.json.
-    The root is rewritten even when it already links the sub-catalog, so
-    anything keyed on its ETag (the STAC API's cache) notices the new layer.
-    Best-effort, like ensure_root_catalog.
+    "castelo-branco/highway", however deep under `catalog_folder` - a
+    recursive bulk upload's source folder can be). With `parent_folder`
+    (a bulk-upload batch's shared sub-catalog, holding a GeoPackage's own
+    group alongside its other layers), that is linked instead of the root -
+    which then links `parent_folder` itself. Each catalog touched is
+    rewritten even when it already links its child, so anything keyed on
+    its ETag (the STAC API's cache) notices the new layer. Best-effort,
+    like ensure_root_catalog.
     """
     try:
         relative = folder.removeprefix(f"{catalog_folder}/")
@@ -876,15 +908,26 @@ def ensure_sub_catalog(
             catalog_folder,
             f"./{relative}/collection.json",
             title,
-            new_catalog=_new_catalog(catalog_folder, catalog_title, catalog_description),
+            new_catalog=_new_catalog(
+                catalog_folder, catalog_title, catalog_description, parent_folder
+            ),
         )
+        catalog_relative = catalog_folder.removeprefix(f"{parent_folder}/" if parent_folder else "")
         _add_child(
             s3_client,
-            "",
-            f"./{catalog_folder}/{CATALOG_KEY}",
+            parent_folder,
+            f"./{catalog_relative}/{CATALOG_KEY}",
             catalog_title,
-            new_catalog=_new_catalog("", "", ""),
+            new_catalog=_new_catalog(parent_folder, parent_title, parent_description),
         )
+        if parent_folder:
+            _add_child(
+                s3_client,
+                "",
+                f"./{parent_folder}/{CATALOG_KEY}",
+                parent_title,
+                new_catalog=_new_catalog("", "", ""),
+            )
     except Exception:
         logger.exception("Failed to update %s's catalog.json (layer was still uploaded)", folder)
 
@@ -895,37 +938,44 @@ def _prune_catalog(
     """Drop a catalog's child links to deleted data, recursing into sub-catalogs.
 
     Returns (changed here - and so rewritten, changed in a sub-catalog).
+    Locked (see _CATALOG_LOCK), same as _add_child - a sibling publishing
+    into this catalog right now mustn't be read mid-way and overwritten.
     """
-    catalog = _load_json(s3_client, _catalog_key(catalog_folder))
-    if not catalog:
-        return False, False
-    prefix = f"{catalog_folder}/" if catalog_folder else ""
+    with _CATALOG_LOCK:
+        catalog = _load_json(s3_client, _catalog_key(catalog_folder))
+        if not catalog:
+            return False, False
+        prefix = f"{catalog_folder}/" if catalog_folder else ""
 
-    def is_deleted(path: str) -> bool:
-        return path.startswith(deleted_key) if deleted_key.endswith("/") else path == deleted_key
+        def is_deleted(path: str) -> bool:
+            return (
+                path.startswith(deleted_key) if deleted_key.endswith("/") else path == deleted_key
+            )
 
-    kept = []
-    removed = nested = False
-    for link in catalog.get("links", []):
-        if link.get("rel") != "child":
+        kept = []
+        removed = nested = False
+        for link in catalog.get("links", []):
+            if link.get("rel") != "child":
+                kept.append(link)
+                continue
+            path = prefix + str(link.get("href", "")).removeprefix("./")
+            if is_deleted(path):
+                removed = True
+                continue
             kept.append(link)
-            continue
-        path = prefix + str(link.get("href", "")).removeprefix("./")
-        if is_deleted(path):
-            removed = True
-            continue
-        kept.append(link)
-        sub_folder = path.removesuffix(f"/{CATALOG_KEY}")
-        if (
-            path.endswith(f"/{CATALOG_KEY}")
-            and deleted_key.startswith(f"{sub_folder}/")
-            and depth < 4
-        ):
-            nested = any(_prune_catalog(s3_client, sub_folder, deleted_key, depth + 1)) or nested
-    if removed:
-        catalog["links"] = kept
-        _write_catalog(s3_client, catalog, catalog_folder)
-    return removed, nested
+            sub_folder = path.removesuffix(f"/{CATALOG_KEY}")
+            if (
+                path.endswith(f"/{CATALOG_KEY}")
+                and deleted_key.startswith(f"{sub_folder}/")
+                and depth < 4
+            ):
+                nested = (
+                    any(_prune_catalog(s3_client, sub_folder, deleted_key, depth + 1)) or nested
+                )
+        if removed:
+            catalog["links"] = kept
+            _write_catalog(s3_client, catalog, catalog_folder)
+        return removed, nested
 
 
 def prune_root_catalog(s3_client, deleted_key: str) -> None:
@@ -946,6 +996,16 @@ def prune_root_catalog(s3_client, deleted_key: str) -> None:
             touch_root_catalog(s3_client)  # only a sub-catalog changed
     except Exception:
         logger.exception("Failed to prune catalog.json after deleting %s", deleted_key)
+
+
+def published_folders(s3_client) -> set[str]:
+    """The folders (no trailing slash) the root catalog links to: published layers and layer groups.
+
+    Reads only the root catalog.json - not each layer - so it is cheap enough
+    to ask on every folder listing. Empty if the bucket has no catalog.
+    """
+    root = _load_json(s3_client, CATALOG_KEY)
+    return {folder for _title, folder, _is_catalog in _catalog_children(root)} if root else set()
 
 
 def catalog_collections(s3_client) -> list[dict[str, str]] | None:
@@ -1010,14 +1070,20 @@ def finalize_layer(
     catalog_folder: str = "",
     catalog_title: str = "",
     catalog_description: str = "",
+    parent_folder: str = "",
+    parent_title: str = "",
+    parent_description: str = "",
 ) -> None:
     """Upload collection.json, README.md, AGENTS.md and a default style for one layer.
 
     `catalog_folder`, if given, is the sub-catalog the layer belongs to (a
-    GeoPackage's layer group, holding `folder`): the layer is linked from
+    GeoPackage's layer group, or a bulk-upload batch's shared folder,
+    holding `folder` however deep under it): the layer is linked from
     that catalog.json - created with `catalog_title`/`catalog_description`
-    if need be - which is linked from the root; otherwise the layer is
-    linked from the root catalog directly.
+    if need be. With `parent_folder` too (a GeoPackage uploaded as part of
+    a batch), that sub-catalog is linked from `parent_folder`'s instead of
+    the root - which is then linked from the root. Without a
+    `catalog_folder`, the layer is linked from the root catalog directly.
 
     `data_assets` is [{'filename', 'role', 'media_type'?}, ...] for every
     asset the layer's data file(s) already uploaded under `folder`.
@@ -1039,7 +1105,14 @@ def finalize_layer(
     # "folder/sub/folder" -> "../../catalog.json": one "../" per path segment
     # plus the collection's own folder, back up to the bucket root.
     root_relative_path = "../" * (folder.count("/") + 1) + "catalog.json"
-    parent_relative_path = "../catalog.json" if catalog_folder else root_relative_path
+    # Up from `folder` to `catalog_folder`'s own catalog.json: one "../" per
+    # path segment `folder` has beyond it (more than one for a recursive
+    # bulk upload's sub-folder, or a GeoPackage nested in a batch).
+    parent_relative_path = (
+        "../" * (folder.count("/") - catalog_folder.count("/")) + "catalog.json"
+        if catalog_folder
+        else root_relative_path
+    )
 
     try:
         style = (
@@ -1112,6 +1185,9 @@ def finalize_layer(
                 catalog_description=catalog_description or catalog_title or catalog_folder,
                 folder=folder,
                 title=title,
+                parent_folder=parent_folder,
+                parent_title=parent_title or parent_folder,
+                parent_description=parent_description or parent_title or parent_folder,
             )
         else:
             ensure_root_catalog(s3_client, folder=folder, title=title)

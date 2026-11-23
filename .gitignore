@@ -9,6 +9,8 @@ main
 
 static/
 .env
+# Secrets of the on-demand launch configuration (see .vscode/on-demand.env.example)
+.vscode/on-demand.env
 .env.staging
 
 web/public/maputnik/

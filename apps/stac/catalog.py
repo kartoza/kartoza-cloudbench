@@ -303,7 +303,8 @@ def _gs_item(
     geometry = None
     try:
         metadata = get_geoserver_client(conn.id, user).get_layer_metadata(workspace, layer_name)
-        raw_bbox = metadata.get("bbox")
+        # STAC bboxes are WGS84; the native one is in the layer's own CRS.
+        raw_bbox = metadata.get("latLonBbox") or metadata.get("bbox")
         if raw_bbox:
             minx, miny = float(raw_bbox["minx"]), float(raw_bbox["miny"])
             maxx, maxy = float(raw_bbox["maxx"]), float(raw_bbox["maxy"])

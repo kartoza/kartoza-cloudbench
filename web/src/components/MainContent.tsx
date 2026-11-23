@@ -212,6 +212,7 @@ export default function MainContent() {
           title={activeGeoNodePreview.title}
           connectionId={activeGeoNodePreview.connectionId}
           detailUrl={activeGeoNodePreview.detailUrl}
+          bounds={activeGeoNodePreview.bounds}
           onClose={() => setGeoNodePreview(null)}
         />
       </Box>
@@ -393,6 +394,8 @@ export default function MainContent() {
       )
     case 'pgtable':
     case 'pgview':
+    case 'pgcolumn':
+      // A column shows the data of its table (its node carries the table's name).
       return (
         <PGTablePanel
           serviceName={selectedNode.serviceName!}

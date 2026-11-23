@@ -973,8 +973,10 @@ class GeoServerClient:
         resource_class = resource.get("@class", "")
         resource_href = resource.get("href", "")
 
-        # Determine if this is a featuretype or coverage
+        # Determine if this is a featuretype or coverage. `bbox` is in the
+        # layer's own CRS (e.g. metres); `latLonBbox` is always WGS84.
         bbox = None
+        lat_lon_bbox = None
         if "featureType" in resource_class and resource_href:
             # Extract path from href and fetch feature type
             # href looks like: http://server/geoserver/rest/workspaces/ws/datastores/ds/featuretypes/ft.json
@@ -983,6 +985,7 @@ class GeoServerClient:
                 if ft_response.status_code == 200:
                     ft_data = ft_response.json().get("featureType", {})
                     bbox = ft_data.get("nativeBoundingBox") or ft_data.get("latLonBoundingBox")
+                    lat_lon_bbox = ft_data.get("latLonBoundingBox")
             except Exception:
                 pass
         elif "coverage" in resource_class and resource_href:
@@ -991,6 +994,7 @@ class GeoServerClient:
                 if cov_response.status_code == 200:
                     cov_data = cov_response.json().get("coverage", {})
                     bbox = cov_data.get("nativeBoundingBox") or cov_data.get("latLonBoundingBox")
+                    lat_lon_bbox = cov_data.get("latLonBoundingBox")
             except Exception:
                 pass
 
@@ -1002,6 +1006,7 @@ class GeoServerClient:
             "queryable": layer_data.get("queryable"),
             "defaultStyle": layer_data.get("defaultStyle", {}),
             "bbox": bbox,
+            "latLonBbox": lat_lon_bbox,
             "resource": resource,
         }
 

@@ -6,13 +6,29 @@ import { getApiBase } from '../config/env'
 
 export const API_BASE = getApiBase()
 
+/**
+ * Whether a request goes to CloudBench's own API: as written (`/api/...`), or
+ * resolved to an absolute same-origin URL first, as MapLibre does with tile
+ * URLs (`http://host/api/geonode/.../wms?...`) before fetching them.
+ */
+export function isApiUrl(url: string): boolean {
+  if (url.startsWith(API_BASE) || url.startsWith('/api')) return true
+  try {
+    const target = new URL(url, window.location.href)
+    const api = new URL(API_BASE || '/api', window.location.href)
+    return target.origin === api.origin && target.pathname.startsWith(api.pathname)
+  } catch {
+    return false
+  }
+}
+
 // Patch fetch to inject auth token from localStorage on every request
 const _originalFetch = window.fetch.bind(window)
 window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const token = localStorage.getItem('token')
   if (token) {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
-    if (url.startsWith(API_BASE) || url.startsWith('/api')) {
+    if (isApiUrl(url)) {
       // Build via Headers so a caller's existing headers are kept whatever
       // form they take — a plain object, an array, or a Headers instance.
       // Spreading `...init.headers` dropped a Headers instance entirely
@@ -21,7 +37,9 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
       // 200 (whole file) instead of 206, and pmtiles rejected it with
       // "content-length exceeding request". geotiff passes a plain object,
       // so its ranges survived and COGs loaded — this only bit pmtiles.
-      const headers = new Headers(init?.headers ?? {})
+      // A Request (MapLibre's tile fetches) carries its own headers; start
+      // from them, or the init headers below would replace them.
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : {}))
       if (!headers.has('Authorization')) headers.set('Authorization', `Token ${token}`)
       init = { ...init, headers }
     }

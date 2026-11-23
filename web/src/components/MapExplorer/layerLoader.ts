@@ -7,9 +7,12 @@
 import maplibregl from 'maplibre-gl'
 import { PMTiles, type Protocol } from 'pmtiles'
 import { getCogMetadata } from '@geomatico/maplibre-cog-protocol'
+import { fromUrl } from 'geotiff'
 import type { LidarControl } from 'maplibre-gl-lidar'
 import { getPmtilesStyle, type LayerFormat } from '../../api/mapExplorer'
 import { getS3ProxyURL } from '../../api/s3'
+import { stretchRange } from '../../utils/rasterStretch'
+import { withGeometryFilter } from '../../utils/geometryFilters'
 import type { LegendItem } from './types'
 
 export interface LoadedLayerInfo {
@@ -60,6 +63,38 @@ export function cogStyleFrom(style: Record<string, unknown> | null): CogStyle {
   }
 }
 
+/**
+ * A colour ramp for a COG whose style has none, when the protocol's default
+ * ("photo") rendering can't draw it: one band of more than 8 bits, such as a
+ * Float32 DEM. That rendering divides by 2^bits (all black) and, without a
+ * NoData value, paints the tiles' area outside the raster opaque white. A
+ * `#color:` ramp fixes both: the colour renderer leaves NoData, NaN and the
+ * out-of-raster fill transparent. Black is low, as in the original-CRS GeoTIFF
+ * preview. The range is the 2–98% stretch (utils/rasterStretch) of the
+ * smallest overview.
+ * Returns '' when the default rendering is fine or the range can't be read.
+ */
+export async function defaultCogHash(url: string): Promise<string> {
+  const tiff = await fromUrl(url)
+  const first = await tiff.getImage(0)
+  const sampleFormat = first.getSampleFormat(0) ?? 1
+  if (first.getSamplesPerPixel() !== 1) return ''
+  if (first.getBitsPerSample(0) <= 8 && sampleFormat === 1) return ''
+
+  let smallest = first
+  const count = await tiff.getImageCount()
+  for (let i = 1; i < count; i++) {
+    const image = await tiff.getImage(i)
+    const isMask = (((await image.fileDirectory.loadValue('NewSubfileType')) as number | undefined) ?? 0) & 4
+    if (!isMask && image.getWidth() < smallest.getWidth()) smallest = image
+  }
+
+  const [band] = (await smallest.readRasters({ samples: [0] })) as unknown as ArrayLike<number>[]
+  const range = stretchRange(band, first.getGDALNoData())
+  if (!range) return ''
+  return `#color:BrewerGreys9,${range.min},${range.max},-c`
+}
+
 export async function addCogLayer(
   mapInstance: maplibregl.Map,
   layerId: string,
@@ -86,10 +121,15 @@ export async function addCogLayer(
 }
 
 export function isRenderedIdFor(renderedId: string, layerId: string): boolean {
-  return renderedId === `${layerId}-fill` || renderedId === `${layerId}-line` || renderedId.startsWith(`${layerId}-custom-`)
+  return (
+    renderedId === `${layerId}-fill` ||
+    renderedId === `${layerId}-line` ||
+    renderedId === `${layerId}-circle` ||
+    renderedId.startsWith(`${layerId}-custom-`)
+  )
 }
 
-/** Removes any rendered layer(s) previously added for this id (default fill/line, or a custom style's layers). */
+/** Removes any rendered layer(s) previously added for this id (default fill/line/circle, or a custom style's layers). */
 export function removeRenderedLayers(mapInstance: maplibregl.Map, layerId: string): void {
   const ids = (mapInstance.getStyle()?.layers ?? [])
     .map((l) => l.id)
@@ -99,7 +139,7 @@ export function removeRenderedLayers(mapInstance: maplibregl.Map, layerId: strin
   }
 }
 
-/** Renders a vector PMTiles source either with the default fill/line paint, or a saved custom style's own layers. */
+/** Renders a vector PMTiles source either with the default fill/line/circle paint, or a saved custom style's own layers. */
 export function applyPmtilesVectorStyle(
   mapInstance: maplibregl.Map,
   layerId: string,
@@ -116,7 +156,7 @@ export function applyPmtilesVectorStyle(
       .filter((layerDef) => layerDef.type !== 'background')
       .forEach((layerDef, i) => {
         mapInstance.addLayer({
-          ...layerDef,
+          ...withGeometryFilter(layerDef),
           id: `${layerId}-custom-${i}`,
           source: layerId,
           'source-layer': (layerDef['source-layer'] as string | undefined) || sourceLayerName,
@@ -125,19 +165,28 @@ export function applyPmtilesVectorStyle(
     return
   }
 
-  mapInstance.addLayer({
-    id: `${layerId}-fill`,
-    type: 'fill',
-    source: layerId,
-    'source-layer': sourceLayerName,
-    paint: { 'fill-color': color, 'fill-opacity': opacity / 100 },
-  })
-  mapInstance.addLayer({
-    id: `${layerId}-line`,
-    type: 'line',
-    source: layerId,
-    'source-layer': sourceLayerName,
-    paint: { 'line-color': color, 'line-width': 1 },
+  const defaults: Record<string, unknown>[] = [
+    { id: `${layerId}-fill`, type: 'fill', paint: { 'fill-color': color, 'fill-opacity': opacity / 100 } },
+    // Lines, and the polygons' outlines.
+    { id: `${layerId}-line`, type: 'line', paint: { 'line-color': color, 'line-width': 1 } },
+    {
+      id: `${layerId}-circle`,
+      type: 'circle',
+      paint: {
+        'circle-color': color,
+        'circle-opacity': opacity / 100,
+        'circle-radius': 4,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1,
+      },
+    },
+  ]
+  defaults.forEach((layerDef) => {
+    mapInstance.addLayer({
+      ...withGeometryFilter(layerDef),
+      source: layerId,
+      'source-layer': sourceLayerName,
+    } as maplibregl.LayerSpecification)
   })
 }
 
@@ -242,6 +291,7 @@ export async function loadLayerOntoMap(
   if (layer.format === 'cog') {
     // Drawn the way the layer's saved default style says (colour ramp, paint).
     const style = cogStyleFrom(await getPmtilesStyle(connectionId, layer.key))
+    if (!style.hash) style.hash = await defaultCogHash(url).catch(() => '')
     const bounds = await addCogLayer(mapInstance, layer.id, url, layer.opacity, style)
     return { bounds, isVector: false }
   }

@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from django.conf import settings
 from django.core.exceptions import ValidationError
 
 from apps.core.permissions import Permission, missing, refusal
@@ -114,10 +115,15 @@ class S3Client:
         self._access_key = access_key
         self._secret_key = secret_key
 
-        # Configure boto3 for S3-compatible storage
+        # Configure boto3 for S3-compatible storage. Tighter than botocore's
+        # own defaults (60s connect, 60s read, 'legacy' retries) - see
+        # S3_CONNECT_TIMEOUT/S3_READ_TIMEOUT/S3_MAX_ATTEMPTS.
         config = Config(
             signature_version="s3v4",
             s3={"addressing_style": "path" if path_style else "virtual"},
+            connect_timeout=settings.S3_CONNECT_TIMEOUT,
+            read_timeout=settings.S3_READ_TIMEOUT,
+            retries={"max_attempts": settings.S3_MAX_ATTEMPTS, "mode": "standard"},
         )
 
         # Handle endpoint URL

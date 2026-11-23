@@ -2,7 +2,8 @@
 
 A conversion runs in a thread of the web process that started it, so a
 restart stops it partway; its CngLiteJob keeps the step it had got to. This
-carries each such job on from that step, one after another.
+carries each such job on from that step, one after another, and then
+carries on each bulk upload (apps.s3.bulk) whose layers weren't all started.
 
 Run it only while nothing else is running conversions - the deployment
 entrypoint starts it in the background just before the web server, when
@@ -14,6 +15,7 @@ Usage:
 
 from django.core.management.base import BaseCommand
 
+from apps.s3.bulk import resume_batches
 from apps.s3.cng_lite import resume_interrupted_conversions
 
 
@@ -23,3 +25,5 @@ class Command(BaseCommand):
     def handle(self, *_args, **_options):
         count = resume_interrupted_conversions()
         self.stdout.write(f"Resumed {count} CloudNativeGIS conversion(s).")
+        batches = resume_batches()
+        self.stdout.write(f"Resumed {batches} bulk upload(s).")
