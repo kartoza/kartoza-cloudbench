@@ -45,6 +45,12 @@ class FakeS3:
     def get_object(self, key):
         return self.objects[key]
 
+    def get_object_stream(self, key, byte_range=None):
+        return io.BytesIO(self.objects[key])
+
+    def gdal_path(self, key):
+        return f"/vsis3/bucket/{key}", {"AWS_S3_ENDPOINT": "minio:9000"}
+
     def delete_object(self, key):
         self.objects.pop(key, None)
 

@@ -52,6 +52,8 @@ interface S3UploadDialogProgressProps {
   inLayerPickerMode: boolean
   isUploading: boolean
   uploadProgress: number
+  // Why the upload is held up (a chunk being retried), if it is.
+  uploadNotice?: string | null
   uploadResult: UploadResult | null
   // The conversion being followed, and (for a GeoPackage) every job its
   // confirm started, the earlier ones once finished.
@@ -71,6 +73,7 @@ export default function S3UploadDialogProgress({
   inLayerPickerMode,
   isUploading,
   uploadProgress,
+  uploadNotice,
   uploadResult,
   conversionJob,
   conversionJobError,
@@ -227,6 +230,9 @@ export default function S3UploadDialogProgress({
             hasStripe
             isAnimated
           />
+          {uploadNotice && (
+            <Text fontSize="xs" color="orange.600" mt={1}>{uploadNotice}</Text>
+          )}
         </Box>
       )}
 

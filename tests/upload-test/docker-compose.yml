@@ -1,7 +1,7 @@
 # CloudBench as GeoHosting runs it in production, with this branch's code, to
-# test uploads by hand.
+# test uploads by hand (see TEST_GUIDE_s3_upload_passthrough.md here).
 #
-#   cd deployment/upload-test
+#   cd tests/upload-test
 #   docker compose up -d --build     # then open http://localhost:8000 (admin / admin)
 #   docker compose logs -f cloudbench
 #   docker compose down -v           # stop, and drop the test data
@@ -17,7 +17,7 @@ services:
   cloudbench:
     build:
       context: ../..
-      dockerfile: deployment/upload-test/Dockerfile
+      dockerfile: tests/upload-test/Dockerfile
     image: cloudbench-upload-test:local
     environment:
       DJANGO_SETTINGS_MODULE: cloudbench.settings.production

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from apps.core.config import get_config
+from apps.core.permissions import Permission, missing, refusal
 
 from .utilities import RESOURCE_TYPE_LIST_REQUEST_MAP
 
@@ -174,32 +175,79 @@ class GeoNodeClient:
         )
 
     def test_connection(self) -> tuple[bool, str]:
-        """Test the connection.
+        """Test the connection, and that its user may do what CloudBench does.
 
         Probes ``/api/v2/resources`` — the endpoint the app actually reads —
         rather than the API root ``/api/v2/``. The root answers 401 whenever
         credentials are present but rejected there, even for a GeoNode that
         serves resources and accepts uploads fine, so testing it reported a
         working connection as broken. This also tells "can't reach GeoNode"
-        apart from "GeoNode rejected these credentials".
+        apart from "GeoNode rejected these credentials". Then
+        check_permissions: a user who may read but not upload would otherwise
+        pass, and fail once an upload is sent.
 
         Returns:
             Tuple of (success, message)
         """
+        success, message, _permissions = self.check_connection()
+        return success, message
+
+    def check_connection(self) -> tuple[bool, str, list[Permission]]:
+        """(success, message, the permissions checked): see test_connection."""
         try:
             response = self.client.get("/resources", params={"page_size": 1})
         except Exception as e:
-            return False, f"Could not reach GeoNode at {self.url}: {e}"
+            return False, f"Could not reach GeoNode at {self.url}: {e}", []
 
         if response.status_code in (401, 403):
             if self.username or self.api_key:
-                return False, "Reached GeoNode, but it rejected the credentials."
-            return False, "GeoNode requires authentication; add a username/password or API token."
+                return False, "Reached GeoNode, but it rejected the credentials.", []
+            return (
+                False,
+                "GeoNode requires authentication; add a username/password or API token.",
+                [],
+            )
         try:
             response.raise_for_status()
+            permissions = self.check_permissions()
         except httpx.HTTPStatusError as e:
-            return False, f"HTTP error: {e.response.status_code}"
-        return True, f"Connected to GeoNode at {self.url}"
+            return False, f"HTTP error: {e.response.status_code}", []
+        except httpx.HTTPError as e:
+            return False, f"Could not reach GeoNode at {self.url}: {e}", []
+        if missing(permissions):
+            return False, refusal("This user", missing(permissions)), permissions
+        return True, f"Connected to GeoNode at {self.url}", permissions
+
+    def check_permissions(self) -> list[Permission]:
+        """What this user may do, of what CloudBench needs; nothing is created.
+
+        GeoNode checks the user's permission (base.add_resourcebase for
+        uploads, or a read-only GeoNode) before it reads a request: an upload
+        it would refuse anyway (a 1-byte "zip", a document without its file)
+        answers 403 when the user may not upload, and an error about the
+        file when they may.
+        """
+        read = self.client.get("/resources", params={"page_size": 1})
+        datasets = self.client.post(
+            "/uploads/upload",
+            files={"base_file": ("cloudbench-permission-check.zip", b"\0", "application/zip")},
+        )
+        documents = self.client.post("/documents/", data={})
+        return [
+            Permission("read", "browsing resources", read.status_code not in (401, 403)),
+            Permission(
+                "upload datasets",
+                "uploading datasets",
+                datasets.status_code not in (401, 403),
+                str(datasets.status_code),
+            ),
+            Permission(
+                "upload documents",
+                "uploading documents",
+                documents.status_code not in (401, 403),
+                str(documents.status_code),
+            ),
+        ]
 
     def list_categories(self) -> list[dict[str, Any]]:
         """List resource categories.

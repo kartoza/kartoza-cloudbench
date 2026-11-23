@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.config import GeoNodeConnection, get_config
-from apps.upload.views import _assemble_file, _own_session
+from apps.upload.views import _assemble_file, _staged_session
 
 from .client import GeoNodeClient, apply_metadata_later, get_geonode_client
 from .remote_service import get_remote_service
@@ -79,6 +79,27 @@ def _extract_gpkg_layer(source: Path, layer: str, dest: Path) -> None:
         raise ValueError(result.stderr.strip() or f"Could not extract layer {layer!r}")
 
 
+def _refused(conn: GeoNodeConnection) -> Response | None:
+    """A 400 if `conn` can't connect, or its user may not do what CloudBench does.
+
+    A connection is only saved once it works: one that can't, or may not
+    upload, would just fail later, in every upload it's used for.
+    """
+    client = GeoNodeClient(
+        url=conn.url,
+        username=conn.username,
+        password=conn.password,
+        api_key=conn.api_key or None,
+    )
+    success, message, permissions = client.check_connection()
+    if success:
+        return None
+    return Response(
+        {"error": message, "permissions": [p.to_dict() for p in permissions]},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 class GeoNodeConnectionListView(APIView):
     """List and create GeoNode connections."""
 
@@ -110,6 +131,9 @@ class GeoNodeConnectionListView(APIView):
             api_key=_api_key(data),
         )
 
+        refused = _refused(conn)
+        if refused:
+            return refused
         config = get_config(request.user)
         config.add_geonode_connection(conn)
 
@@ -137,14 +161,15 @@ class GeoNodeConnectionTestView(APIView):
             api_key=_api_key(data) or None,
         )
 
-        success, message = client.test_connection()
-
-        if success:
-            return Response({"status": "success", "message": message})
-        return Response(
-            {"status": "error", "message": message},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        success, message, permissions = client.check_connection()
+        # As the dialog reads it (GeoNodeTestResult): success, and error when not.
+        body = {
+            "success": success,
+            "message": message,
+            **({} if success else {"error": message}),
+            "permissions": [p.to_dict() for p in permissions],
+        }
+        return Response(body, status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST)
 
 
 class GeoNodeConnectionDetailView(APIView):
@@ -182,6 +207,7 @@ class GeoNodeConnectionDetailView(APIView):
             )
 
         data = request.data
+        saved = (conn.url, conn.username, conn.password, conn.api_key)
         conn.name = data.get("name", conn.name)
         conn.url = data.get("url", conn.url)
         conn.username = data.get("username", conn.username)
@@ -189,6 +215,11 @@ class GeoNodeConnectionDetailView(APIView):
             conn.password = data["password"]
         if "apiKey" in data or "token" in data:
             conn.api_key = _api_key(data)
+        # Renaming needs no re-test.
+        if (conn.url, conn.username, conn.password, conn.api_key) != saved:
+            refused = _refused(conn)
+            if refused:
+                return refused
 
         config.update_geonode_connection(conn)
 
@@ -276,7 +307,7 @@ class GeoNodeUploadDetectLayersView(APIView):
     """
 
     def post(self, request):
-        session = _own_session(request, request.data.get("sessionId") or "")
+        session = _staged_session(request, request.data.get("sessionId") or "")
         if not session:
             return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
         if not session.is_complete():
@@ -307,7 +338,7 @@ class GeoNodeUploadCompleteView(APIView):
             return Response(
                 {"error": "connectionId is required"}, status=status.HTTP_400_BAD_REQUEST
             )
-        session = _own_session(request, request.data.get("sessionId") or "")
+        session = _staged_session(request, request.data.get("sessionId") or "")
         if not session:
             return Response({"error": "Upload session not found"}, status=status.HTTP_404_NOT_FOUND)
         if not session.filename.lower().endswith(".gpkg"):

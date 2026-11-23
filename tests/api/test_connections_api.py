@@ -5,11 +5,13 @@ Note: URL patterns in this project do NOT use trailing slashes.
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.core.permissions import Permission
 from apps.s3 import views
 from apps.s3.models import S3Connection
 
@@ -23,10 +25,73 @@ def api_client(authenticated_api_client: APIClient) -> APIClient:
     return authenticated_api_client
 
 
+def test_a_geoserver_user_without_rest_access_is_told_what_it_lacks() -> None:
+    """GeoServer's REST API is for administrators by default: the version check
+    answers 403 to anyone else, and the refusal names the permissions lacking."""
+    from apps.connections.views import test_geoserver_connection
+
+    lacking = [
+        Permission("read", "browsing workspaces, stores and layers", False, "403"),
+        Permission("write", "uploads", False, "403"),
+    ]
+    with (
+        patch.object(httpx.Client, "get", return_value=httpx.Response(403)),
+        patch("apps.connections.views.GeoServerClient.check_permissions", return_value=lacking),
+    ):
+        ok, message, info = test_geoserver_connection("http://gs.test/geoserver", "u", "p")
+    assert not ok
+    assert message.startswith("This user may not: read (needed for browsing")
+    assert [p["allowed"] for p in info["permissions"]] == [False, False]
+
+
 @pytest.mark.django_db
 @pytest.mark.api
 class TestGeoServerConnectionsAPI:
     """Tests for GeoServer connections endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def geoserver_lets_it_in(self):
+        """Saving tests the connection: here GeoServer accepts it."""
+        with patch(
+            "apps.connections.views.test_geoserver_connection",
+            return_value=(True, "Connection successful", {}),
+        ) as tested:
+            yield tested
+
+    def test_a_user_who_may_not_write_is_not_saved(
+        self, api_client: APIClient, geoserver_lets_it_in
+    ) -> None:
+        geoserver_lets_it_in.return_value = (
+            False,
+            "This user may not: write (needed for uploads, and changing workspaces, "
+            "stores, layers and styles).",
+            {"permissions": [{"name": "write", "allowed": False}]},
+        )
+        response = api_client.post(
+            "/api/connections",
+            {"name": "Reader", "url": "http://gs.test/geoserver", "username": "r", "password": "p"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"].startswith("This user may not: write")
+        assert response.json()["permissions"] == [{"name": "write", "allowed": False}]
+        assert api_client.get("/api/connections").json() == []
+
+    def test_editing_is_retested_only_when_the_login_changes(
+        self, api_client: APIClient, geoserver_lets_it_in
+    ) -> None:
+        conn_id = api_client.post(
+            "/api/connections",
+            {"name": "GS", "url": "http://gs.test/geoserver", "username": "u", "password": "p"},
+            format="json",
+        ).json()["id"]
+        geoserver_lets_it_in.reset_mock()
+        geoserver_lets_it_in.return_value = (False, "Authentication failed", {})
+        renamed = api_client.put(f"/api/connections/{conn_id}", {"name": "GS 2"}, format="json")
+        assert renamed.status_code == status.HTTP_200_OK
+        geoserver_lets_it_in.assert_not_called()
+        moved = api_client.put(f"/api/connections/{conn_id}", {"username": "x"}, format="json")
+        assert moved.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_list_connections_empty(self, api_client: APIClient) -> None:
         """Test listing connections when empty."""
@@ -275,7 +340,7 @@ class TestS3ConnectionsAPI:
         ).json()["id"]
 
         with patch("apps.s3.views.S3Client") as client_cls:
-            client_cls.return_value.test_connection.return_value = (True, "ok")
+            client_cls.return_value.check_connection.return_value = (True, "ok", [])
             response = api_client.post(
                 "/api/s3/connections/test",
                 {
@@ -307,9 +372,9 @@ class TestS3ConnectionsAPI:
             patch.object(views, "_unreachable_response", _REAL_UNREACHABLE),
             patch("apps.s3.views.S3Client") as client_cls,
         ):
-            client_cls.return_value.test_connection.return_value = (False, "403 Forbidden")
+            client_cls.return_value.check_connection.return_value = (False, "403 Forbidden", [])
             refused = api_client.post("/api/s3/connections", payload, format="json")
-            client_cls.return_value.test_connection.return_value = (True, "ok")
+            client_cls.return_value.check_connection.return_value = (True, "ok", [])
             added = api_client.post("/api/s3/connections", payload, format="json")
 
         assert refused.status_code == status.HTTP_400_BAD_REQUEST
@@ -335,7 +400,7 @@ class TestS3ConnectionsAPI:
             patch.object(views, "_unreachable_response", _REAL_UNREACHABLE),
             patch("apps.s3.views.S3Client") as client_cls,
         ):
-            client_cls.return_value.test_connection.return_value = (False, "no such bucket")
+            client_cls.return_value.check_connection.return_value = (False, "no such bucket", [])
             # Renaming (blank keys mean "keep the saved ones") needs no test.
             renamed = api_client.put(
                 f"/api/s3/connections/{conn_id}",
@@ -352,7 +417,7 @@ class TestS3ConnectionsAPI:
             assert moved.status_code == status.HTTP_400_BAD_REQUEST
             assert S3Connection.objects.get(id=conn_id).bucket == "b"
 
-            client_cls.return_value.test_connection.return_value = (True, "ok")
+            client_cls.return_value.check_connection.return_value = (True, "ok", [])
             moved = api_client.put(
                 f"/api/s3/connections/{conn_id}", {"bucket": "other"}, format="json"
             )
@@ -392,6 +457,33 @@ class TestS3ConnectionsAPI:
 @pytest.mark.api
 class TestGeoNodeConnectionsAPI:
     """Tests for GeoNode connections endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def geonode_lets_it_in(self):
+        """Saving tests the connection: here GeoNode accepts it."""
+        with patch(
+            "apps.geonode.views.GeoNodeClient.check_connection",
+            return_value=(True, "Connected to GeoNode", []),
+        ) as checked:
+            yield checked
+
+    def test_a_user_who_may_not_upload_is_not_saved(
+        self, api_client: APIClient, geonode_lets_it_in
+    ) -> None:
+        geonode_lets_it_in.return_value = (
+            False,
+            "This user may not: upload datasets (needed for uploading datasets).",
+            [Permission("upload datasets", "uploading datasets", False, "403")],
+        )
+        response = api_client.post(
+            "/api/geonode/connections",
+            {"name": "Reader", "url": "http://gn.test", "username": "r", "password": "p"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["error"].startswith("This user may not: upload datasets")
+        assert response.json()["permissions"][0]["allowed"] is False
+        assert api_client.get("/api/geonode/connections").json() == []
 
     def test_list_geonode_connections(self, api_client: APIClient) -> None:
         """Test listing GeoNode connections."""

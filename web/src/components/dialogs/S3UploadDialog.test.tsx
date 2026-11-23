@@ -16,6 +16,13 @@ const api = vi.hoisted(() => ({
   cancelGeoPackageInspection: vi.fn(),
 }))
 vi.mock('../../api', () => api)
+// Which uploads go straight to the bucket is the real canUploadToS3Directly's call.
+const direct = vi.hoisted(() => ({ uploadToS3Directly: vi.fn(), inspectGeoPackageDirectly: vi.fn() }))
+vi.mock('../../api/s3Multipart', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/s3Multipart')>()),
+  uploadToS3Directly: direct.uploadToS3Directly,
+  inspectGeoPackageDirectly: direct.inspectGeoPackageDirectly,
+}))
 
 import S3UploadDialog from './S3UploadDialog'
 import { useUIStore } from '../../stores/uiStore'
@@ -48,6 +55,9 @@ describe('S3UploadDialog', () => {
     api.getConversionToolStatus.mockResolvedValue({ cloudnativegis: { available: true } })
     api.checkPortolanTarget.mockResolvedValue({ exists: false })
     api.uploadToS3.mockResolvedValue({ success: true, message: 'Accepted', conversionJobId: 'job-1' })
+    direct.uploadToS3Directly
+      .mockReset()
+      .mockResolvedValue({ success: true, message: 'Accepted', conversionJobId: 'job-1' })
     api.getConversionJob.mockResolvedValue(completedJob)
   })
 
@@ -104,11 +114,42 @@ describe('S3UploadDialog', () => {
     await waitFor(() => expect(upload).toBeEnabled())
     await userEvent.click(upload)
 
-    await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-    const [, file, , convert, targetFormat] = api.uploadToS3.mock.calls[0]
+    // Straight into the bucket.
+    await waitFor(() => expect(direct.uploadToS3Directly).toHaveBeenCalled())
+    const [, file, fields] = direct.uploadToS3Directly.mock.calls[0]
     expect(file.name).toBe('autzen.laz')
-    expect(convert).toBe(true)
-    expect(targetFormat).toBe('copc')
+    expect(fields.targetFormat).toBe('copc')
+    expect(api.uploadToS3).not.toHaveBeenCalled()
+  })
+
+  it('inspects a GeoPackage in the bucket, then lists its layers', async () => {
+    direct.inspectGeoPackageDirectly.mockReset().mockResolvedValue({
+      jobId: 'job-9',
+      layers: [{ name: 'roads', geometryType: 'LineString', featureCount: 3 }],
+      rasterTables: [],
+      key: 'bali.pmtiles',
+    })
+    useUIStore.getState().openDialog('s3upload', { mode: 'create', data: { connectionId: 'conn-1' } })
+    render(
+      <ChakraProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          <S3UploadDialog />
+        </QueryClientProvider>
+      </ChakraProvider>
+    )
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, {
+      target: { files: [new File(['SQLite format 3\u0000'], 'bali.gpkg')] },
+    })
+    const upload = await screen.findByRole('button', { name: 'Upload' })
+    await waitFor(() => expect(upload).toBeEnabled())
+    await userEvent.click(upload)
+
+    await waitFor(() => expect(direct.inspectGeoPackageDirectly).toHaveBeenCalled())
+    const [connectionId, file] = direct.inspectGeoPackageDirectly.mock.calls[0]
+    expect([connectionId, file.name]).toEqual(['conn-1', 'bali.gpkg'])
+    expect(api.inspectGeoPackage).not.toHaveBeenCalled()
+    expect(await screen.findByText('roads')).toBeInTheDocument()
   })
 
   describe('on demand', () => {
@@ -159,11 +200,11 @@ describe('S3UploadDialog', () => {
       await userEvent.click(upload)
       // Warned first what becomes of the new server.
       expect(await screen.findByText('The server will be destroyed after this job')).toBeInTheDocument()
-      expect(api.uploadToS3).not.toHaveBeenCalled()
+      expect(direct.uploadToS3Directly).not.toHaveBeenCalled()
       await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      const [serverTypeId, autoDestroy, instanceServerId] = api.uploadToS3.mock.calls[0].slice(-3)
+      await waitFor(() => expect(direct.uploadToS3Directly).toHaveBeenCalled())
+      const { serverTypeId, autoDestroy, instanceServerId } = direct.uploadToS3Directly.mock.calls[0][2]
       expect(serverTypeId).toBe(8)
       // A new server, auto destroyed by default.
       expect(autoDestroy).toBe(true)
@@ -183,8 +224,8 @@ describe('S3UploadDialog', () => {
       )
       await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      expect(api.uploadToS3.mock.calls[0].at(-2)).toBe(false)
+      await waitFor(() => expect(direct.uploadToS3Directly).toHaveBeenCalled())
+      expect(direct.uploadToS3Directly.mock.calls[0][2].autoDestroy).toBe(false)
     })
 
     it('uploads nothing when the server warning is cancelled', async () => {
@@ -196,7 +237,7 @@ describe('S3UploadDialog', () => {
       await waitFor(() =>
         expect(screen.queryByText('The server will be destroyed after this job')).not.toBeInTheDocument()
       )
-      expect(api.uploadToS3).not.toHaveBeenCalled()
+      expect(direct.uploadToS3Directly).not.toHaveBeenCalled()
     })
 
     const kept = {
@@ -238,8 +279,12 @@ describe('S3UploadDialog', () => {
       await waitFor(() => expect(upload).toBeEnabled())
       await userEvent.click(upload)
 
-      await waitFor(() => expect(api.uploadToS3).toHaveBeenCalled())
-      expect(api.uploadToS3.mock.calls[0].slice(-3)).toEqual([undefined, undefined, kept.instanceId])
+      await waitFor(() => expect(direct.uploadToS3Directly).toHaveBeenCalled())
+      expect(direct.uploadToS3Directly.mock.calls[0][2]).toMatchObject({
+        serverTypeId: undefined,
+        autoDestroy: undefined,
+        instanceServerId: kept.instanceId,
+      })
     })
   })
 })

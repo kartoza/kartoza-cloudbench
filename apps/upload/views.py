@@ -29,6 +29,7 @@ from rest_framework.views import APIView
 
 from apps.core.config import get_cache_dir
 from apps.core.exceptions import GeoServerError, UploadError
+from apps.core.permissions import refusal
 from apps.geonode.client import ZIP_FILE, apply_metadata_later, get_geonode_client
 from apps.geoserver.client import get_geoserver_client, upload_store_type
 
@@ -60,6 +61,20 @@ def _get_session(session_id: str) -> UploadSession | None:
         return UploadSession.objects.filter(session_id=session_id).first()
     except (ValueError, ValidationError):
         return None
+
+
+def _staged_session(request, session_id: str) -> UploadSession | None:
+    """The user's session `session_id` if it stages its chunks on disk.
+
+    Relayed and S3 multipart uploads keep nothing here: the staged-upload
+    endpoints must not write their chunks, assemble or delete them.
+    """
+    session = _own_session(request, session_id)
+    if not session or not session.upload_dir:
+        return None
+    if Path(session.upload_dir).parent != get_cache_dir() / "uploads":
+        return None
+    return session
 
 
 def _assemble_file(session: UploadSession) -> Path:
@@ -187,7 +202,7 @@ class UploadChunkView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -228,9 +243,9 @@ class UploadChunkView(APIView):
 class UploadProgressView(APIView):
     """Get upload progress for a session."""
 
-    def get(self, _request, session_id):
+    def get(self, request, session_id):
         """Get upload progress."""
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -255,9 +270,9 @@ class UploadProgressView(APIView):
 class UploadCancelView(APIView):
     """Cancel an upload session."""
 
-    def delete(self, _request, session_id):
+    def delete(self, request, session_id):
         """Cancel and clean up an upload session."""
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},
@@ -322,6 +337,10 @@ def _geoserver_sender(request, data: dict, filename: str, size: int, response_ti
     client = get_geoserver_client(data.get("connectionId", ""), request.user)
     # Known before any data is sent: GeoServer only answers once it's all in.
     client.get_workspace(workspace)
+    # The user's permissions may have changed since the connection was saved.
+    lacking = [p for p in client.check_permissions(workspace) if not p.allowed]
+    if lacking:
+        raise UploadNotAllowed(refusal("This GeoServer user", lacking))
     # A file for a store of another type would still be taken, replacing the
     # store's files but not its type: its layers break.
     existing = client.existing_store_type(workspace, store_name)
@@ -350,6 +369,11 @@ def _geonode_sender(request, data: dict, filename: str, size: int, response_time
     if upload_type not in ("dataset", "document"):
         raise UploadError("uploadType must be dataset or document")
     client = get_geonode_client(data.get("connectionId", ""), request.user)
+    # The user's permissions may have changed since the connection was saved.
+    needed = f"upload {upload_type}s"
+    lacking = [p for p in client.check_permissions() if p.name == needed and not p.allowed]
+    if lacking:
+        raise UploadNotAllowed(refusal("This GeoNode user", lacking))
     # GeoNode only judges the size once it has the whole file: check first.
     limits = [
         client.get_upload_size_limit(f"{upload_type}_upload_size"),
@@ -401,6 +425,10 @@ def _megabytes(size: int) -> str:
 
 class UploadTooLarge(UploadError):
     """The target won't take a file this big."""
+
+
+class UploadNotAllowed(UploadError):
+    """The connection's user may not upload there (see apps.core.permissions)."""
 
 
 class RelayUploadView(APIView):
@@ -469,6 +497,8 @@ class RelayUploadView(APIView):
                 send = _geonode_sender(request, data, filename, file_size, response_timeout)
         except UploadTooLarge as e:
             return Response({"error": str(e)}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        except UploadNotAllowed as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
         except UploadError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as e:  # unknown connection

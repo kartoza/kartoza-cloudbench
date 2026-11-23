@@ -1,0 +1,56 @@
+# S3 uploads, on top of docker-compose.yml: a MinIO bucket and CloudNativeGIS,
+# both from images already pulled (nothing is downloaded). See
+# TEST_GUIDE_s3_upload_passthrough.md.
+#
+#   cd tests/upload-test
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.s3.yml down -v
+#
+# In CloudBench, add the S3 connection: endpoint minio:9000, bucket cloudbench,
+# access key cloudbench, secret key cloudbench-test, SSL off, path style on.
+# MinIO's console: http://localhost:9001 (same user and password).
+
+services:
+  cloudbench:
+    environment:
+      # Conversions run on the CloudNativeGIS below (not on demand).
+      CLOUDNATIVEGIS_URL: http://cng:8000
+      CLOUDNATIVEGIS_ON_DEMAND: "false"
+    depends_on:
+      - minio-bucket
+      - cng
+
+  minio:
+    image: ghcr.io/kartoza/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: cloudbench
+      MINIO_ROOT_PASSWORD: cloudbench-test
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:9001:9001"
+
+  # Creates the bucket once MinIO answers, then exits.
+  minio-bucket:
+    image: ghcr.io/kartoza/minio:RELEASE.2025-10-15T17-29-55Z
+    depends_on:
+      - minio
+    entrypoint: >
+      sh -c "until mc alias set local http://minio:9000 cloudbench cloudbench-test >/dev/null 2>&1;
+             do sleep 1; done; mc mb --ignore-existing local/cloudbench"
+    restart: "no"
+
+  cng:
+    image: ghcr.io/kartoza/cloudnativegis-processing:0.0.5
+    environment:
+      # It reads and writes through the presigned URLs CloudBench hands it
+      # (http://minio:9000/...), reachable on this network.
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: cloudbench
+      S3_SECRET_ACCESS_KEY: cloudbench-test
+      S3_ADDRESSING_STYLE: path
+      LITE_API_TOKEN: ""
+
+volumes:
+  minio-data:
