@@ -158,6 +158,8 @@ export default function PGUploadDialog() {
   const isOpen = activeDialog === 'pgupload'
   const isRaster = selectedFile ? isRasterFile(selectedFile.name) : false
   const isUploading = phase === 'chunking' || phase === 'finalizing'
+  // The layer list and the advanced options can only change before the import starts.
+  const optionsLocked = phase !== 'ready'
   const overallPct = chunksTotal > 0 ? Math.round((chunksUploaded / chunksTotal) * 100) : 0
   const selectedLayerCount = selectedLayers.filter((l) => l.selected).length
 
@@ -591,12 +593,12 @@ export default function PGUploadDialog() {
                     <HStack spacing={2}>
                       <Button size="xs" variant="outline" colorScheme="purple"
                         onClick={() => setSelectedLayers((p) => p.map((l) => ({ ...l, selected: true })))}
-                        isDisabled={selectedLayers.every((l) => l.selected)}>
+                        isDisabled={optionsLocked || selectedLayers.every((l) => l.selected)}>
                         Select All
                       </Button>
                       <Button size="xs" variant="outline"
                         onClick={() => setSelectedLayers((p) => p.map((l) => ({ ...l, selected: false })))}
-                        isDisabled={selectedLayers.every((l) => !l.selected)}>
+                        isDisabled={optionsLocked || selectedLayers.every((l) => !l.selected)}>
                         Deselect All
                       </Button>
                       <Badge colorScheme="purple">{selectedLayerCount} selected</Badge>
@@ -607,12 +609,18 @@ export default function PGUploadDialog() {
                       <Box key={layer.name} p={2} bg={dropzoneBg} borderRadius="md" border="1px solid"
                         borderColor={layer.selected ? 'purple.200' : 'gray.200'}>
                         <HStack spacing={3}>
-                          <Checkbox isChecked={layer.selected} onChange={() => toggleLayerSelection(layer.name)} colorScheme="purple" />
-                          <VStack align="stretch" flex="1" spacing={1}>
-                            <Text fontSize="sm" fontWeight="500">{layer.name}</Text>
-                            <Input size="xs" value={layer.tableName}
+                          <Checkbox isChecked={layer.selected} onChange={() => toggleLayerSelection(layer.name)}
+                            colorScheme="purple" isDisabled={optionsLocked} aria-label={`Import ${layer.name}`} />
+                          {/* The table name starts as the layer's name, so the layer is named once:
+                              its source name only shows when the table is renamed. */}
+                          <VStack align="stretch" flex="1" spacing={0}>
+                            <Input size="sm" value={layer.tableName}
                               onChange={(e) => updateLayerTableName(layer.name, e.target.value)}
-                              placeholder="Table name" isDisabled={!layer.selected} />
+                              placeholder="Table name" aria-label={`Table name for ${layer.name}`}
+                              title="Table name in PostgreSQL" isDisabled={optionsLocked || !layer.selected} />
+                            {layer.tableName !== layer.name && (
+                              <Text fontSize="xs" color="gray.500" mt={1}>from layer {layer.name}</Text>
+                            )}
                           </VStack>
                         </HStack>
                       </Box>
@@ -631,28 +639,29 @@ export default function PGUploadDialog() {
                     leftIcon={showAdvanced ? <FiChevronUp /> : <FiChevronDown />}
                     rightIcon={<FiSettings />}
                     onClick={() => setShowAdvanced(!showAdvanced)}
+                    isDisabled={optionsLocked}
                     w="100%" justifyContent="space-between">
                     Advanced Options
                   </Button>
                   <Collapse in={showAdvanced}>
                     <VStack spacing={4} mt={3} align="stretch" p={3} bg={dropzoneBg} borderRadius="md">
                       {isRaster && (
-                        <FormControl isRequired>
+                        <FormControl isRequired isDisabled={optionsLocked}>
                           <FormLabel fontSize="sm">Table Name</FormLabel>
                           <Input size="sm" value={rasterTableName} onChange={(e) => setRasterTableName(e.target.value)} placeholder="e.g. my_raster" />
                         </FormControl>
                       )}
-                      <FormControl>
+                      <FormControl isDisabled={optionsLocked}>
                         <FormLabel fontSize="sm">Target Schema</FormLabel>
                         <Input size="sm" value={targetSchema} onChange={(e) => setTargetSchema(e.target.value)} placeholder="public" />
                       </FormControl>
-                      <FormControl>
+                      <FormControl isDisabled={optionsLocked}>
                         <FormLabel fontSize="sm">Target SRID (leave empty to keep source)</FormLabel>
                         <Input size="sm" type="number" value={targetSRID || ''}
                           onChange={(e) => setTargetSRID(e.target.value ? parseInt(e.target.value) : undefined)}
                           placeholder="e.g. 4326" />
                       </FormControl>
-                      <FormControl display="flex" alignItems="center">
+                      <FormControl display="flex" alignItems="center" isDisabled={optionsLocked}>
                         <FormLabel fontSize="sm" mb="0">Overwrite existing tables</FormLabel>
                         <Switch colorScheme="purple" isChecked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                       </FormControl>

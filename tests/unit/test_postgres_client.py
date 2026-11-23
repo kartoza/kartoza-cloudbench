@@ -122,6 +122,18 @@ class TestPGServiceClient:
         assert fake_pg.queries[-1][0] == "UPDATE t SET a=1"
         assert result == {"columns": [], "rows": [], "rowCount": 0}
 
+    def test_execute_query_limits_despite_a_column_named_limit(self, pg, fake_pg):
+        pg.execute_query("SELECT speed_limit FROM roads", limit=5)
+        assert fake_pg.queries[-1][0] == "SELECT speed_limit FROM roads\nLIMIT 5"
+
+    def test_execute_query_keeps_a_trailing_limit_and_offset(self, pg, fake_pg):
+        pg.execute_query("SELECT a FROM t\nLIMIT 100 OFFSET 200;", limit=5)
+        assert fake_pg.queries[-1][0] == "SELECT a FROM t\nLIMIT 100 OFFSET 200"
+
+    def test_execute_query_limits_a_cte(self, pg, fake_pg):
+        pg.execute_query("WITH x AS (SELECT 1 LIMIT 1) SELECT * FROM x", limit=5)
+        assert fake_pg.queries[-1][0].endswith("\nLIMIT 5")
+
     @pytest.mark.parametrize(
         ("size", "expected"),
         [(10, "10.0 B"), (2048, "2.0 kB"), (5 * 1024**2, "5.0 MB"), (1024**6, "1024 PB")],

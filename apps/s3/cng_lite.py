@@ -39,6 +39,7 @@ from .models import (
     CngLiteJobStatus,
     JobCancelled,
     S3Connection,
+    readable_layer_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -916,7 +917,9 @@ class CNGProcessingClient:
             progress=100,
             output_size=output_size,
             output_keys=output_keys,
-            error="; ".join(f"{e['name']}: {e['error']}" for e in layer_errors),
+            error="; ".join(
+                f"{e['name']}: {readable_layer_error(e['error'])}" for e in layer_errors
+            ),
             message=message,
         )
 

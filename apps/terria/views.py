@@ -6,6 +6,7 @@ Provides endpoints for:
 - Terria catalog JSON generation
 """
 
+import contextlib
 from typing import Any
 
 import httpx
@@ -23,6 +24,7 @@ def generate_terria_item(
     layer: dict[str, Any],
     geoserver_url: str,
     workspace: str,
+    lat_lon_bbox: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a Terria catalog item for a layer.
 
@@ -30,6 +32,8 @@ def generate_terria_item(
         layer: Layer information from GeoServer
         geoserver_url: Base GeoServer URL
         workspace: Workspace name
+        lat_lon_bbox: The layer's WGS84 bbox (GeoServer's latLonBoundingBox),
+            as the item's `rectangle`, which the 3D globe flies to
 
     Returns:
         Terria catalog item dictionary
@@ -40,7 +44,7 @@ def generate_terria_item(
     # Build WMS URL
     wms_url = f"{geoserver_url}/{workspace}/wms"
 
-    return {
+    item = {
         "type": "wms",
         "name": layer_title,
         "id": f"{workspace}:{layer_name}",
@@ -55,6 +59,14 @@ def generate_terria_item(
             {"name": "Layer", "content": layer_name},
         ],
     }
+    with contextlib.suppress(TypeError, KeyError, ValueError):
+        item["rectangle"] = {
+            "west": float(lat_lon_bbox["minx"]),
+            "south": float(lat_lon_bbox["miny"]),
+            "east": float(lat_lon_bbox["maxx"]),
+            "north": float(lat_lon_bbox["maxy"]),
+        }
+    return item
 
 
 def generate_terria_group(
@@ -196,7 +208,11 @@ class TerriaLayerCatalogView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            item = generate_terria_item(layer_info, conn.url, workspace)
+            try:
+                lat_lon_bbox = client.get_layer_metadata(workspace, layer).get("latLonBbox")
+            except Exception:
+                lat_lon_bbox = None  # No zooming to it, but the layer still shows.
+            item = generate_terria_item(layer_info, conn.url, workspace, lat_lon_bbox)
 
             return Response(item)
         except ValueError as e:
