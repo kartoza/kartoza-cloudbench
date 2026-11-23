@@ -36,10 +36,22 @@ import {
 import { TbWorld } from 'react-icons/tb'
 import type { TreeNode } from '../../types'
 import * as api from '../../api'
+import type { GeoNodeDownloadFormat } from '../../api/client'
 import { useUIStore } from '../../stores/uiStore'
 import { Panel } from "../Panel";
 import { PanelHeader } from "../Panel/PanelHeader";
 import { PanelBody } from "../Panel/PanelBody";
+
+const VECTOR_DOWNLOADS: { format: GeoNodeDownloadFormat; label: string }[] = [
+  { format: 'gpkg', label: 'GeoPackage (.gpkg)' },
+  { format: 'shp', label: 'Shapefile (.zip)' },
+  { format: 'json', label: 'GeoJSON (.json)' },
+  { format: 'csv', label: 'CSV (.csv)' },
+  { format: 'xlsx', label: 'Excel (.xlsx)' },
+]
+const RASTER_DOWNLOADS: { format: GeoNodeDownloadFormat; label: string }[] = [
+  { format: 'tif', label: 'GeoTIFF (.tif)' },
+]
 
 interface GeoNodeResourcePanelProps {
   node: TreeNode
@@ -74,6 +86,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
       title: node.name,
       connectionId: node.geonodeConnectionId,
       detailUrl: node.geonodeDetailUrl,
+      bounds: node.geonodeBounds,
     })
   }
 
@@ -113,7 +126,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
 
   const typeBadge = getResourceTypeBadge()
 
-  const handleDownload = async (format: 'gpkg' | 'shp' | 'csv' | 'json' | 'xlsx') => {
+  const handleDownload = async (format: GeoNodeDownloadFormat) => {
     if (!node.geonodeConnectionId || !node.geonodeResourcePk || !node.geonodeAlternate) {
       toast({
         title: 'Missing information',
@@ -253,6 +266,7 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
               colorScheme="teal"
               variant="outline"
               _hover={{ textDecor: 'none', bg: 'teal.50' }}
+              gridColumn="1 / -1"
             >
               Open in GeoNode
             </Button>
@@ -282,36 +296,16 @@ export function GeoNodeResourcePanel({ node }: GeoNodeResourcePanelProps) {
                 Download
               </MenuButton>
               <MenuList>
-                <MenuItem onClick={() => handleDownload('gpkg')}>
-                  <HStack spacing={2}>
-                    <Icon as={FiFile}/>
-                    <Text>GeoPackage (.gpkg)</Text>
-                  </HStack>
-                </MenuItem>
-                <MenuItem onClick={() => handleDownload('shp')}>
-                  <HStack spacing={2}>
-                    <Icon as={FiFile}/>
-                    <Text>Shapefile (.shp)</Text>
-                  </HStack>
-                </MenuItem>
-                <MenuItem onClick={() => handleDownload('json')}>
-                  <HStack spacing={2}>
-                    <Icon as={FiFile}/>
-                    <Text>GeoJSON (.json)</Text>
-                  </HStack>
-                </MenuItem>
-                <MenuItem onClick={() => handleDownload('csv')}>
-                  <HStack spacing={2}>
-                    <Icon as={FiFile}/>
-                    <Text>CSV (.csv)</Text>
-                  </HStack>
-                </MenuItem>
-                <MenuItem onClick={() => handleDownload('xlsx')}>
-                  <HStack spacing={2}>
-                    <Icon as={FiFile}/>
-                    <Text>Excel (.xlsx)</Text>
-                  </HStack>
-                </MenuItem>
+                {(node.geonodeSubtype === 'raster' ? RASTER_DOWNLOADS : VECTOR_DOWNLOADS).map(
+                  ({ format, label }) => (
+                    <MenuItem key={format} onClick={() => handleDownload(format)}>
+                      <HStack spacing={2}>
+                        <Icon as={FiFile}/>
+                        <Text>{label}</Text>
+                      </HStack>
+                    </MenuItem>
+                  ),
+                )}
               </MenuList>
             </Menu>
           )}

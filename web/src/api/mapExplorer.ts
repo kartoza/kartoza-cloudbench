@@ -9,6 +9,7 @@
 import { PMTiles } from 'pmtiles'
 import { API_BASE, handleResponse } from './common'
 import { getS3Connections, getS3ProxyURL, uploadToS3 } from './s3'
+import { POINTS_ONLY, POLYGONS_ONLY } from '../utils/geometryFilters'
 
 // What Map Explorer renders: vector/raster PMTiles, an EPSG:3857 COG, or a
 // COPC point cloud (drawn by maplibre-gl-lidar).
@@ -308,6 +309,7 @@ export async function openStyleEditor(
           type: 'fill',
           source: 'source',
           'source-layer': sourceLayer,
+          filter: POLYGONS_ONLY,
           paint: { 'fill-color': '#54A2CC', 'fill-opacity': 0.5 },
         },
         {
@@ -316,6 +318,14 @@ export async function openStyleEditor(
           source: 'source',
           'source-layer': sourceLayer,
           paint: { 'line-color': '#54A2CC', 'line-width': 1 },
+        },
+        {
+          id: 'circle',
+          type: 'circle',
+          source: 'source',
+          'source-layer': sourceLayer,
+          filter: POINTS_ONLY,
+          paint: { 'circle-color': '#54A2CC', 'circle-radius': 4 },
         },
       ],
     }
