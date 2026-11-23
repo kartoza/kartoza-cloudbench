@@ -23,6 +23,7 @@ import { TbWorld } from 'react-icons/tb'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useUIStore, type MapViewState } from '../stores/uiStore'
+import { applyBasemap } from '../config/basemap'
 import { wmsProblem, type WmsProblem } from '../utils/wmsProblem'
 import { previewBounds } from '../utils/previewBounds'
 
@@ -115,33 +116,12 @@ export default function GeoNodeMapPreview({
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'osm': {
-            type: 'raster',
-            tiles: [
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-            ],
-            tileSize: 256,
-            attribution: '&copy; OpenStreetMap contributors',
-          },
-        },
-        layers: [
-          {
-            id: 'osm-tiles',
-            type: 'raster',
-            source: 'osm',
-            minzoom: 0,
-            maxzoom: 19,
-          },
-        ],
-      },
       center: initialCenter as [number, number],
       zoom: initialZoom,
       pitch: initialPitch,
       bearing: initialBearing,
     })
+    applyBasemap(map.current)
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.current.addControl(new maplibregl.ScaleControl(), 'bottom-left')
