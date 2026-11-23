@@ -11,6 +11,7 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.core.permissions import Permission
 from apps.s3 import multipart
 from apps.s3.models import CngLiteJob, S3Connection
 from apps.upload.models import UploadSession
@@ -93,6 +94,17 @@ class FakeS3Client:
 
     def __init__(self):
         self.client = FakeBoto()
+        self.refused: set[str] = set()  # the permissions its key lacks
+
+    def check_permissions(self):
+        names = {
+            "list": "browsing the bucket",
+            "read": "previews, downloads and conversions",
+            "write": "uploads and conversions",
+            "abort uploads": "cancelling an upload",
+            "delete": "deleting files and replacing layers",
+        }
+        return [Permission(n, why, n not in self.refused) for n, why in names.items()]
 
     def list_objects(self, prefix="", delimiter="", max_keys=1000, **_kwargs):
         keys = [k for k in self.client.objects if k.startswith(prefix)]
@@ -677,3 +689,45 @@ def test_gdals_reason_names_the_file_not_its_place_in_the_bucket():
     assert multipart.gdal_reason(ValueError("no errors"), "Could not read x", "x") == (
         "Could not read x: GDAL couldn't open it."
     )
+
+
+# === The key's permissions, checked again as an upload starts ===
+
+
+@pytest.mark.django_db
+def test_a_key_that_may_not_write_is_refused_before_anything_is_sent(api, bucket):
+    bucket.refused = {"write", "delete"}
+    started = api.start(filename="a.bin", fileSize=10)
+    assert started.status_code == 403
+    assert started.json()["error"] == (
+        "This connection's key may not: write (needed for uploads and conversions)."
+    )
+    assert bucket.client.uploads == {} and not UploadSession.objects.exists()
+
+
+@pytest.mark.django_db
+def test_a_plain_upload_needs_no_delete_but_a_conversion_does(api, bucket, settings):
+    settings.CLOUDNATIVEGIS_URL = "http://cng"
+    bucket.refused = {"delete"}
+    assert api.start(filename="a.bin", fileSize=10).status_code == 201
+    refused = api.start(filename="dem.tif", fileSize=10, convert="true", targetFormat="cog")
+    assert refused.status_code == 403
+    assert refused.json()["error"] == (
+        "This connection's key may not: delete (needed for deleting files and replacing layers)."
+    )
+
+
+@pytest.mark.django_db
+def test_a_refusal_mid_upload_says_so(api, bucket):
+    """The key's policy changed after the upload started: 403, not "try again"."""
+    from botocore.exceptions import ClientError
+
+    sid = api.start(filename="a.bin", fileSize=10).json()["sessionId"]
+
+    def refuse(**_kwargs):
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "Denied"}}, "UploadPart")
+
+    bucket.client.upload_part = refuse
+    sent = api.put(sid, 0, b"0123456789")
+    assert sent.status_code == 403
+    assert sent.json()["error"].startswith("The bucket refused this connection's key")

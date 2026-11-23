@@ -41,7 +41,37 @@ class TestPGServiceClient:
 
     def test_test_connection(self, pg, fake_pg):
         fake_pg.add("select version()", [("PostgreSQL 16",)])
+        fake_pg.add("from pg_extension", [(True, False, False, ["public"])])
         assert pg.test_connection() == (True, "Connected: PostgreSQL 16")
+
+    def test_permissions_are_read_from_the_catalogue(self, pg, fake_pg):
+        fake_pg.add("from pg_extension", [(True, False, False, ["public", "staging"])])
+        permissions = {p.name: p for p in pg.check_permissions()}
+        assert permissions["PostGIS"].allowed
+        assert permissions["create tables"].allowed
+        assert permissions["create tables"].detail == "in public, staging"
+        # Reported, not required: many hosted databases can't import rasters.
+        raster = permissions["import rasters"]
+        assert not raster.allowed and not raster.required
+
+    def test_a_user_who_cant_create_tables_is_refused(self, pg, fake_pg):
+        fake_pg.add("select version()", [("PostgreSQL 16",)])
+        fake_pg.add("from pg_extension", [(False, False, False, [])])
+        ok, message, _ = pg.check_connection()
+        assert not ok
+        assert message == (
+            "This user may not: PostGIS (needed for spatial imports (the database has no "
+            "postgis extension)); create tables (needed for imports)."
+        )
+
+    def test_a_superuser_may_import_rasters(self, pg, fake_pg):
+        fake_pg.add("from pg_extension", [(True, False, True, ["public"])])
+        assert {p.name: p.allowed for p in pg.check_permissions()}["import rasters"]
+
+    def test_an_imports_schema_is_checked_by_name(self, pg, fake_pg):
+        fake_pg.add("from pg_extension", [(True, True, False, ["public"])])
+        create = pg.check_permissions("staging")[1]
+        assert (create.name, create.allowed) == ("create tables in staging", False)
 
     def test_test_connection_failure(self, pg, fake_pg):
         fake_pg.add("select version()", RuntimeError("refused"))

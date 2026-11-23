@@ -25,7 +25,7 @@
  * - GeoNode API
  */
 
-import { API_BASE, handleResponse, setAuthHeader } from './common'
+import { API_BASE, handleResponse, setAuthHeader, testResponse } from './common'
 import type {
   ConversionJob,
   ConversionToolStatus,
@@ -1025,7 +1025,7 @@ export async function testGeoNodeConnection(id: string): Promise<GeoNodeTestResu
   const response = await fetch(`${API_BASE}/geonode/connections/${id}/test`, {
     method: 'POST',
   })
-  return handleResponse<GeoNodeTestResult>(response)
+  return testResponse<GeoNodeTestResult>(response)
 }
 
 export async function testGeoNodeConnectionDirect(conn: GeoNodeConnectionCreate): Promise<GeoNodeTestResult> {
@@ -1034,7 +1034,7 @@ export async function testGeoNodeConnectionDirect(conn: GeoNodeConnectionCreate)
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(conn),
   })
-  return handleResponse<GeoNodeTestResult>(response)
+  return testResponse<GeoNodeTestResult>(response)
 }
 
 export async function getGeoNodeResources(

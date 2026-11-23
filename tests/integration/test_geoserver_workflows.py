@@ -75,6 +75,15 @@ def setup_test_connection(api_client: APIClient):
 class TestGeoServerConnectionWorkflow:
     """Test GeoServer connection management workflows."""
 
+    @pytest.fixture(autouse=True)
+    def geoserver_lets_it_in(self):
+        """Saving tests the connection: here GeoServer accepts it."""
+        with patch(
+            "apps.connections.views.test_geoserver_connection",
+            return_value=(True, "Connection successful", {}),
+        ):
+            yield
+
     def test_full_connection_lifecycle(self, api_client: APIClient) -> None:
         """Test complete connection lifecycle: create, use, delete."""
         # Create connection

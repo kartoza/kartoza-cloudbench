@@ -37,6 +37,19 @@ export function setAuthHeader(xhr: XMLHttpRequest): void {
   if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
 }
 
+/**
+ * A connection test's answer. A test that fails (400) still says why, and
+ * which permissions the credentials lack: read it rather than throw.
+ */
+export async function testResponse<T>(response: Response): Promise<T> {
+  if (response.status === 400) {
+    // A test's answer has a message; a request it refused (a field missing) only an error.
+    const body = await response.clone().json().catch(() => null)
+    if (body && typeof body === 'object' && 'message' in body) return body as T
+  }
+  return handleResponse<T>(response)
+}
+
 export async function handleResponse<T>(response: Response): Promise<T> {
   // Only a stale token is worth reloading for: dropping it lands on the login
   // screen. With no token there is nothing to drop, and reloading would just
