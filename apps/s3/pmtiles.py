@@ -3,6 +3,7 @@
 A shapefile, a GeoPackage, or a single GeoJSON, FlatGeobuf or KML/KMZ file.
 """
 
+import contextlib
 import shutil
 import threading
 import zipfile
@@ -74,40 +75,95 @@ def output_key(key):
     return f"{key}.pmtiles"
 
 
+# A shapefile's component files: the ones kept, and the ones it needs.
+SHAPEFILE_SUFFIXES = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx"}
+SHAPEFILE_REQUIRED = {".shp", ".shx", ".dbf"}
+
+
+def shapefile_components(names):
+    """{suffix: name} of the one shapefile `names` (the .shp first) make up.
+
+    Raises ValueError unless they're matching components of one shapefile,
+    with at least its .shp, .shx and .dbf.
+    """
+    stem = PurePosixPath(names[0]).stem.lower()
+    components = {}
+    for name in names:
+        path = PurePosixPath(name)
+        suffix = path.suffix.lower()
+        if path.stem.lower() != stem or suffix not in SHAPEFILE_SUFFIXES:
+            raise ValueError("Select only the matching components of one shapefile.")
+        if suffix in components:
+            raise ValueError("Duplicate shapefile components were selected.")
+        components[suffix] = name
+    if not SHAPEFILE_REQUIRED.issubset(components):
+        raise ValueError(
+            "Select the matching .shp, .shx and .dbf files together. "
+            "Cloudbench will ZIP them automatically."
+        )
+    return components
+
+
+def zip_sidecars(source):
+    """{suffix: ZipInfo} of the one shapefile in ZipFile `source`; raises ValueError."""
+    files = [entry for entry in source.infolist() if not entry.is_dir()]
+    shapes = [entry for entry in files if entry.filename.lower().endswith(".shp")]
+    if len(shapes) != 1:
+        raise ValueError("The ZIP must contain exactly one shapefile.")
+    stem = str(PurePosixPath(shapes[0].filename).with_suffix("")).lower()
+    sidecars = {}
+    for entry in files:
+        path = PurePosixPath(entry.filename)
+        if str(path.with_suffix("")).lower() != stem:
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in SHAPEFILE_SUFFIXES:
+            continue
+        if suffix in sidecars:
+            raise ValueError("The ZIP contains duplicate shapefile components.")
+        sidecars[suffix] = entry
+    if not SHAPEFILE_REQUIRED.issubset(sidecars):
+        raise ValueError("The ZIP must include matching .shp, .shx and .dbf files.")
+    if sum(entry.file_size for entry in sidecars.values()) > settings.UPLOAD_MAX_FILE_SIZE:
+        raise ValueError("The uncompressed shapefile exceeds the upload size limit.")
+    return sidecars
+
+
+def write_shapefile_zip(destination, identifier, components):
+    """Write a ZIP of `components` ({suffix: () -> readable file}) named `identifier`.
+
+    `destination` is a path or a writable file, which needn't be seekable.
+    """
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        for suffix, open_component in components.items():
+            with (
+                open_component() as incoming,
+                archive.open(f"{identifier}{suffix}", "w", force_zip64=True) as outgoing,
+            ):
+                shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
+
+
 def prepare_shapefile(uploaded_file, destination, identifier, companion_files=()):
     """Validate and flatten one shapefile, using unique names upstream."""
     if uploaded_file.name.lower().endswith(".shp"):
-        stem = PurePosixPath(uploaded_file.name).stem.lower()
-        components = {}
-        for component in [uploaded_file, *companion_files]:
-            path = PurePosixPath(component.name)
-            suffix = path.suffix.lower()
-            if path.stem.lower() != stem or suffix not in {
-                ".shp",
-                ".shx",
-                ".dbf",
-                ".prj",
-                ".cpg",
-                ".qix",
-                ".sbn",
-                ".sbx",
-            }:
-                raise ValueError("Select only the matching components of one shapefile.")
-            if suffix in components:
-                raise ValueError("Duplicate shapefile components were selected.")
-            components[suffix] = component
-        if not {".shp", ".shx", ".dbf"}.issubset(components):
-            raise ValueError(
-                "Select the matching .shp, .shx and .dbf files together. "
-                "Cloudbench will ZIP them automatically."
-            )
-        if sum(component.size for component in components.values()) > settings.UPLOAD_MAX_FILE_SIZE:
+        files = {f.name: f for f in (uploaded_file, *companion_files)}
+        components = shapefile_components(list(files))
+        if sum(files[name].size for name in components.values()) > settings.UPLOAD_MAX_FILE_SIZE:
             raise ValueError("The shapefile components exceed the upload size limit.")
-        with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
-            for suffix, component in components.items():
-                with archive.open(f"{identifier}{suffix}", "w", force_zip64=True) as output:
-                    for chunk in component.chunks():
-                        output.write(chunk)
+
+        def opener(component):
+            # Left open: the components are uploaded as they are afterwards too.
+            def open_component():
+                component.seek(0)
+                return contextlib.nullcontext(component)
+
+            return open_component
+
+        write_shapefile_zip(
+            destination,
+            identifier,
+            {suffix: opener(files[name]) for suffix, name in components.items()},
+        )
         return
     if companion_files:
         raise ValueError("Multiple files are supported only for matching shapefile components.")
@@ -115,33 +171,12 @@ def prepare_shapefile(uploaded_file, destination, identifier, companion_files=()
         raise ValueError("Select a shapefile and its companion files, or a shapefile ZIP.")
     try:
         with zipfile.ZipFile(uploaded_file) as source:
-            files = [entry for entry in source.infolist() if not entry.is_dir()]
-            shapes = [entry for entry in files if entry.filename.lower().endswith(".shp")]
-            if len(shapes) != 1:
-                raise ValueError("The ZIP must contain exactly one shapefile.")
-            stem = str(PurePosixPath(shapes[0].filename).with_suffix("")).lower()
-            sidecars = {}
-            for entry in files:
-                path = PurePosixPath(entry.filename)
-                if str(path.with_suffix("")).lower() != stem:
-                    continue
-                suffix = path.suffix.lower()
-                if suffix not in {".shp", ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx"}:
-                    continue
-                if suffix in sidecars:
-                    raise ValueError("The ZIP contains duplicate shapefile components.")
-                sidecars[suffix] = entry
-            if not {".shp", ".shx", ".dbf"}.issubset(sidecars):
-                raise ValueError("The ZIP must include matching .shp, .shx and .dbf files.")
-            if sum(entry.file_size for entry in sidecars.values()) > settings.UPLOAD_MAX_FILE_SIZE:
-                raise ValueError("The uncompressed shapefile exceeds the upload size limit.")
-            with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as target:
-                for suffix, entry in sidecars.items():
-                    with (
-                        source.open(entry) as incoming,
-                        target.open(f"{identifier}{suffix}", "w", force_zip64=True) as outgoing,
-                    ):
-                        shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
+            sidecars = zip_sidecars(source)
+            write_shapefile_zip(
+                destination,
+                identifier,
+                {suffix: (lambda e=entry: source.open(e)) for suffix, entry in sidecars.items()},
+            )
     except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
         raise ValueError("The shapefile ZIP is invalid, encrypted, or unsupported.") from exc
 
@@ -297,13 +332,10 @@ def inspect_geopackage(
         source_path = directory / "source.gpkg"
         prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
         # Read from the staged copy on disk, before uploading, so an
-        # unreadable GeoPackage isn't left in S3.
-        # TODO: Migrate to read directly from S3 - read_contents(f"/vsicurl/
-        # {presigned_url}") after the upload - ready for a GeoPackage uploaded
-        # to S3 directly, never staged on CloudBench's disk. Blocked: on
-        # DigitalOcean Spaces, GDAL's /vsicurl/ fails on a presigned GET URL
-        # ("Unable to open datasource"), even with CPL_VSIL_CURL_USE_HEAD=NO
-        # (a HEAD on it is 403; a ranged GET is 206). It worked on MinIO.
+        # unreadable GeoPackage isn't left in S3. The upload dialog no longer
+        # comes here: it uploads straight to the bucket and reads it there
+        # (apps.s3.multipart, with /vsis3/ - a presigned /vsicurl/ URL fails,
+        # its HEAD refused, on MinIO and DigitalOcean Spaces alike).
         inspection = read_contents(str(source_path))
         layers = inspection["layers"]
         raster_tables = inspection["rasterTables"]

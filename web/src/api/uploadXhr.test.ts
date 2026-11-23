@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { uploadFile, uploadFileForImport, uploadQGISProject } from './client'
+import { uploadFileForImport, uploadQGISProject } from './client'
 import { uploadToS3 } from './s3'
 
 type Listener = (event?: unknown) => void
@@ -65,27 +65,6 @@ describe('XHR upload helpers', () => {
 
   afterEach(() => {
     globalThis.XMLHttpRequest = original
-  })
-
-  it('uploadFile resolves with the parsed body and reports progress', async () => {
-    FakeXHR.next = { status: 200, body: '{"message":"ok"}' }
-    const onProgress = vi.fn()
-    await expect(uploadFile('c 1', 'ws', file, onProgress)).resolves.toEqual({ message: 'ok' })
-    expect(onProgress).toHaveBeenCalledWith(25)
-    expect(onProgress).toHaveBeenCalledTimes(1)
-    const xhr = FakeXHR.instances[0]
-    expect(xhr.method).toBe('POST')
-    expect(xhr.url).toContain('/upload?connId=c%201&workspace=ws')
-    expect((xhr.sent as FormData).get('file')).toBeInstanceOf(File)
-  })
-
-  it('uploadFile rejects with the server error or a network error', async () => {
-    FakeXHR.next = { status: 500, body: '{"error":"disk full"}' }
-    await expect(uploadFile('c', 'ws', file)).rejects.toThrow('disk full')
-    FakeXHR.next = { status: 500, body: '{}' }
-    await expect(uploadFile('c', 'ws', file)).rejects.toThrow('Upload failed')
-    FakeXHR.next = 'error'
-    await expect(uploadFile('c', 'ws', file)).rejects.toThrow('Network error')
   })
 
   it('uploadFileForImport posts to the import endpoint', async () => {

@@ -19,7 +19,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import PGService
-from apps.upload.views import _assemble_file, _get_session
+from apps.core.permissions import refusal
+from apps.upload.views import _assemble_file, _staged_session
 
 from .client import (
     PGServiceClient,
@@ -32,6 +33,45 @@ from .client import (
 from .tasks import ogr_source_path, run_raster_import, run_vector_import
 
 # === PostgreSQL Services ===
+
+
+def _check(client: PGServiceClient) -> dict:
+    """A connection test's answer: success, message, and the permissions checked."""
+    success, message, permissions = client.check_connection()
+    return {
+        "success": success,
+        "message": message,
+        "permissions": [p.to_dict() for p in permissions],
+    }
+
+
+def _refused(service: PGService) -> Response | None:
+    """A 400 if `service` can't connect, or its user may not do what CloudBench does.
+
+    A connection is only saved once it works: one that can't, or can't
+    create tables, would just fail later, in every import that uses it.
+    """
+    result = _check(PGServiceClient(service))
+    if result["success"]:
+        return None
+    return Response(
+        {"error": result["message"], "permissions": result["permissions"]},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _import_refused(service: PGService, schema: str, raster: bool = False) -> Response | None:
+    """A 403 if the user may not import into `schema` (a raster: also install postgis_raster)."""
+    try:
+        permissions = PGServiceClient(service).check_permissions(schema)
+    except Exception as e:
+        return Response({"error": f"Could not connect: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+    needed = [p for p in permissions if p.required or (raster and p.name == "import rasters")]
+    if all(p.allowed for p in needed):
+        return None
+    return Response(
+        {"error": refusal("This database user", needed)}, status=status.HTTP_403_FORBIDDEN
+    )
 
 
 class PGServiceListView(APIView):
@@ -78,6 +118,9 @@ class PGServiceListView(APIView):
             password=request.data.get("password", ""),
             sslmode=request.data.get("sslmode", ""),
         )
+        refused = _refused(service)
+        if refused:
+            return refused
         add_pg_service(service, user)
 
         return Response(
@@ -125,8 +168,7 @@ class PGServiceTestDirectView(APIView):
             password=request.data.get("password", ""),
             sslmode=request.data.get("sslmode", ""),
         )
-        success, message = PGServiceClient(service).test_connection()
-        return Response({"success": success, "message": message})
+        return Response(_check(PGServiceClient(service)))
 
 
 class PGServiceDetailView(APIView):
@@ -166,6 +208,11 @@ class PGServiceDetailView(APIView):
                 if k in data
             }
         )
+        # Renaming nothing that connects needs no re-test.
+        if updated != client.service:
+            refused = _refused(updated)
+            if refused:
+                return refused
         update_pg_service(updated, user)
         return Response(
             {
@@ -204,8 +251,7 @@ class PGServiceTestView(APIView):
             client = get_pg_client(name, request.user)
         except ValueError:
             return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
-        success, message = client.test_connection()
-        return Response({"success": success, "message": message})
+        return Response(_check(client))
 
 
 # === Stats ===
@@ -454,6 +500,10 @@ class PGImportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        refused = _import_refused(service, target_schema)
+        if refused:
+            return refused
+
         pg_conn = f"PG:host={service.host} port={service.port} dbname={service.dbname} user={service.user} password={service.password}"
         cmd = ["ogr2ogr", "-f", "PostgreSQL", pg_conn, file_path]
         cmd.append("-overwrite" if overwrite else "-append")
@@ -533,6 +583,10 @@ class PGImportRasterView(APIView):
                 {"error": "Raster import needs a .tif/.tiff file."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        refused = _import_refused(service, target_schema, raster=True)
+        if refused:
+            return refused
 
         raster_cmd = [
             "raster2pgsql",
@@ -720,7 +774,7 @@ class PGUploadCompleteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = _get_session(session_id)
+        session = _staged_session(request, session_id)
         if not session:
             return Response(
                 {"error": "Upload session not found"},

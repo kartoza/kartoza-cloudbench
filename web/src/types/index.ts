@@ -23,10 +23,20 @@ export interface ServerInfo {
   GeoWebCacheVersion: string
 }
 
+// One permission a connection's credentials need, and whether they have it
+// (apps/core/permissions.py). Without a required one, the connection is refused.
+export interface ConnectionPermission {
+  name: string
+  needed_for: string
+  allowed: boolean
+  detail: string
+  required: boolean
+}
+
 export interface TestConnectionResult {
   success: boolean
   message: string
-  info?: ServerInfo
+  info?: ServerInfo & { permissions?: ConnectionPermission[] }
 }
 
 // Workspace types
@@ -221,19 +231,6 @@ export interface Coverage {
   name: string
   workspace: string
   store: string
-}
-
-// Upload types
-export interface UploadResult {
-  success: boolean
-  message: string
-  storeName?: string
-  storeType?: string
-  published?: boolean
-  path?: string
-  filename?: string
-  fileSize?: number
-  sessionId?: string
 }
 
 // Preview types
@@ -563,8 +560,9 @@ export type S3ConnectionTestRequest = Omit<S3ConnectionCreate, 'accessKey' | 'se
   Partial<Pick<S3ConnectionCreate, 'accessKey' | 'secretKey'>> & { connectionId?: string }
 
 export interface S3ConnectionTestResult {
-  success: boolean
+  status: 'success' | 'error'
   message: string
+  permissions?: ConnectionPermission[]
 }
 
 // S3 Object
@@ -831,7 +829,9 @@ export interface GeoNodeConnectionCreate {
 
 export interface GeoNodeTestResult {
   success: boolean
+  message?: string
   error?: string
+  permissions?: ConnectionPermission[]
 }
 
 export interface GeoNodeOwner {

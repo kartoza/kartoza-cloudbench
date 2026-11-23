@@ -25,17 +25,16 @@ import {
   AlertIcon,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiPause, FiPlay, FiLayers, FiFileText } from 'react-icons/fi'
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiLayers, FiFileText } from 'react-icons/fi'
 import { TbWorld } from 'react-icons/tb'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUIStore } from '../../stores/uiStore'
+import { cancelRelayUpload, relayUpload } from '../../api/relayUpload'
 import {
-  initUploadSession,
-  uploadChunk,
   cancelUpload,
   completeGeoNodeUpload,
   detectGeoNodeLayers,
-  CHUNK_SIZE,
+  stageFile,
 } from '../../api/chunkedUpload'
 
 function formatFileSize(bytes: number): string {
@@ -94,6 +93,18 @@ type UploadPhase =
   | 'error'
   | 'cancelled'
 
+// GeoPackage datasets are staged on CloudBench instead of relayed: GeoNode
+// imports a GeoPackage whole and fails on layers of unlike CRS, so its
+// layers are read and sent one at a time, which takes the whole file.
+const isStaged = (file: File, uploadType: 'dataset' | 'document') =>
+  uploadType === 'dataset' && file.name.toLowerCase().endsWith('.gpkg')
+
+// Shown while a failed chunk waits to be sent again.
+interface RetryNotice {
+  attempt: number
+  delaySeconds: number
+}
+
 export default function GeoNodeUploadDialog() {
   const activeDialog = useUIStore((state) => state.activeDialog)
   const dialogData = useUIStore((state) => state.dialogData)
@@ -113,7 +124,7 @@ export default function GeoNodeUploadDialog() {
   const [fileInfo, setFileInfo] = useState<ReturnType<typeof getSupportedFileInfo> | null>(null)
 
   const [phase, setPhase] = useState<UploadPhase>('idle')
-  const [isPaused, setIsPaused] = useState(false)
+  const [retry, setRetry] = useState<RetryNotice | null>(null)
   const [chunksUploaded, setChunksUploaded] = useState(0)
   const [chunksTotal, setChunksTotal] = useState(0)
   const [chunkProgress, setChunkProgress] = useState(0)
@@ -124,8 +135,9 @@ export default function GeoNodeUploadDialog() {
   const [selectedLayers, setSelectedLayers] = useState<string[]>([])
 
   const sessionIdRef = useRef<string | null>(null)
-  const isPausedRef = useRef(false)
-  const isCancelledRef = useRef(false)
+  // The running upload. Closing the dialog cancels it, and once cancelled it
+  // leaves the dialog alone (it may already show another upload).
+  const uploadRef = useRef<{ cancelled: boolean } | null>(null)
 
   const isOpen = activeDialog === 'geonodeupload'
   const dropzoneBg = useColorModeValue('gray.50', 'gray.700')
@@ -138,7 +150,7 @@ export default function GeoNodeUploadDialog() {
     setAbstract('')
     setFileInfo(null)
     setPhase('idle')
-    setIsPaused(false)
+    setRetry(null)
     setChunksUploaded(0)
     setChunksTotal(0)
     setChunkProgress(0)
@@ -148,8 +160,7 @@ export default function GeoNodeUploadDialog() {
     setGpkgLayers([])
     setSelectedLayers([])
     sessionIdRef.current = null
-    isPausedRef.current = false
-    isCancelledRef.current = false
+    uploadRef.current = null
   }, [initialUploadType])
 
   useEffect(() => {
@@ -170,22 +181,38 @@ export default function GeoNodeUploadDialog() {
     if (file) handleFileSelect(file)
   }, [handleFileSelect])
 
-  const waitIfPaused = (): Promise<void> =>
-    new Promise((resolve) => {
-      const check = () => {
-        if (!isPausedRef.current || isCancelledRef.current) resolve()
-        else setTimeout(check, 200)
-      }
-      check()
+  const showError = (upload: { cancelled: boolean }, err: unknown) => {
+    if (upload.cancelled) return
+    const msg = (err as Error).message
+    setErrorMsg(msg)
+    setPhase('error')
+    toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
+  }
+
+  const showDone = () => {
+    setPhase('done')
+    if (uploadType === 'document') {
+      queryClient.invalidateQueries({ queryKey: ['geonodedocuments', connectionId] })
+    } else {
+      queryClient.invalidateQueries({ queryKey: ['geonodedatasets', connectionId] })
+    }
+    queryClient.invalidateQueries({ queryKey: ['geonoderesources', connectionId] })
+    toast({
+      title: 'Upload successful',
+      description: `Your ${uploadType} is being processed by GeoNode`,
+      status: 'success',
+      duration: 3000,
     })
+  }
 
   const handleUpload = async () => {
     if (!selectedFile || !connectionId) return
 
-    isCancelledRef.current = false
-    isPausedRef.current = false
+    const upload = { cancelled: false }
+    uploadRef.current = upload
 
     setPhase('chunking')
+    setRetry(null)
     setChunksUploaded(0)
     setChunkProgress(0)
     setSpeedBps(0)
@@ -193,74 +220,82 @@ export default function GeoNodeUploadDialog() {
 
     const totalBytes = selectedFile.size
     const startTime = Date.now()
-    let bytesUploaded = 0
-
-    try {
-      const { sessionId, totalChunks } = await initUploadSession(
-        '',
-        '',
-        selectedFile.name,
-        totalBytes,
-        CHUNK_SIZE,
-      )
-      sessionIdRef.current = sessionId
-      setChunksTotal(totalChunks)
-
-      for (let i = 0; i < totalChunks; i++) {
-        if (isCancelledRef.current) break
-        await waitIfPaused()
-        if (isCancelledRef.current) break
-
-        const start = i * CHUNK_SIZE
-        const end = Math.min(start + CHUNK_SIZE, totalBytes)
-        const chunk = selectedFile.slice(start, end)
-        const chunkBytes = end - start
-
-        await uploadChunk(sessionId, i, chunk, (pct) => setChunkProgress(pct))
-
-        bytesUploaded += chunkBytes
+    const progress = {
+      onChunkProgress: (pct: number) => {
+        if (!upload.cancelled) setChunkProgress(pct)
+      },
+      onChunkSent: (sentChunks: number, sentBytes: number) => {
+        if (upload.cancelled) return
         const elapsedSec = (Date.now() - startTime) / 1000
-        const speed = elapsedSec > 0 ? bytesUploaded / elapsedSec : 0
-        const eta = speed > 0 ? (totalBytes - bytesUploaded) / speed : 0
-
-        setChunksUploaded(i + 1)
+        const speed = elapsedSec > 0 ? sentBytes / elapsedSec : 0
+        setRetry(null)
+        setChunksUploaded(sentChunks)
         setChunkProgress(100)
         setSpeedBps(speed)
-        setEtaSeconds(eta)
-      }
+        setEtaSeconds(speed > 0 ? (totalBytes - sentBytes) / speed : 0)
+        if (sentBytes >= totalBytes) setPhase('finalizing')
+      },
+      onRetry: (attempt: number, delaySeconds: number) => {
+        if (!upload.cancelled) setRetry({ attempt, delaySeconds })
+      },
+      isCancelled: () => upload.cancelled,
+    }
 
-      if (isCancelledRef.current) {
-        setPhase('cancelled')
-        return
-      }
-
-      // A multi-layer GeoPackage can't be imported whole (GeoNode takes no
-      // layer choice and 500s on layers of unlike CRS). Detect its layers and
-      // let the user pick, like the PostGIS import does; one layer or a
-      // non-GeoPackage just finalises.
-      if (uploadType === 'dataset' && selectedFile.name.toLowerCase().endsWith('.gpkg')) {
-        setPhase('finalizing')
+    try {
+      if (isStaged(selectedFile, uploadType)) {
+        const sessionId = await stageFile(selectedFile, {
+          ...progress,
+          onStarted: (id, totalChunks) => {
+            sessionIdRef.current = id
+            setChunksTotal(totalChunks)
+          },
+        })
+        if (upload.cancelled || !sessionId) return
         const { layers } = await detectGeoNodeLayers(sessionId)
+        if (upload.cancelled) return
         if (layers.length > 1) {
           setGpkgLayers(layers)
           setSelectedLayers(layers)
           setPhase('selecting-layers')
           return
         }
+        await publishStaged(upload)
+        return
       }
 
-      await finalizeUpload()
-    } catch (err) {
-      if (!isCancelledRef.current) {
-        const msg = (err as Error).message
-        setErrorMsg(msg)
-        setPhase('error')
-        toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
+      // Straight to GeoNode as it's sent: nothing is stored on CloudBench.
+      const status = await relayUpload(
+        selectedFile,
+        {
+          target: 'geonode',
+          connectionId,
+          uploadType,
+          title: title || undefined,
+          abstract: abstract || undefined,
+        },
+        {
+          ...progress,
+          onStarted: ({ sessionId, totalChunks }) => {
+            sessionIdRef.current = sessionId
+            setChunksTotal(totalChunks)
+          },
+        },
+      )
+      if (upload.cancelled) return
+      if (!status || status.state === 'cancelled') {
+        setPhase('cancelled')
+        return
       }
+      showDone()
+    } catch (err) {
+      showError(upload, err)
+    } finally {
+      if (!upload.cancelled) setRetry(null)
     }
   }
 
-  const finalizeUpload = async (sourceLayers?: string[]) => {
+  // A staged GeoPackage: publish the chosen layers (all of a single-layer one).
+  const publishStaged = async (upload: { cancelled: boolean }, sourceLayers?: string[]) => {
     const sessionId = sessionIdRef.current
     if (!sessionId || !connectionId) return
     try {
@@ -270,30 +305,11 @@ export default function GeoNodeUploadDialog() {
         connectionId,
         title || undefined,
         abstract || undefined,
-        uploadType,
         sourceLayers,
       )
-
-      setPhase('done')
-      if (uploadType === 'document') {
-        queryClient.invalidateQueries({ queryKey: ['geonodedocuments', connectionId] })
-      } else {
-        queryClient.invalidateQueries({ queryKey: ['geonodedatasets', connectionId] })
-      }
-      queryClient.invalidateQueries({ queryKey: ['geonoderesources', connectionId] })
-      toast({
-        title: 'Upload successful',
-        description: `Your ${uploadType} is being processed by GeoNode`,
-        status: 'success',
-        duration: 3000,
-      })
+      if (!upload.cancelled) showDone()
     } catch (err) {
-      if (!isCancelledRef.current) {
-        const msg = (err as Error).message
-        setErrorMsg(msg)
-        setPhase('error')
-        toast({ title: 'Upload failed', description: msg, status: 'error', duration: 5000 })
-      }
+      showError(upload, err)
     }
   }
 
@@ -303,25 +319,26 @@ export default function GeoNodeUploadDialog() {
     )
   }
 
-  const handlePause = () => { isPausedRef.current = true; setIsPaused(true) }
-  const handleResume = () => { isPausedRef.current = false; setIsPaused(false) }
-
   const handleCancel = async () => {
-    isCancelledRef.current = true
-    isPausedRef.current = false
-    setIsPaused(false)
+    if (uploadRef.current) uploadRef.current.cancelled = true
     const sessId = sessionIdRef.current
-    if (sessId) {
-      try { await cancelUpload(sessId) } catch { /* best effort */ }
-    }
     setPhase('cancelled')
+    if (!sessId) return
+    if (selectedFile && isStaged(selectedFile, uploadType)) await cancelUpload(sessId)
+    else await cancelRelayUpload(sessId)
   }
 
   const overallPct = chunksTotal > 0 ? Math.round((chunksUploaded / chunksTotal) * 100) : 0
   const isUploading = phase === 'chunking' || phase === 'finalizing'
 
+  const handleClose = () => {
+    // A GeoPackage waiting for its layers to be picked is still staged.
+    if (isUploading || phase === 'selecting-layers') handleCancel()
+    closeDialog()
+  }
+
   return (
-    <Modal isOpen={isOpen} onClose={closeDialog} size="lg" isCentered>
+    <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl" overflow="hidden">
         <Box
@@ -450,7 +467,7 @@ export default function GeoNodeUploadDialog() {
               </>
             )}
 
-            {/* Layer picker — a multi-layer GeoPackage is imported one layer
+            {/* Layer picker: a multi-layer GeoPackage is imported one layer
                 at a time, so the user chooses which layers to publish. */}
             {phase === 'selecting-layers' && (
               <FormControl>
@@ -530,10 +547,10 @@ export default function GeoNodeUploadDialog() {
                         <Progress
                           value={overallPct}
                           size="sm"
-                          colorScheme={isPaused ? 'yellow' : 'teal'}
+                          colorScheme={retry ? 'yellow' : 'teal'}
                           borderRadius="sm"
-                          hasStripe={!isPaused}
-                          isAnimated={!isPaused}
+                          hasStripe
+                          isAnimated
                         />
                       </Box>
 
@@ -552,16 +569,13 @@ export default function GeoNodeUploadDialog() {
                         </Box>
                       )}
 
+                      {retry && (
+                        <Text fontSize="xs" color="orange.500">
+                          Connection lost — retrying in {retry.delaySeconds}s (attempt {retry.attempt})
+                        </Text>
+                      )}
+
                       <HStack spacing={2} justify="flex-end">
-                        {!isPaused ? (
-                          <Button size="xs" variant="outline" colorScheme="yellow" onClick={handlePause} leftIcon={<FiPause />}>
-                            Pause
-                          </Button>
-                        ) : (
-                          <Button size="xs" variant="outline" colorScheme="green" onClick={handleResume} leftIcon={<FiPlay />}>
-                            Resume
-                          </Button>
-                        )}
                         <Button size="xs" variant="ghost" colorScheme="red" onClick={handleCancel}>
                           Cancel
                         </Button>
@@ -573,7 +587,7 @@ export default function GeoNodeUploadDialog() {
                   {phase === 'finalizing' && (
                     <Box>
                       <Text fontSize="xs" color="blue.500" fontWeight="500" mb={1}>
-                        Sending to GeoNode…
+                        Waiting for GeoNode…
                       </Text>
                       <Progress isIndeterminate size="sm" colorScheme="blue" borderRadius="sm" />
                     </Box>
@@ -610,13 +624,13 @@ export default function GeoNodeUploadDialog() {
         </ModalBody>
 
         <ModalFooter gap={3} borderTop="1px solid" borderTopColor="gray.100" bg="gray.50">
-          <Button variant="ghost" onClick={closeDialog} borderRadius="lg">
+          <Button variant="ghost" onClick={handleClose} borderRadius="lg">
             {phase === 'done' ? 'Close' : 'Cancel'}
           </Button>
           {phase === 'selecting-layers' ? (
             <Button
               colorScheme="teal"
-              onClick={() => finalizeUpload(selectedLayers)}
+              onClick={() => publishStaged(uploadRef.current ?? { cancelled: false }, selectedLayers)}
               isDisabled={selectedLayers.length === 0}
               borderRadius="lg"
               px={6}

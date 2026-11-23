@@ -22,6 +22,26 @@ def s3client():
         stubber.assert_no_pending_responses()
 
 
+def _stub_permissions(stubber, write=True, delete=True):
+    """S3's answers to check_permissions: write=False refuses the upload, "part" its part."""
+    stubber.add_response("list_objects_v2", {"KeyCount": 0})
+    stubber.add_client_error("head_object", "404", http_status_code=404)
+    if write is False:
+        stubber.add_client_error("create_multipart_upload", "AccessDenied", http_status_code=403)
+    else:
+        stubber.add_response("create_multipart_upload", {"UploadId": "up-1"})
+        if write == "part":
+            stubber.add_client_error("upload_part", "AccessDenied", http_status_code=403)
+        else:
+            stubber.add_response("upload_part", {"ETag": '"e"'})
+            stubber.add_response("list_parts", {"Parts": []})
+        stubber.add_response("abort_multipart_upload", {})
+    if delete:
+        stubber.add_response("delete_object", {})
+    else:
+        stubber.add_client_error("delete_object", "AccessDenied", http_status_code=403)
+
+
 @pytest.mark.unit
 class TestS3Client:
     def test_endpoint_scheme(self):
@@ -45,7 +65,46 @@ class TestS3Client:
 
     def test_test_connection_ok(self, s3client):
         s3client.stubber.add_response("head_bucket", {}, {"Bucket": "bkt"})
+        _stub_permissions(s3client.stubber)
         assert s3client.test_connection() == (True, "Connection successful")
+
+    def test_a_read_only_key_is_refused_saying_what_it_cant_do(self, s3client):
+        s3client.stubber.add_response("head_bucket", {}, {"Bucket": "bkt"})
+        _stub_permissions(s3client.stubber, write=False, delete=False)
+        ok, message, permissions = s3client.check_connection()
+        assert not ok
+        assert message == (
+            "This key may not: write (needed for uploads and conversions); "
+            "delete (needed for deleting files and replacing layers)."
+        )
+        assert [(p.name, p.allowed) for p in permissions] == [
+            ("list", True),
+            ("read", True),
+            ("write", False),
+            ("delete", False),
+        ]
+
+    def test_a_key_that_cant_delete_is_refused(self, s3client):
+        s3client.stubber.add_response("head_bucket", {}, {"Bucket": "bkt"})
+        _stub_permissions(s3client.stubber, delete=False)
+        ok, message, _ = s3client.check_connection()
+        assert not ok and message.endswith(
+            "delete (needed for deleting files and replacing layers)."
+        )
+
+    def test_the_write_check_leaves_nothing_behind(self, s3client):
+        """The part is refused: the multipart upload it opened is still aborted."""
+        _stub_permissions(s3client.stubber, write="part")
+        [*_, write, abort, delete] = s3client.check_permissions()
+        assert (write.name, write.allowed, write.detail) == ("write", False, "AccessDenied")
+        assert (abort.name, abort.allowed) == ("abort uploads", True)
+        assert delete.allowed
+
+    def test_anything_but_a_refusal_fails_the_test_as_it_is(self, s3client):
+        s3client.stubber.add_response("head_bucket", {}, {"Bucket": "bkt"})
+        s3client.stubber.add_client_error("list_objects_v2", "InternalError", http_status_code=500)
+        ok, message, permissions = s3client.check_connection()
+        assert not ok and "InternalError" in message and permissions == []
 
     def test_test_connection_client_error(self, s3client):
         s3client.stubber.add_client_error("head_bucket", "AccessDenied")

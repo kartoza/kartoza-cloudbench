@@ -8,7 +8,6 @@ urlpatterns = [
     # Chunked upload endpoints
     path("upload/init", views.UploadInitView.as_view(), name="upload-init"),
     path("upload/chunk", views.UploadChunkView.as_view(), name="upload-chunk"),
-    path("upload/complete", views.UploadCompleteView.as_view(), name="upload-complete"),
     path(
         "upload/session/<str:session_id>/progress",
         views.UploadProgressView.as_view(),
@@ -19,6 +18,16 @@ urlpatterns = [
         views.UploadCancelView.as_view(),
         name="upload-cancel",
     ),
-    # Simple upload endpoint
-    path("upload", views.SimpleUploadView.as_view(), name="upload-simple"),
+    # Uploads relayed straight to GeoServer/GeoNode
+    path("upload/relay", views.RelayUploadView.as_view(), name="upload-relay"),
+    path(
+        "upload/relay/<str:session_id>/chunks/<int:index>",
+        views.RelayChunkView.as_view(),
+        name="upload-relay-chunk",
+    ),
+    path(
+        "upload/relay/<str:session_id>",
+        views.RelayStatusView.as_view(),
+        name="upload-relay-status",
+    ),
 ]

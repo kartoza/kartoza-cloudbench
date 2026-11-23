@@ -4,6 +4,8 @@ Provides a comprehensive Python client for the GeoServer REST API.
 """
 
 import re
+import uuid
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
@@ -12,9 +14,29 @@ import httpx
 from apps.core.config import Connection
 from apps.core.exceptions import GeoServerError
 from apps.core.managers import make_client
+from apps.core.permissions import Permission
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
+
+# Files GeoServer makes a store from: store type -> (REST collection, upload
+# method, content type).
+UPLOAD_STORE_TYPES = {
+    "shapefile": ("datastores", "file.shp", "application/zip"),
+    "geopackage": ("datastores", "file.gpkg", "application/geopackage+sqlite3"),
+    "geotiff": ("coveragestores", "file.geotiff", "image/tiff"),
+}
+_UPLOAD_EXTENSIONS = {
+    "zip": "shapefile",
+    "gpkg": "geopackage",
+    "tif": "geotiff",
+    "tiff": "geotiff",
+}
+
+
+def upload_store_type(filename: str) -> str | None:
+    """The store type a file uploads as (a zipped shapefile, ...), None if unsupported."""
+    return _UPLOAD_EXTENSIONS.get(filename.rsplit(".", 1)[-1].lower())
 
 
 class GeoServerClient:
@@ -72,6 +94,40 @@ class GeoServerClient:
                 f"Request failed: {response.text}", status_code=response.status_code
             )
         return response.json()
+
+    # === Permissions ===
+
+    def check_permissions(self, workspace: str | None = None) -> list[Permission]:
+        """What this user may do through the REST API, of what CloudBench needs.
+
+        Nothing is changed: reading is a listing, and writing a DELETE of a
+        workspace (or, given `workspace`, a store in it) that isn't there -
+        GeoServer checks the user's REST permissions first, so it answers
+        404 when writing is allowed, 401/403 when it isn't.
+        """
+        absent = f"cloudbench-permission-check-{uuid.uuid4().hex[:12]}"
+        target = (
+            f"/rest/workspaces/{workspace}/datastores/{absent}"
+            if workspace
+            else f"/rest/workspaces/{absent}"
+        )
+        read = self._request("GET", "/rest/workspaces.json")
+        write = self._request("DELETE", target)
+        where = f" in {workspace}" if workspace else ""
+        return [
+            Permission(
+                "read",
+                "browsing workspaces, stores and layers",
+                read.status_code not in (401, 403),
+                str(read.status_code),
+            ),
+            Permission(
+                f"write{where}",
+                "uploads, and changing workspaces, stores, layers and styles",
+                write.status_code not in (401, 403),
+                str(write.status_code),
+            ),
+        ]
 
     # === Workspaces ===
 
@@ -956,83 +1012,62 @@ class GeoServerClient:
 
     # === File Uploads ===
 
-    def upload_shapefile(
+    def existing_store_type(self, workspace: str, store: str) -> str | None:
+        """The type of the store named `store` in `workspace`, None if there's none.
+
+        GeoServer's name for the type, lowercased: for the types files upload
+        as, that's how upload_store_type names them (shapefile, geopackage,
+        geotiff).
+        """
+        if any(s.get("name") == store for s in self.list_datastores(workspace)):
+            found = self.get_datastore(workspace, store).get("type", "")
+        elif any(s.get("name") == store for s in self.list_coveragestores(workspace)):
+            found = self.get_coveragestore(workspace, store).get("type", "")
+        else:
+            return None
+        return found.lower() or "unknown"
+
+    def upload_store_file(
         self,
         workspace: str,
-        datastore: str,
-        data: bytes,
-        charset: str = "UTF-8",
-    ) -> None:
-        """Upload a shapefile ZIP to create a data store.
+        store: str,
+        filename: str,
+        content: Iterable[bytes],
+        size: int,
+        response_timeout: float,
+    ) -> dict[str, str]:
+        """Create a store from a file streamed as it comes, never held whole.
 
         Args:
             workspace: Workspace name
-            datastore: Data store name to create
-            data: ZIP file bytes containing shapefile
-            charset: Character encoding
+            store: Data/coverage store name to create
+            filename: The file's name; its extension picks the store type
+            content: The file's bytes, in pieces
+            size: The file's size (sent as Content-Length: many GeoServers sit
+                behind proxies that refuse chunked transfer encoding)
+            response_timeout: Seconds to wait for GeoServer once all is sent
+
+        Returns:
+            {"storeName", "storeType"}
         """
+        store_type = upload_store_type(filename)
+        if not store_type:
+            raise GeoServerError(f"Unsupported file type: {filename}", status_code=400)
+        kind, method, content_type = UPLOAD_STORE_TYPES[store_type]
         response = self._request(
             "PUT",
-            f"/rest/workspaces/{workspace}/datastores/{datastore}/file.shp",
-            content=data,
-            headers={"Content-Type": "application/zip"},
-            params={"charset": charset},
+            f"/rest/workspaces/{workspace}/{kind}/{store}/{method}",
+            content=content,
+            headers={"Content-Type": content_type, "Content-Length": str(size)},
+            params={"charset": "UTF-8"} if store_type == "shapefile" else None,
+            timeout=httpx.Timeout(30.0, connect=10.0, read=response_timeout),
         )
         if response.status_code >= 400:
             raise GeoServerError(
-                f"Failed to upload shapefile: {response.text}",
+                f"GeoServer refused the {store_type}: {response.text}",
                 status_code=response.status_code,
             )
-
-    def upload_geotiff(
-        self,
-        workspace: str,
-        coveragestore: str,
-        data: bytes,
-    ) -> None:
-        """Upload a GeoTIFF to create a coverage store.
-
-        Args:
-            workspace: Workspace name
-            coveragestore: Coverage store name to create
-            data: GeoTIFF file bytes
-        """
-        response = self._request(
-            "PUT",
-            f"/rest/workspaces/{workspace}/coveragestores/{coveragestore}/file.geotiff",
-            content=data,
-            headers={"Content-Type": "image/tiff"},
-        )
-        if response.status_code >= 400:
-            raise GeoServerError(
-                f"Failed to upload GeoTIFF: {response.text}",
-                status_code=response.status_code,
-            )
-
-    def upload_geopackage(
-        self,
-        workspace: str,
-        datastore: str,
-        data: bytes,
-    ) -> None:
-        """Upload a GeoPackage to create a data store.
-
-        Args:
-            workspace: Workspace name
-            datastore: Data store name to create
-            data: GeoPackage file bytes
-        """
-        response = self._request(
-            "PUT",
-            f"/rest/workspaces/{workspace}/datastores/{datastore}/file.gpkg",
-            content=data,
-            headers={"Content-Type": "application/geopackage+sqlite3"},
-        )
-        if response.status_code >= 400:
-            raise GeoServerError(
-                f"Failed to upload GeoPackage: {response.text}",
-                status_code=response.status_code,
-            )
+        return {"storeName": store, "storeType": store_type}
 
     # === Available (Unpublished) Feature Types ===
 

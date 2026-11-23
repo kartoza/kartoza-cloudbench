@@ -3,8 +3,11 @@
 import shutil
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework.test import APIClient
 
 from apps.geonode import views
 
@@ -58,24 +61,115 @@ class TestGpkgLayers:
         views._extract_gpkg_layer(gpkg, "zones", out)
         assert views._gpkg_layers(out) == ["zones"]
 
-    def test_upload_layers_uploads_each_extracted_layer(self, tmp_path):
+
+class FakeGeoNode:
+    """Takes uploads the way GeoNodeClient.upload_dataset does: streamed."""
+
+    def __init__(self):
+        self.uploaded = []
+
+    def upload_dataset(self, content, filename, size, response_timeout, title=None, abstract=None):
+        body = b"".join(content)
+        assert len(body) == size
+        self.uploaded.append({"filename": filename, "title": title, "body": body})
+        return {"execution_id": f"ex-{filename}"}
+
+    def apply_dataset_metadata(self, *args, **kwargs):  # called in a daemon thread
+        return []
+
+
+def _stage(api, path: Path) -> str:
+    """Stage a file for GeoNode as the dialog does (init, then its one chunk)."""
+    data = path.read_bytes()
+    started = api.post(
+        "/api/upload/init", {"filename": path.name, "fileSize": len(data)}, format="json"
+    )
+    session_id = started.json()["sessionId"]
+    sent = api.post(
+        "/api/upload/chunk",
+        {"sessionId": session_id, "chunkIndex": 0, "chunk": SimpleUploadedFile("c", data)},
+        format="multipart",
+    )
+    assert sent.status_code == 200, sent.json()
+    return session_id
+
+
+@pytest.mark.django_db
+@requires_gdal
+class TestStagedGeoPackage:
+    @pytest.fixture
+    def geonode(self):
+        client = FakeGeoNode()
+        with patch("apps.geonode.views.get_geonode_client", return_value=client):
+            yield client
+
+    def test_layers_are_picked_then_uploaded_one_each(
+        self, authenticated_api_client, geonode, tmp_path
+    ):
+        api = authenticated_api_client
         gpkg = tmp_path / "multi.gpkg"
         _make_gpkg(gpkg, {"cities": 4326, "zones": 32750})
+        session_id = _stage(api, gpkg)
 
-        uploaded = []
+        detected = api.post("/api/geonode/upload/detect-layers", {"sessionId": session_id})
+        assert sorted(detected.json()["layers"]) == ["cities", "zones"]
 
-        class FakeClient:
-            def upload_dataset(self, file, filename, title=None, abstract=None):
-                uploaded.append({"filename": filename, "title": title, "size": len(file)})
-                return {"execution_id": f"ex-{filename}"}
+        done = api.post(
+            "/api/geonode/upload/complete",
+            {"sessionId": session_id, "connectionId": "g1", "sourceLayers": ["zones"]},
+            format="json",
+        )
+        assert done.status_code == 201, done.json()
+        assert done.json()["layers"] == ["zones"]
+        [upload] = geonode.uploaded
+        assert upload["filename"] == "multi__zones.gpkg"
+        # A real single-layer GeoPackage, with its CRS kept.
+        extracted = tmp_path / "out.gpkg"
+        extracted.write_bytes(upload["body"])
+        assert views._gpkg_layers(extracted) == ["zones"]
 
-            def apply_dataset_metadata(self, *args, **kwargs):  # called in a daemon thread
-                return []
+    def test_a_single_layer_geopackage_goes_whole(
+        self, authenticated_api_client, geonode, tmp_path
+    ):
+        api = authenticated_api_client
+        gpkg = tmp_path / "one.gpkg"
+        _make_gpkg(gpkg, {"cities": 4326})
+        session_id = _stage(api, gpkg)
+        done = api.post(
+            "/api/geonode/upload/complete",
+            {"sessionId": session_id, "connectionId": "g1", "title": "Cities"},
+            format="json",
+        )
+        assert done.status_code == 201, done.json()
+        assert geonode.uploaded == [
+            {"filename": "one.gpkg", "title": "Cities", "body": gpkg.read_bytes()}
+        ]
 
-        view = views.GeoNodeUploadCompleteView()
-        datasets = view._upload_layers(FakeClient(), gpkg, ["cities", "zones"], None, "desc")
+    def test_only_geopackages_are_staged(self, authenticated_api_client, geonode, tmp_path):
+        api = authenticated_api_client
+        tif = tmp_path / "dem.tif"
+        tif.write_bytes(b"II*\0")
+        session_id = _stage(api, tif)
+        done = api.post(
+            "/api/geonode/upload/complete",
+            {"sessionId": session_id, "connectionId": "g1"},
+            format="json",
+        )
+        assert done.status_code == 400 and "Only GeoPackage" in done.json()["error"]
+        assert geonode.uploaded == []
 
-        assert [d["layer"] for d in datasets] == ["cities", "zones"]
-        assert {u["filename"] for u in uploaded} == {"multi__cities.gpkg", "multi__zones.gpkg"}
-        # Each uploaded file is a real single-layer GeoPackage with its CRS kept.
-        assert all(u["size"] > 0 for u in uploaded)
+    def test_someone_elses_session_is_not_found(
+        self, authenticated_api_client, geonode, tmp_path, django_user_model
+    ):
+        gpkg = tmp_path / "one.gpkg"
+        _make_gpkg(gpkg, {"cities": 4326})
+        session_id = _stage(authenticated_api_client, gpkg)
+        other = APIClient()
+        other.force_authenticate(django_user_model.objects.create_user(username="other"))
+        for path, body in (
+            ("detect-layers", {"sessionId": session_id}),
+            ("complete", {"sessionId": session_id, "connectionId": "g1"}),
+        ):
+            response = other.post(f"/api/geonode/upload/{path}", body, format="json")
+            assert response.status_code == 404
+        assert geonode.uploaded == []
