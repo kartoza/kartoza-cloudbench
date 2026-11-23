@@ -105,6 +105,8 @@ const RASTER_EXTENSIONS = ['tif', 'tiff'] as const
 const VECTOR_EXTENSIONS = ['gpkg', 'zip', 'geojson', 'json', 'kml', 'fgb', 'csv'] as const
 const ACCEPTED_EXTENSIONS = [...RASTER_EXTENSIONS, ...VECTOR_EXTENSIONS]
 
+const toTableName = (name: string) => name.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+
 function isRasterFile(filename: string): boolean {
   const ext = filename.toLowerCase().split('.').pop() || ''
   return (RASTER_EXTENSIONS as readonly string[]).includes(ext)
@@ -204,8 +206,7 @@ export default function PGUploadDialog() {
     setErrorMsg('')
     setAssembledPath(null)
     setSelectedLayers([])
-    const baseName = file.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_')
-    setRasterTableName(baseName)
+    setRasterTableName(toTableName(file.name.replace(/\.[^/.]+$/, '')))
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -284,21 +285,15 @@ export default function PGUploadDialog() {
         setPhase('detecting')
         try {
           const layers = await api.detectLayers(filePath)
-          const detected = layers.length > 0
-            ? layers.map((l) => ({
-                name: l.name,
-                selected: true,
-                tableName: l.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-              }))
-            : [{
-                name: selectedFile.name.replace(/\.[^/.]+$/, ''),
-                selected: true,
-                tableName: selectedFile.name.replace(/\.[^/.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-              }]
-          setSelectedLayers(detected)
-        } catch {
-          const baseName = selectedFile.name.replace(/\.[^/.]+$/, '')
-          setSelectedLayers([{ name: baseName, selected: true, tableName: baseName.toLowerCase().replace(/[^a-z0-9_]/g, '_') }])
+          if (layers.length === 0) throw new Error('No layers found in this file.')
+          setSelectedLayers(
+            layers.map((l) => ({ name: l.name, selected: true, tableName: toTableName(l.name) }))
+          )
+        } catch (err) {
+          setErrorMsg(`Could not read layers from ${selectedFile.name}: ${(err as Error).message}`)
+          setPhase('error')
+          try { await cancelUpload(sessionId) } catch { /* best effort */ }
+          return
         }
       }
 
