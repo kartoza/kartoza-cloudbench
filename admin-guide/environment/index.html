@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1143,6 +1143,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#s3-queries-duckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3 Queries (DuckDB)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1558,6 +1569,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#s3-queries-duckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3 Queries (DuckDB)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1668,6 +1690,25 @@
 </tr>
 </tbody>
 </table>
+<h2 id="s3-queries-duckdb">S3 Queries (DuckDB)</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DUCKDB_MEMORY_LIMIT</code></td>
+<td>The most memory one query on S3 data may use</td>
+<td><code>1GB</code></td>
+</tr>
+</tbody>
+</table>
+<p>Each query runs on its own connection that can read <code>s3://</code> only (no local files,
+no <code>http(s)://</code> URLs), with only the querying user's S3 credentials.</p>
 <h2 id="security">Security</h2>
 <table>
 <thead>
@@ -1792,7 +1833,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
