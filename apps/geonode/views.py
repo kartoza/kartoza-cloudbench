@@ -7,14 +7,20 @@ Provides endpoints for:
 """
 
 import logging
+import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from rest_framework import status
+from rest_framework.negotiation import DefaultContentNegotiation
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,6 +28,7 @@ from apps.core.config import GeoNodeConnection, get_config
 from apps.upload.views import _assemble_file, _get_session
 
 from .client import GeoNodeClient, get_geonode_client
+from .geoserver import exception_message, is_exception, layer_hidden, open_ows
 from .remote_service import get_remote_service
 from .utilities import RESOURCE_TYPE_DETAIL_REQUEST_MAP
 
@@ -279,6 +286,208 @@ class GeoNodeResourceDetailView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+# The WMS requests the map preview makes; the proxy forwards nothing else.
+WMS_PROXY_REQUESTS = {"getmap", "getcapabilities", "getlegendgraphic"}
+
+
+class GeoNodeWMSProxyView(APIView):
+    """Proxy the map preview's WMS requests to the GeoNode's GeoServer.
+
+    The browser can't fetch the GeoServer tiles itself (CORS), so they go
+    through CloudBench, as the connection's user (``geoserver.open_ows``), so
+    private layers the user may see draw too.
+    """
+
+    def get(self, request, conn_id):
+        """Forward one WMS request and return GeoServer's answer as is."""
+        conn = get_config(request.user).get_geonode_connection(conn_id)
+        if not conn:
+            return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        params = {key.upper(): value for key, value in request.query_params.items()}
+        if (
+            params.get("SERVICE", "").upper() != "WMS"
+            or params.get("REQUEST", "").lower() not in WMS_PROXY_REQUESTS
+        ):
+            return Response(
+                {"error": "Only WMS GetMap, GetCapabilities and GetLegendGraphic are proxied."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with open_ows(conn, request.query_params) as upstream:
+                content = upstream.read()
+        except httpx.HTTPError as e:
+            return Response(
+                {"error": f"Failed to fetch from GeoServer: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        response = HttpResponse(
+            content,
+            status=upstream.status_code,
+            content_type=upstream.headers.get("content-type", "application/octet-stream"),
+        )
+        response["Cross-Origin-Resource-Policy"] = "cross-origin"
+        return response
+
+
+# Download formats: vectors through WFS GetFeature (format -> outputFormat, file
+# extension); GeoPackage is converted from GeoJSON, which GeoServer has no
+# output for without an extension. Rasters through WCS GetCoverage, as GeoTIFF.
+WFS_FORMATS = {
+    "shp": ("SHAPE-ZIP", ".zip"),
+    "json": ("application/json", ".json"),
+    "csv": ("csv", ".csv"),
+    "xlsx": ("excel2007", ".xlsx"),
+    "gpkg": ("application/json", ".gpkg"),
+}
+RASTER_FORMAT = "tif"
+DOWNLOAD_TIMEOUT = 300.0
+_ALTERNATE = re.compile(r"^[\w.-]+:[\w.-]+$")
+
+
+class _DownloadNegotiation(DefaultContentNegotiation):
+    """Always JSON (for errors): ``?format=`` is the download's file format here,
+    not DRF's renderer override, which would answer 404 to ``format=gpkg``."""
+
+    def select_renderer(self, request, renderers, format_suffix=None):  # noqa: ARG002
+        return renderers[0], renderers[0].media_type
+
+
+class GeoNodeDatasetDownloadView(APIView):
+    """Download a GeoNode dataset, from its GeoServer, as the connection's user.
+
+    GeoNode's own ``dataset_download`` only answers a logged-in browser
+    session, so this asks GeoServer instead, the way the map preview does
+    (``geoserver.open_ows``): private datasets the user may see download too.
+    ``format``: gpkg (default), shp, json, csv or xlsx for a vector, tif for a
+    raster. The file is streamed, not held in memory.
+    """
+
+    content_negotiation_class = _DownloadNegotiation
+
+    def get(self, request, conn_id, pk, alternate):  # noqa: ARG002
+        """Stream the dataset as an attachment.
+
+        ``pk`` is in the frontend's URL; GeoServer only needs ``alternate``.
+        """
+        conn = get_config(request.user).get_geonode_connection(conn_id)
+        if not conn:
+            return Response({"error": "Connection not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not _ALTERNATE.match(alternate):
+            return Response(
+                {"error": "Invalid dataset name, expected workspace:name"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        fmt = request.query_params.get("format", "gpkg").lower()
+        if fmt != RASTER_FORMAT and fmt not in WFS_FORMATS:
+            return Response(
+                {"error": f"Unsupported format: {fmt}"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        name = alternate.split(":", 1)[1]
+        if fmt == RASTER_FORMAT:
+            params = {
+                "service": "WCS",
+                "version": "2.0.1",
+                "request": "GetCoverage",
+                "coverageId": alternate.replace(":", "__"),
+                "format": "image/tiff",
+            }
+            extension = ".tif"
+        else:
+            output_format, extension = WFS_FORMATS[fmt]
+            params = {
+                "service": "WFS",
+                "version": "1.0.0",
+                "request": "GetFeature",
+                "typeName": alternate,
+                "outputFormat": output_format,
+            }
+
+        stack = ExitStack()
+        streaming = False
+        try:
+            upstream = stack.enter_context(open_ows(conn, params, timeout=DOWNLOAD_TIMEOUT))
+            if is_exception(upstream):
+                return _download_error(upstream, fmt)
+            if fmt == "gpkg":
+                return FileResponse(
+                    _geojson_to_gpkg(upstream, name), as_attachment=True, filename=f"{name}.gpkg"
+                )
+            streaming = True
+        except httpx.HTTPError as e:
+            return Response(
+                {"error": f"Failed to fetch from GeoServer: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+        finally:
+            # A streamed answer is closed once sent (body() below).
+            if not streaming:
+                stack.close()
+
+        def body():
+            try:
+                yield from upstream.iter_bytes()
+            finally:
+                stack.close()
+
+        response = StreamingHttpResponse(
+            body(), content_type=upstream.headers.get("content-type", "application/octet-stream")
+        )
+        response["Content-Disposition"] = f'attachment; filename="{name}{extension}"'
+        if "content-length" in upstream.headers and "content-encoding" not in upstream.headers:
+            response["Content-Length"] = upstream.headers["content-length"]
+        return response
+
+
+def _download_error(upstream: httpx.Response, fmt: str) -> Response:
+    """GeoServer refused the download: say why."""
+    if layer_hidden(upstream):
+        kind = "raster" if fmt == RASTER_FORMAT else "vector"
+        return Response(
+            {
+                "error": "GeoServer won't serve this dataset to this connection: it is "
+                "probably private and the connection's user may not see it, or it "
+                f"isn't a {kind} (the {fmt} format is for {kind}s)."
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return Response(
+        {"error": f"GeoServer couldn't export this dataset: {exception_message(upstream)}"},
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
+def _geojson_to_gpkg(upstream: httpx.Response, name: str) -> BinaryIO:
+    """Convert a WFS GeoJSON answer to a GeoPackage; returns it opened.
+
+    The working directory is removed at once: the open file stays readable,
+    and is gone from disk once closed.
+    """
+    work = Path(tempfile.mkdtemp(prefix="geonode-download-"))
+    try:
+        source = work / f"{name}.json"
+        with open(source, "wb") as f:
+            for chunk in upstream.iter_bytes():
+                f.write(chunk)
+        dest = work / f"{name}.gpkg"
+        result = subprocess.run(
+            ["ogr2ogr", "-f", "GPKG", "-nln", name, str(dest), str(source)],
+            capture_output=True,
+            text=True,
+            timeout=DOWNLOAD_TIMEOUT,
+        )
+        if result.returncode != 0:
+            raise ValueError(f"Couldn't convert to GeoPackage: {result.stderr.strip()}")
+        return open(dest, "rb")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 class GeoNodeUploadCompleteView(APIView):

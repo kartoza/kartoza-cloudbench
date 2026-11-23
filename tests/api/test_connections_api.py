@@ -3,8 +3,10 @@
 Note: URL patterns in this project do NOT use trailing slashes.
 """
 
+import shutil
 from unittest.mock import patch
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
@@ -388,6 +390,24 @@ class TestS3ConnectionsAPI:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+def _geoserver_by_token(http_mock, valid: str, body: bytes = b"PNG", content_type="image/png"):
+    """A GeoServer that serves the layer to ``valid``'s token only; anyone else
+    gets the "not found" it answers for a private layer."""
+
+    def handle(request):
+        http_mock.calls.append(request)
+        if request.headers.get("authorization") == f"Bearer {valid}":
+            return httpx.Response(200, content=body, headers={"content-type": content_type})
+        return httpx.Response(
+            200,
+            content=b'<ServiceException code="LayerNotDefined">Could not find layer x'
+            b"</ServiceException>",
+            headers={"content-type": "application/vnd.ogc.se_xml"},
+        )
+
+    return handle
+
+
 @pytest.mark.django_db
 @pytest.mark.api
 class TestGeoNodeConnectionsAPI:
@@ -411,6 +431,240 @@ class TestGeoNodeConnectionsAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_201_CREATED
+
+    def _geonode_id(self, api_client: APIClient, **auth: str) -> str:
+        response = api_client.post(
+            "/api/geonode/connections",
+            {
+                "name": "GN",
+                "url": "https://gn.example/",
+                **(auth or {"username": "u", "password": "p"}),
+            },
+            format="json",
+        )
+        return response.json()["id"]
+
+    def _wms(self, api_client: APIClient, conn_id: str, **params: str):
+        return api_client.get(
+            f"/api/geonode/connections/{conn_id}/wms",
+            {"SERVICE": "WMS", "REQUEST": "GetMap", **params},
+        )
+
+    def test_wms_proxy_forwards_getmap_to_geoserver(self, api_client: APIClient, http_mock) -> None:
+        """The map preview's tiles: forwarded to the GeoNode's GeoServer, image returned."""
+        conn_id = self._geonode_id(api_client)
+        http_mock.add(
+            "GET", "/geoserver/ows", content=b"PNG", headers={"content-type": "image/png"}
+        )
+        with patch("apps.geonode.geoserver.get_access_token", return_value="") as token:
+            response = self._wms(api_client, conn_id, LAYERS="geonode:roads")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "image/png"
+        assert response.content == b"PNG"
+        sent = http_mock.calls[0]
+        assert str(sent.url).startswith("https://gn.example/geoserver/ows?")
+        assert sent.url.params["LAYERS"] == "geonode:roads"
+        # No token to be had (login failed): asked anonymously.
+        assert "authorization" not in sent.headers
+        token.assert_called_once_with("https://gn.example/", "u", "p")
+
+    def test_wms_proxy_logs_in_for_a_password_connection(
+        self, api_client: APIClient, http_mock
+    ) -> None:
+        """GeoServer won't take GeoNode basic auth: the login's token goes as Bearer."""
+        conn_id = self._geonode_id(api_client)
+        http_mock.add(
+            "GET", "/geoserver/ows", content=b"PNG", headers={"content-type": "image/png"}
+        )
+        with patch("apps.geonode.geoserver.get_access_token", return_value="login-tok"):
+            self._wms(api_client, conn_id)
+        assert len(http_mock.calls) == 1
+        assert http_mock.calls[0].headers["authorization"] == "Bearer login-tok"
+
+    def test_wms_proxy_retries_a_hidden_layer_with_a_fresh_token(
+        self, api_client: APIClient, http_mock
+    ) -> None:
+        """An expired token reads as anonymous ("Could not find layer"): log in again."""
+        conn_id = self._geonode_id(api_client)
+        http_mock.handle = _geoserver_by_token(http_mock, valid="new")
+        with patch("apps.geonode.geoserver.get_access_token", side_effect=["old", "new"]) as token:
+            response = self._wms(api_client, conn_id)
+        assert response.content == b"PNG"
+        assert token.call_args.kwargs == {"refresh": True}
+        assert [c.headers["authorization"] for c in http_mock.calls] == [
+            "Bearer old",
+            "Bearer new",
+        ]
+
+    def test_wms_proxy_no_retry_when_the_token_is_the_same(
+        self, api_client: APIClient, http_mock
+    ) -> None:
+        """A layer that's really hidden (or missing) isn't asked for twice."""
+        conn_id = self._geonode_id(api_client)
+        http_mock.add(
+            "GET",
+            "/geoserver/ows",
+            content=b'<ServiceException code="LayerNotDefined"/>',
+            headers={"content-type": "application/vnd.ogc.se_xml"},
+        )
+        with patch("apps.geonode.geoserver.get_access_token", return_value="tok"):
+            response = self._wms(api_client, conn_id)
+        assert b"LayerNotDefined" in response.content
+        assert len(http_mock.calls) == 1
+
+    def test_wms_proxy_sends_the_geonode_token(self, api_client: APIClient, http_mock) -> None:
+        """A token connection's tiles carry its token, so private layers draw."""
+        conn_id = self._geonode_id(api_client, token="tok")
+        http_mock.add(
+            "GET", "/geoserver/ows", content=b"PNG", headers={"content-type": "image/png"}
+        )
+        with patch("apps.geonode.geoserver.get_access_token") as login:
+            self._wms(api_client, conn_id)
+        assert http_mock.calls[0].headers["authorization"] == "Bearer tok"
+        login.assert_not_called()
+
+    def test_wms_proxy_only_forwards_wms_reads(self, api_client: APIClient, http_mock) -> None:
+        conn_id = self._geonode_id(api_client)
+        response = api_client.get(
+            f"/api/geonode/connections/{conn_id}/wms",
+            {"SERVICE": "WFS", "REQUEST": "Transaction"},
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert http_mock.calls == []
+
+    def test_wms_proxy_unknown_connection(self, api_client: APIClient) -> None:
+        response = api_client.get(
+            "/api/geonode/connections/nope/wms", {"SERVICE": "WMS", "REQUEST": "GetMap"}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+@pytest.mark.api
+class TestGeoNodeDatasetDownloadAPI:
+    """GET /api/geonode/connections/<id>/download/<pk>/<alternate>?format=…"""
+
+    @pytest.fixture
+    def conn_id(self, api_client: APIClient) -> str:
+        return api_client.post(
+            "/api/geonode/connections",
+            {"name": "GN", "url": "https://gn.example/", "token": "tok"},
+            format="json",
+        ).json()["id"]
+
+    def _download(self, api_client: APIClient, conn_id: str, fmt: str, alternate="geonode:roads"):
+        return api_client.get(
+            f"/api/geonode/connections/{conn_id}/download/7/{alternate}", {"format": fmt}
+        )
+
+    def test_vector_through_wfs(self, api_client: APIClient, conn_id: str, http_mock) -> None:
+        """A shapefile: WFS GetFeature, with the connection's token, streamed as a download."""
+        http_mock.add(
+            "GET", "/geoserver/ows", content=b"ZIP", headers={"content-type": "application/zip"}
+        )
+        response = self._download(api_client, conn_id, "shp")
+        assert response.status_code == status.HTTP_200_OK
+        assert b"".join(response.streaming_content) == b"ZIP"
+        assert response["Content-Disposition"] == 'attachment; filename="roads.zip"'
+        sent = http_mock.calls[0]
+        assert sent.headers["authorization"] == "Bearer tok"
+        assert sent.url.params["service"] == "WFS"
+        assert sent.url.params["typeName"] == "geonode:roads"
+        assert sent.url.params["outputFormat"] == "SHAPE-ZIP"
+
+    def test_excel_isnt_taken_for_an_error(
+        self, api_client: APIClient, conn_id: str, http_mock
+    ) -> None:
+        """Its content type has "xml" in it, like GeoServer's exception reports."""
+        xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        http_mock.add("GET", "/geoserver/ows", content=b"XLSX", headers={"content-type": xlsx})
+        response = self._download(api_client, conn_id, "xlsx")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Disposition"] == 'attachment; filename="roads.xlsx"'
+
+    def test_raster_through_wcs(self, api_client: APIClient, conn_id: str, http_mock) -> None:
+        http_mock.add(
+            "GET", "/geoserver/ows", content=b"TIFF", headers={"content-type": "image/tiff"}
+        )
+        response = self._download(api_client, conn_id, "tif", alternate="geonode:dem")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Disposition"] == 'attachment; filename="dem.tif"'
+        params = http_mock.calls[0].url.params
+        assert params["service"] == "WCS" and params["request"] == "GetCoverage"
+        assert params["coverageId"] == "geonode__dem"
+        assert params["format"] == "image/tiff"
+
+    @pytest.mark.skipif(not shutil.which("ogr2ogr"), reason="needs GDAL's ogr2ogr")
+    def test_geopackage_converted_from_geojson(
+        self, api_client: APIClient, conn_id: str, http_mock
+    ) -> None:
+        """GeoServer has no GeoPackage output (without an extension): convert its GeoJSON."""
+        geojson = (
+            b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"n":1},'
+            b'"geometry":{"type":"Point","coordinates":[115.2,-8.7]}}]}'
+        )
+        http_mock.add(
+            "GET", "/geoserver/ows", content=geojson, headers={"content-type": "application/json"}
+        )
+        response = self._download(api_client, conn_id, "gpkg")
+        assert response.status_code == status.HTTP_200_OK
+        assert http_mock.calls[0].url.params["outputFormat"] == "application/json"
+        assert response["Content-Disposition"] == 'attachment; filename="roads.gpkg"'
+        assert b"".join(response.streaming_content).startswith(b"SQLite format 3")
+
+    def test_private_dataset_the_user_may_not_see(
+        self, api_client: APIClient, conn_id: str, http_mock
+    ) -> None:
+        """GeoServer's "unknown" for a hidden layer becomes a clear 404."""
+        http_mock.add(
+            "GET",
+            "/geoserver/ows",
+            content=b"<ServiceException>Feature type geonode:roads unknown</ServiceException>",
+            headers={"content-type": "application/vnd.ogc.se_xml"},
+        )
+        response = self._download(api_client, conn_id, "csv")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "private" in response.json()["error"]
+
+    def test_password_connection_logs_in_again_for_a_hidden_dataset(
+        self, api_client: APIClient, http_mock
+    ) -> None:
+        conn_id = api_client.post(
+            "/api/geonode/connections",
+            {"name": "GN", "url": "https://gn.example/", "username": "u", "password": "p"},
+            format="json",
+        ).json()["id"]
+        http_mock.handle = _geoserver_by_token(
+            http_mock, valid="new", body=b"CSV", content_type="text/csv"
+        )
+        with patch("apps.geonode.geoserver.get_access_token", side_effect=["old", "new"]):
+            response = self._download(api_client, conn_id, "csv")
+        assert response.status_code == status.HTTP_200_OK
+        assert b"".join(response.streaming_content) == b"CSV"
+
+    def test_other_geoserver_errors_pass_its_message_on(
+        self, api_client: APIClient, conn_id: str, http_mock
+    ) -> None:
+        http_mock.add(
+            "GET",
+            "/geoserver/ows",
+            content=b"<ServiceException>Too many features</ServiceException>",
+            headers={"content-type": "text/xml"},
+        )
+        response = self._download(api_client, conn_id, "json")
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert response.json()["error"].endswith("Too many features")
+
+    def test_rejects_unknown_formats_and_names(
+        self, api_client: APIClient, conn_id: str, http_mock
+    ) -> None:
+        assert self._download(api_client, conn_id, "kml").status_code == 400
+        assert self._download(api_client, conn_id, "shp", alternate="roads").status_code == 400
+        assert http_mock.calls == []
+
+    def test_unknown_connection(self, api_client: APIClient) -> None:
+        response = self._download(api_client, "nope", "gpkg")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.django_db
