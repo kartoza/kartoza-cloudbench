@@ -278,6 +278,14 @@ def _now_iso_ms() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+# MapLibre doesn't match a layer to the geometries it suits: a fill layer
+# closes each line into a polygon and fills it (a layer of lines then shows
+# as spiky filled shapes), and a circle layer draws a circle on every vertex
+# of a line or polygon. So each layer of the default style only takes its own.
+POLYGONS_ONLY = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], True, False]
+POINTS_ONLY = ["match", ["geometry-type"], ["Point", "MultiPoint"], True, False]
+
+
 def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
     """`source_layer` must match the PMTiles file's own internal vector
     layer name (from its tippecanoe-written metadata), not the collection
@@ -293,9 +301,11 @@ def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
                 "type": "fill",
                 "source": "data",
                 "source-layer": source_layer,
+                "filter": POLYGONS_ONLY,
                 "paint": {"fill-color": "#2d7d9b", "fill-opacity": 0.5},
             },
             {
+                # Lines, and the polygons' outlines.
                 "id": "line",
                 "type": "line",
                 "source": "data",
@@ -309,7 +319,7 @@ def default_style_for_pmtiles(source_layer: str, data_filename: str) -> dict:
                 "type": "circle",
                 "source": "data",
                 "source-layer": source_layer,
-                "filter": ["==", ["geometry-type"], "Point"],
+                "filter": POINTS_ONLY,
                 "paint": {"circle-color": "#2d7d9b", "circle-radius": 3},
             },
         ],
