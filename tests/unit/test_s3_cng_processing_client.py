@@ -249,9 +249,7 @@ def test_resumes_interrupted_jobs_oldest_first(job):
 
 @pytest.mark.django_db
 def test_resuming_a_geopackage_still_being_inspected_calls_inspect_not_run(job):
-    inspecting = job(
-        status=CngLiteJobStatus.INSPECTING, source_name="parcels.gpkg", layers=None
-    )
+    inspecting = job(status=CngLiteJobStatus.INSPECTING, source_name="parcels.gpkg", layers=None)
 
     with (
         patch.object(CNGProcessingClient, "inspect", autospec=True) as inspect,

@@ -297,7 +297,9 @@ def test_start_conversion_stages_a_vector_file_as_it_is(
 
 
 @pytest.mark.django_db
-def test_start_conversion_streams_a_geopackage_straight_to_s3(settings, tmp_path, owner, connection):
+def test_start_conversion_streams_a_geopackage_straight_to_s3(
+    settings, tmp_path, owner, connection
+):
     """A GeoPackage uploaded straight to convert (no layer picker) never
     touches CloudBench's own disk - streamed straight to S3."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)

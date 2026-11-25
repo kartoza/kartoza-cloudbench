@@ -415,7 +415,9 @@ def raster_gpkg_inspect_job(settings, tmp_path, owner, connection):
 
 @pytest.mark.django_db
 def test_raster_geopackage_inspection_finds_no_vector_layers(raster_gpkg_inspect_job):
-    assert raster_gpkg_inspect_job.kind == "pmtiles"  # not reassigned — inspection alone doesn't decide
+    assert (
+        raster_gpkg_inspect_job.kind == "pmtiles"
+    )  # not reassigned — inspection alone doesn't decide
     assert raster_gpkg_inspect_job.inspection["layers"] == []
     assert raster_gpkg_inspect_job.inspection["rasterTables"] == [{"name": "elevation"}]
 

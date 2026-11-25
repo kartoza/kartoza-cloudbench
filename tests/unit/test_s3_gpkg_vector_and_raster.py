@@ -23,7 +23,10 @@ def inspected(django_user_model):
         license="CC-BY-4.0",
         license_url="",
         replace_existing=True,
-        inspection={"layers": [{"name": "roads"}, {"name": "rivers"}], "rasterTables": [{"name": "dem"}]},
+        inspection={
+            "layers": [{"name": "roads"}, {"name": "rivers"}],
+            "rasterTables": [{"name": "dem"}],
+        },
         message="Waiting for layer selection",
     )
 
