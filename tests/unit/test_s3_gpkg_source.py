@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from apps.s3 import portolan
-from apps.s3.cng_lite import _publish_source, job_directory
+from apps.s3.cng_lite import _publish_source
 from apps.s3.models import CngLiteJob
 
 GPKG = b"SQLite format 3\x00" + b"g" * 4000
@@ -68,8 +68,7 @@ def test_agents_and_readme_point_at_the_source():
 
 
 @pytest.fixture
-def gpkg_job(settings, tmp_path, django_user_model):
-    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+def gpkg_job(django_user_model):
     return CngLiteJob.objects.create(
         kind="pmtiles",
         owner=django_user_model.objects.create(username="7"),
@@ -82,34 +81,8 @@ def gpkg_job(settings, tmp_path, django_user_model):
 
 
 @pytest.mark.django_db
-def test_source_is_moved_into_the_group_folder_from_the_local_copy(gpkg_job):
-    staged = job_directory("pmtiles", gpkg_job.id)
-    staged.mkdir(parents=True)
-    (staged / "source.gpkg").write_bytes(GPKG)
-    client = Mock()
-    uploaded = {}
-    client.client.upload_fileobj.side_effect = lambda body, _bucket, key, **kwargs: uploaded.update(
-        {key: (body.read(), kwargs["ExtraArgs"]["ContentType"])}
-    )
-
-    asset = _publish_source(gpkg_job, client, "maps/castelobranco")
-
-    dest = "maps/castelobranco/source/CasteloBranco.gpkg"
-    assert uploaded == {dest: (GPKG, "application/geopackage+sqlite3")}
-    assert asset == {
-        "filename": "../source/CasteloBranco.gpkg",
-        "role": "source",
-        "media_type": "application/geopackage+sqlite3",
-        "file": {"checksum": "1220" + hashlib.sha256(GPKG).hexdigest(), "size": len(GPKG)},
-    }
-    # The staged copy goes, and the job now records where the original lives.
-    client.delete_object.assert_called_once_with("maps/sources/job-1/CasteloBranco.gpkg")
-    gpkg_job.refresh_from_db()
-    assert gpkg_job.source_key == dest
-
-
-@pytest.mark.django_db
-def test_source_is_copied_within_s3_when_no_local_copy_is_left(gpkg_job):
+def test_source_is_copied_within_s3(gpkg_job):
+    """Never staged on CloudBench's own disk, so it's always a plain S3-to-S3 copy."""
     client = Mock()
 
     asset = _publish_source(gpkg_job, client, "maps/castelobranco")
@@ -122,6 +95,10 @@ def test_source_is_copied_within_s3_when_no_local_copy_is_left(gpkg_job):
     # No local bytes to hash: listed without a checksum rather than a guessed one.
     assert asset["file"] is None
     assert asset["filename"] == "../source/CasteloBranco.gpkg"
+    # The old key goes, and the job now records where the original lives.
+    client.delete_object.assert_called_once_with("maps/sources/job-1/CasteloBranco.gpkg")
+    gpkg_job.refresh_from_db()
+    assert gpkg_job.source_key == "maps/castelobranco/source/CasteloBranco.gpkg"
 
 
 @pytest.mark.django_db
