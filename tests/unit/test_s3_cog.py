@@ -367,6 +367,24 @@ def test_a_geopackage_uploaded_to_convert_lists_its_raster_tables(cog_job, setti
 
 
 @pytest.mark.django_db
+def test_geopackage_upload_streams_straight_to_s3(settings, tmp_path, owner, connection):
+    """start_conversion's GeoPackage branch never stages the upload on local disk."""
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    with (
+        patch("apps.s3.cog.get_s3_client") as get_client,
+        patch("apps.s3.cog.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}
+        job = start_conversion(gpkg_file(), "folder/rasters.gpkg", str(connection.id), owner)
+    get_client.return_value.client.upload_fileobj.assert_called_once()
+    uploaded = get_client.return_value.client.upload_fileobj.call_args.args[0]
+    assert uploaded.read() == GPKG_MAGIC + b"fixture-bytes"
+    assert list((tmp_path / "cog" / str(job.id)).iterdir()) == []
+
+
+@pytest.mark.django_db
 def test_cog_job_status_reports_formats(cog_job, owner):
     api = APIClient()
     api.force_authenticate(user=owner)
@@ -383,33 +401,33 @@ def raster_gpkg_inspect_job(settings, tmp_path, owner, connection):
     """A GeoPackage inspection that finds only raster tables (no vector layers)."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
-    contents = {"layers": [], "rasterTables": [{"name": "elevation"}]}
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
-        patch("apps.s3.pmtiles.read_contents", return_value=contents),
+        patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
-        get_client.return_value.generate_presigned_url.return_value = "http://s3/presigned"
-        job, layers, raster_tables = inspect_geopackage(
-            gpkg_file(), "folder/rasters.gpkg", str(connection.id), owner
-        )
-    return job, layers, raster_tables
+        job = inspect_geopackage(gpkg_file(), "folder/rasters.gpkg", str(connection.id), owner)
+    job.inspection = {"layers": [], "rasterTables": [{"name": "elevation"}]}
+    job.save(update_fields=["inspection", "updated_at"])
+    return job
 
 
 @pytest.mark.django_db
 def test_raster_geopackage_inspection_finds_no_vector_layers(raster_gpkg_inspect_job):
-    job, layers, raster_tables = raster_gpkg_inspect_job
-    assert job.kind == "pmtiles"  # not yet reassigned — inspection alone doesn't decide
-    assert layers == []
-    assert raster_tables == [{"name": "elevation"}]
+    assert (
+        raster_gpkg_inspect_job.kind == "pmtiles"
+    )  # not reassigned — inspection alone doesn't decide
+    assert raster_gpkg_inspect_job.inspection["layers"] == []
+    assert raster_gpkg_inspect_job.inspection["rasterTables"] == [{"name": "elevation"}]
 
 
 @pytest.mark.django_db
 def test_start_geopackage_cog_conversion_reassigns_job_kind(
     raster_gpkg_inspect_job, settings, tmp_path, owner
 ):
-    job, _, raster_tables = raster_gpkg_inspect_job
+    job = raster_gpkg_inspect_job
+    raster_tables = job.inspection["rasterTables"]
     # The staging directory from inspect_geopackage (kind="pmtiles") exists...
     assert (Path(settings.UPLOAD_TEMP_DIR) / "pmtiles" / str(job.id)).exists()
     with patch("apps.s3.cog.threading.Thread"):
@@ -426,14 +444,14 @@ def test_start_geopackage_cog_conversion_reassigns_job_kind(
 
 @pytest.mark.django_db
 def test_start_geopackage_cog_conversion_requires_tables(raster_gpkg_inspect_job, owner):
-    job, _, _ = raster_gpkg_inspect_job
     with pytest.raises(ValueError, match="Select at least one"):
-        start_geopackage_cog_conversion(job.id, owner, [])
+        start_geopackage_cog_conversion(raster_gpkg_inspect_job.id, owner, [])
 
 
 @pytest.mark.django_db
 def test_geopackage_convert_endpoint_routes_by_format(raster_gpkg_inspect_job, settings, owner):
-    job, _, raster_tables = raster_gpkg_inspect_job
+    job = raster_gpkg_inspect_job
+    raster_tables = job.inspection["rasterTables"]
     api = APIClient()
     api.force_authenticate(user=owner)
     with patch("apps.s3.cog.threading.Thread"):

@@ -266,6 +266,19 @@ export default function S3UploadDialog() {
   const isConverting = !!conversionJobId &&
     (!conversionJob || isActiveStatus(conversionJob.status))
 
+  // Poll the GeoPackage job while CloudNativeGIS reads its contents
+  // (apps.s3.cng_lite.CNGProcessingClient.inspect) — on demand, it may
+  // need to provision its own server first, so this isn't instant.
+  const { data: inspectJob } = useQuery({
+    queryKey: ['inspectJob', gpkgJobId],
+    queryFn: () => (gpkgJobId ? api.getConversionJob(gpkgJobId) : null),
+    enabled: isInspecting && !!gpkgJobId,
+    refetchInterval: (query) => {
+      const job = query.state.data
+      return job && (job.inspection || ['failed', 'cancelled'].includes(job.status)) ? false : 2000
+    },
+  })
+
   const resetInputs = useCallback(() => {
     setSelectedFile(null)
     setCompanionFiles([])
@@ -309,6 +322,49 @@ export default function S3UploadDialog() {
     }
     if (conversionJob.status === 'completed') resetInputs()
   }, [conversionJob, conversionJobId, conversionJobIds, connectionId, queryClient, resetInputs])
+
+  // Once CloudNativeGIS has read the GeoPackage (or inspecting it failed or
+  // was cancelled - e.g. it timed out starting an on-demand server), show
+  // the layer picker or report why there's nothing to pick from.
+  useEffect(() => {
+    if (!isInspecting || !inspectJob) return
+    if (inspectJob.status === 'failed' || inspectJob.status === 'cancelled') {
+      setIsInspecting(false)
+      setGpkgJobId(null)
+      toast({
+        title: 'Could not read GeoPackage',
+        description: inspectJob.error || 'Reading the GeoPackage was cancelled.',
+        status: 'error',
+        duration: 5000,
+      })
+      return
+    }
+    if (!inspectJob.inspection) return
+    const { layers, rasterTables } = inspectJob.inspection
+    setIsInspecting(false)
+    if (layers.length === 0 && rasterTables.length === 0) {
+      toast({
+        title: 'Nothing to convert',
+        description: 'This GeoPackage has no vector layers or raster tables.',
+        status: 'warning',
+        duration: 5000,
+      })
+      // Cancel the job inspecting it already created — it has nothing to
+      // confirm, so it would otherwise sit there orphaned.
+      api.cancelGeoPackageInspection(inspectJob.id).catch(() => {})
+      setGpkgJobId(null)
+      return
+    }
+    // Offer both kinds; everything starts selected.
+    setGpkgLayers(layers)
+    setGpkgRasterTables(rasterTables)
+    setSelectedLayerNames(
+      new Set([
+        ...layers.map((layer) => `vector:${layer.name}`),
+        ...rasterTables.map((table) => `raster:${table.name}`),
+      ])
+    )
+  }, [isInspecting, inspectJob, toast])
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -357,14 +413,16 @@ export default function S3UploadDialog() {
       })
       return
     }
-    // Swapping files while a GeoPackage is pending layer selection would
-    // otherwise leave its staged S3 upload behind — cancel it first.
+    // Swapping files while a GeoPackage is being inspected, or pending
+    // layer selection, would otherwise leave that job (and its on-demand
+    // server, if any) running unattended — cancel it first.
     if (gpkgJobId) {
       api.cancelGeoPackageInspection(gpkgJobId).catch(() => {})
     }
     setSelectedFile(file)
     setCompanionFiles(files.filter((component) => component !== file))
     setUploadResult(null)
+    setIsInspecting(false)
     setGpkgJobId(null)
     setConversionJobIds([])
     setGpkgLayers(null)
@@ -457,46 +515,26 @@ export default function S3UploadDialog() {
     // A GeoPackage going through cng-lite is inspected first — it may
     // hold vector layers (-> PMTiles), raster tables (-> COG), or both;
     // only inspecting it tells us which, so the format picked so far is
-    // just a guess. Stage it and ask what it actually contains.
+    // just a guess. Stage it and have CloudNativeGIS read what it actually
+    // contains — asynchronous (it may need its own server provisioned
+    // first), so the result is picked up by polling below, not here.
     if (isGpkgFile && convertToCloudNative && cngLiteConnected) {
       setIsInspecting(true)
       setUploadResult(null)
       try {
-        const { jobId, layers, rasterTables } = await api.inspectGeoPackage(
+        const { jobId } = await api.inspectGeoPackage(
           connectionId, selectedFile, customKey || undefined, license, requestedLicenseUrl, replace,
           requestedServerTypeId, requestedAutoDestroy, requestedInstanceServerId
         )
-        if (layers.length === 0 && rasterTables.length === 0) {
-          toast({
-            title: 'Nothing to convert',
-            description: 'This GeoPackage has no vector layers or raster tables.',
-            status: 'warning',
-            duration: 5000,
-          })
-          // Cancel the job the inspect step already created — it has
-          // nothing to confirm, so it would otherwise sit there orphaned.
-          await api.cancelGeoPackageInspection(jobId).catch(() => {})
-          return
-        }
         setGpkgJobId(jobId)
-        // Offer both kinds; everything starts selected.
-        setGpkgLayers(layers)
-        setGpkgRasterTables(rasterTables)
-        setSelectedLayerNames(
-          new Set([
-            ...layers.map((layer) => `vector:${layer.name}`),
-            ...rasterTables.map((table) => `raster:${table.name}`),
-          ])
-        )
       } catch (err) {
+        setIsInspecting(false)
         toast({
           title: 'Could not read GeoPackage',
           description: (err as Error).message,
           status: 'error',
           duration: 5000,
         })
-      } finally {
-        setIsInspecting(false)
       }
       return
     }
@@ -663,9 +701,10 @@ export default function S3UploadDialog() {
   }
 
   const handleClose = () => {
-    // Cancelling the layer picker means the raw GeoPackage staged in S3
-    // during inspection would otherwise be left behind — clean it up.
-    if (inLayerPickerMode && gpkgJobId) {
+    // Closing while still being inspected, or while the layer picker is up,
+    // would otherwise leave that job (and its on-demand server, if any)
+    // running unattended — cancel it.
+    if ((isInspecting || inLayerPickerMode) && gpkgJobId) {
       api.cancelGeoPackageInspection(gpkgJobId).catch(() => {})
     }
     closeDialog()

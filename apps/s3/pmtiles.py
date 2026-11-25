@@ -14,15 +14,19 @@ from . import portolan
 from .client import get_s3_client
 from .cng_lite import (
     Converter,
+    cancel_inspection,
     check_target,
     job_directory,
     source_object_key,
     sources_directory_key,
 )
 from .cng_lite import (
+    inspect_conversion as inspect_cng_lite_job,
+)
+from .cng_lite import (
     run_conversion as run_cng_lite_conversion,
 )
-from .geopackage import is_geopackage, prepare_geopackage, read_contents
+from .geopackage import is_geopackage, validate_geopackage
 from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "pmtiles"
@@ -204,33 +208,48 @@ def start_conversion(
     directory.mkdir(parents=True, mode=0o700)
     try:
         if geopackage:
-            source_path = directory / "source.gpkg"
-            prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
+            # Streamed straight to S3, never staged on local disk - a large
+            # GeoPackage shouldn't need CloudBench's own disk space.
+            validate_geopackage(uploaded_file, settings.UPLOAD_MAX_FILE_SIZE)
             source_filename = PurePosixPath(uploaded_file.name).name
-            content_type = "application/geopackage+sqlite3"
-        elif vector_file:
-            suffix = PurePosixPath(uploaded_file.name).suffix.lower()
-            source_path = directory / f"source{suffix}"
-            with source_path.open("wb") as output:
-                for chunk in uploaded_file.chunks():
-                    output.write(chunk)
-            source_filename = PurePosixPath(uploaded_file.name).name
-            content_type = VECTOR_FILE_TYPES[suffix]
-        else:
-            source_path = directory / "source.zip"
-            prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
-            source_filename = f"{PurePosixPath(uploaded_file.name).stem}.zip"
-            content_type = "application/zip"
-        job.source_key = source_object_key(job.output_key, job.id, source_filename)
-        if companion_files:
-            upload_raw_components(s3_client, job.output_key, job.id, uploaded_file, companion_files)
-        with source_path.open("rb") as source_file:
+            job.source_key = source_object_key(job.output_key, job.id, source_filename)
+            if companion_files:
+                upload_raw_components(
+                    s3_client, job.output_key, job.id, uploaded_file, companion_files
+                )
+            uploaded_file.seek(0)
             s3_client.client.upload_fileobj(
-                source_file,
+                uploaded_file,
                 s3_client.bucket,
                 job.source_key,
-                ExtraArgs={"ContentType": content_type},
+                ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
             )
+        else:
+            if vector_file:
+                suffix = PurePosixPath(uploaded_file.name).suffix.lower()
+                source_path = directory / f"source{suffix}"
+                with source_path.open("wb") as output:
+                    for chunk in uploaded_file.chunks():
+                        output.write(chunk)
+                source_filename = PurePosixPath(uploaded_file.name).name
+                content_type = VECTOR_FILE_TYPES[suffix]
+            else:
+                source_path = directory / "source.zip"
+                prepare_shapefile(uploaded_file, source_path, job.id, companion_files)
+                source_filename = f"{PurePosixPath(uploaded_file.name).stem}.zip"
+                content_type = "application/zip"
+            job.source_key = source_object_key(job.output_key, job.id, source_filename)
+            if companion_files:
+                upload_raw_components(
+                    s3_client, job.output_key, job.id, uploaded_file, companion_files
+                )
+            with source_path.open("rb") as source_file:
+                s3_client.client.upload_fileobj(
+                    source_file,
+                    s3_client.bucket,
+                    job.source_key,
+                    ExtraArgs={"ContentType": content_type},
+                )
         job.save()
         threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
     except Exception:
@@ -253,25 +272,27 @@ def inspect_geopackage(
     auto_destroy=True,
     instance_server=None,
 ):
-    """Stage a GeoPackage in S3 and read what it contains (geopackage.read_contents).
+    """Stage a GeoPackage in S3 and start reading what it contains, on CloudNativeGIS.
 
     Creates the CngLiteJob now (so the eventual conversion reuses the same
-    already-uploaded source), but leaves it "pending" — the caller is
-    expected to let the user pick layers, then call start_geopackage_conversion
-    (vector layers -> PMTiles) or cog.start_geopackage_conversion (raster
-    tables -> COG, for a GeoPackage that turns out to have no vector layers).
+    already-uploaded source), streams the upload straight to S3 (never to
+    CloudBench's own disk), then starts a background thread asking
+    CloudNativeGIS what it holds (see cng_lite.CNGProcessingClient.inspect) -
+    provisioning its server first if needed, same as a real conversion. The
+    job is left INSPECTING, then PENDING with `inspection` set once that's
+    done - the caller is expected to poll it (GET the job) until then, let
+    the user pick layers, and call start_geopackage_conversion (vector
+    layers -> PMTiles) or cog.start_geopackage_conversion (raster tables ->
+    COG, for a GeoPackage that turns out to have no vector layers).
 
     Raises TargetExists if the GeoPackage's folder already holds data and
     `replace` isn't set (see check_target).
-
-    Returns (job, layers, raster_tables).
     """
     if not CngLiteJob.is_valid():
         raise ValueError("CloudNativeGIS is not configured.")
     if not is_geopackage(uploaded_file.name):
         raise ValueError("Select a GeoPackage (.gpkg) file.")
-    if uploaded_file.size > settings.UPLOAD_MAX_FILE_SIZE:
-        raise ValueError("The GeoPackage exceeds the upload size limit.")
+    validate_geopackage(uploaded_file, settings.UPLOAD_MAX_FILE_SIZE)
 
     s3_client = get_s3_client(connection_id, user)
     check_target(s3_client, output_key(key), uploaded_file.name, replace)
@@ -294,29 +315,15 @@ def inspect_geopackage(
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
     try:
-        source_path = directory / "source.gpkg"
-        prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
-        # Read from the staged copy on disk, before uploading, so an
-        # unreadable GeoPackage isn't left in S3.
-        # TODO: Migrate to read directly from S3 - read_contents(f"/vsicurl/
-        # {presigned_url}") after the upload - ready for a GeoPackage uploaded
-        # to S3 directly, never staged on CloudBench's disk. Blocked: on
-        # DigitalOcean Spaces, GDAL's /vsicurl/ fails on a presigned GET URL
-        # ("Unable to open datasource"), even with CPL_VSIL_CURL_USE_HEAD=NO
-        # (a HEAD on it is 403; a ranged GET is 206). It worked on MinIO.
-        inspection = read_contents(str(source_path))
-        layers = inspection["layers"]
-        raster_tables = inspection["rasterTables"]
         job.source_key = source_object_key(
             job.output_key, job.id, PurePosixPath(uploaded_file.name).name
         )
-        with source_path.open("rb") as source_file:
-            s3_client.client.upload_fileobj(
-                source_file,
-                s3_client.bucket,
-                job.source_key,
-                ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
-            )
+        s3_client.client.upload_fileobj(
+            uploaded_file,
+            s3_client.bucket,
+            job.source_key,
+            ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
+        )
         job.save()
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
@@ -326,7 +333,8 @@ def inspect_geopackage(
     # Keep `directory` around: run_conversion (started once layers are
     # confirmed) reuses it to write the downloaded result, and cleans it
     # up itself in its `finally` once the job finishes either way.
-    return job, layers, raster_tables
+    threading.Thread(target=inspect_cng_lite_job, args=(job.id,), daemon=True).start()
+    return job
 
 
 def start_geopackage_conversion(job_id, user, layers):
@@ -345,29 +353,18 @@ def start_geopackage_conversion(job_id, user, layers):
 
 
 def cancel_geopackage_inspection(job_id, user):
-    """Discard a previously-inspected GeoPackage job the user didn't confirm.
+    """Cancel a GeoPackage job the user hasn't confirmed layers for yet.
 
-    Removes the raw GeoPackage `inspect_geopackage` already staged in S3,
-    so cancelling the layer picker doesn't leave it behind.
+    While it's being inspected, or once inspected and awaiting the user's
+    pick (see cng_lite.cancel_inspection): deprovisioning its server, on
+    demand, as any cancelled conversion would. Its staged upload in S3 is
+    left as it is for now - an on-demand auto_destroy server tears down
+    whatever it was given anyway.
     """
-    # `layers` is set synchronously by start_geopackage_conversion, before
-    # its background thread gets a chance to move status off "pending" —
-    # check it too so a confirmed job can't be cancelled out from under it.
-    job = CngLiteJob.objects.filter(
-        pk=job_id,
-        owner=user,
-        kind=KIND,
-        status=CngLiteJobStatus.PENDING,
-        layers__isnull=True,
-    ).first()
+    job = CngLiteJob.objects.filter(pk=job_id, owner=user, kind=KIND, layers__isnull=True).first()
     if not job:
         raise ValueError("Job not found, or conversion was already started.")
-    # Without its connection (deleted since), the staged upload went with it.
-    if job.source_key and job.connection_id and not job.source_in_place:
-        s3_client = get_s3_client(job.connection_id, user)
-        s3_client.delete_object(job.source_key)
-    shutil.rmtree(job_directory(KIND, job.id), ignore_errors=True)
-    job.delete()
+    cancel_inspection(job)
 
 
 CONVERTER = Converter(

@@ -249,6 +249,16 @@ S3_MAX_ATTEMPTS = max(1, int(os.environ.get("S3_MAX_ATTEMPTS", "3")))
 # How long a conversion waits for its CloudNativeGIS service to answer /health
 # before failing (see CngLiteJob.provision).
 CLOUDNATIVEGIS_PROVISIONING_TIMEOUT = 600
+# How long a GeoPackage job may sit awaiting layer selection (inspected, but
+# not yet confirmed) before it's given up on - see
+# apps.s3.cng_lite.expire_stalled_inspection. On demand, this is also how
+# long an abandoned upload dialog leaves a server running (and billed)
+# before anything notices; longer than CLOUDNATIVEGIS_CONVERSION_TIMEOUT,
+# since it's about how long a person takes to decide, not how long a
+# conversion takes to run.
+CLOUDNATIVEGIS_LAYER_SELECTION_TIMEOUT = max(
+    1, int(os.environ.get("CLOUDNATIVEGIS_LAYER_SELECTION_TIMEOUT", "1800"))
+)
 # Shared secret sent as `Authorization: Bearer <token>` on every request to
 # CloudNativeGIS Lite (must match that service's LITE_API_TOKEN) — it has no
 # auth of its own otherwise. A static token that never expires for now;

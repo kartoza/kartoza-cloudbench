@@ -67,6 +67,13 @@ class CngLiteJobStatus(models.TextChoices):
     # waiting for its layers to be picked (`layers` null), or a GeoPackage's
     # raster job waiting for its vector job (see geopackage_convert).
     PENDING = "pending", "Pending"
+    # A GeoPackage's layers/raster tables are being read (see
+    # apps.s3.cng_lite.CNGProcessingClient.inspect): provisioning (its own
+    # server, same as a real conversion), then asking CloudNativeGIS what
+    # it holds. Distinct from PROVISIONING so a restart or cancellation
+    # can't mistake this for a confirmed conversion under way. Lands back
+    # on PENDING, `inspection` set, for the user to pick from.
+    INSPECTING = "inspecting", "Inspecting"
     # Getting the CloudNativeGIS service the job will run on - its
     # cloudnativegis_url/cloudnativegis_api_token, or its instance_server
     # (CLOUDNATIVEGIS_ON_DEMAND).
@@ -95,6 +102,7 @@ class CngLiteJobStatus(models.TextChoices):
 # Not finished yet: listed as in progress, and checked for having stalled.
 ACTIVE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.PENDING,
+    CngLiteJobStatus.INSPECTING,
     CngLiteJobStatus.PROVISIONING,
     CngLiteJobStatus.PUSHING,
     CngLiteJobStatus.POLLING,
@@ -108,6 +116,7 @@ ACTIVE_CNG_LITE_JOB_STATUSES = (
 # catalog half-written) or finishing.
 CANCELLABLE_CNG_LITE_JOB_STATUSES = (
     CngLiteJobStatus.PENDING,
+    CngLiteJobStatus.INSPECTING,
     CngLiteJobStatus.PROVISIONING,
     CngLiteJobStatus.PUSHING,
     CngLiteJobStatus.POLLING,
@@ -149,6 +158,10 @@ class CngLiteJob(models.Model):
     # inspecting the file (see apps.s3.pmtiles.inspect_geopackage). Null for
     # jobs that don't go through the inspect/pick flow (shapefiles, TIFFs).
     layers = models.JSONField(null=True, blank=True)
+    # What CloudNativeGIS reported the GeoPackage holds (see
+    # apps.s3.cng_lite.CNGProcessingClient.inspect): {layers, rasterTables},
+    # for the upload dialog's picker. Null until inspection has finished.
+    inspection = models.JSONField(null=True, blank=True)
     # SPDX id (or "other") the user picked at upload time, carried through
     # to the generated Portolan collection.json — see apps.s3.portolan.
     license = models.CharField(max_length=100, default="other", blank=True)
@@ -541,6 +554,8 @@ class CngLiteJob(models.Model):
             "inputSize": self.input_size,
             "outputSize": self.output_size,
             "layers": self.layers,
+            # What CloudNativeGIS found in a GeoPackage, for the picker.
+            "inspection": self.inspection,
             # The layers/tables CloudNativeGIS couldn't convert, and why.
             "skipped": [
                 {"name": str(e.get("name", "")), "error": readable_layer_error(e.get("error"))}

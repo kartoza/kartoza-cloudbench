@@ -41,6 +41,7 @@ from .client import S3Client, S3ClientManager, get_s3_client
 from .cng_lite import (
     TargetExists,
     cancel_job,
+    expire_stalled_inspection,
     expire_stalled_job,
     folder_exists,
     target_folder,
@@ -1170,7 +1171,16 @@ def _recent_conversion_jobs(user):
     left out: that step belongs to the open upload dialog. So are the layers
     of a bulk upload, which is listed as one entry (see S3BulkListView). A running job
     that stopped reporting is marked failed first (see expire_stalled_job).
+
+    Piggybacks on this call (made whenever this user's browser polls their
+    jobs - e.g. the header's Jobs panel, open or not in the same tab as the
+    upload dialog) to also give up on any of their GeoPackage jobs left
+    awaiting layer selection too long (see expire_stalled_inspection) -
+    there's no periodic sweep of its own, so this is the only thing that
+    notices one left behind.
     """
+    for job in CngLiteJob.objects.filter(owner=user).filter(AWAITING_LAYER_SELECTION):
+        expire_stalled_inspection(job)
     jobs = list(
         CngLiteJob.objects.filter(owner=user, batch__isnull=True)
         .select_related("instance_server")
@@ -1478,7 +1488,13 @@ class S3MosaicUploadView(APIView):
 
 
 class S3GeoPackageInspectView(APIView):
-    """Stage a GeoPackage upload and report its contents, before conversion starts."""
+    """Stage a GeoPackage upload and start reading its contents, on CloudNativeGIS.
+
+    Asynchronous: CloudNativeGIS does the reading (see
+    cng_lite.CNGProcessingClient.inspect), which on demand needs its own
+    server provisioned first - not instant. Poll the returned job (GET
+    /s3/conversion/jobs/<jobId>) until its `inspection` is set.
+    """
 
     def post(self, request, conn_id):
         if "file" not in request.FILES:
@@ -1492,7 +1508,7 @@ class S3GeoPackageInspectView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            job, layers, raster_tables = inspect_geopackage(
+            job = inspect_geopackage(
                 uploaded_file,
                 key,
                 conn_id,
@@ -1507,12 +1523,7 @@ class S3GeoPackageInspectView(APIView):
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            {
-                "jobId": str(job.id),
-                "layers": layers,
-                "rasterTables": raster_tables,
-                "key": job.output_key,
-            }
+            {"jobId": str(job.id), "key": job.output_key}, status=status.HTTP_202_ACCEPTED
         )
 
 

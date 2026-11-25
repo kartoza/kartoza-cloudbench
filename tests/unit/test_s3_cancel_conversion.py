@@ -55,7 +55,9 @@ def cng_lite(respond):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("status", [Status.PENDING, Status.PROVISIONING, Status.POLLING])
+@pytest.mark.parametrize(
+    "status", [Status.PENDING, Status.INSPECTING, Status.PROVISIONING, Status.POLLING]
+)
 def test_cancelling_a_running_one(job, status):
     running = job(status=status, layers=["roads"])
     cancel_job(running)
@@ -78,7 +80,8 @@ def test_too_late_to_cancel(job, status):
 
 @pytest.mark.django_db
 def test_a_geopackage_waiting_for_its_layers_isnt_cancelled_here(job):
-    # Nothing runs it yet: cancel_geopackage_inspection discards it instead.
+    # Nothing runs it yet: cng_lite.cancel_inspection (via
+    # pmtiles.cancel_geopackage_inspection) finishes it directly instead.
     waiting = job(status=Status.PENDING, source_name="roads.gpkg", layers=None)
     with pytest.raises(ValueError):
         cancel_job(waiting)
