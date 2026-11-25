@@ -6,15 +6,13 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.s3 import geopackage_convert
-from apps.s3.cng_lite import job_directory
 from apps.s3.models import CngLiteJob
 
 
 @pytest.fixture
-def inspected(settings, tmp_path, django_user_model):
-    """A GeoPackage job as inspect_geopackage leaves it: pending, staged locally."""
-    settings.UPLOAD_TEMP_DIR = str(tmp_path)
-    job = CngLiteJob.objects.create(
+def inspected(django_user_model):
+    """A GeoPackage job as inspect_geopackage leaves it: pending, staged in S3."""
+    return CngLiteJob.objects.create(
         kind="pmtiles",
         owner=django_user_model.objects.create(username="7"),
         bucket="bucket",
@@ -25,12 +23,9 @@ def inspected(settings, tmp_path, django_user_model):
         license="CC-BY-4.0",
         license_url="",
         replace_existing=True,
+        inspection={"layers": [{"name": "roads"}, {"name": "rivers"}], "rasterTables": [{"name": "dem"}]},
         message="Waiting for layer selection",
     )
-    staged = job_directory("pmtiles", job.id)
-    staged.mkdir(parents=True)
-    (staged / "source.gpkg").write_bytes(b"SQLite format 3\x00gpkg")
-    return job
 
 
 RASTER_ID = "11111111-2222-3333-4444-555555555555"
@@ -70,9 +65,6 @@ def test_both_kinds_start_a_vector_job_then_a_raster_job(inspected):
     # ...but only the vector job (first) clears a confirmed-replace folder.
     assert vector.replace_existing is True
     assert raster.replace_existing is False
-    # The raster job has its own link to the staged file (each job's dir is removed after it).
-    linked = job_directory("cog", raster.id) / "source.gpkg"
-    assert linked.read_bytes() == b"SQLite format 3\x00gpkg"
     # Both run in one thread, in turn.
     thread.assert_called_once()
     assert thread.call_args.kwargs["target"] == geopackage_convert._run_in_turn

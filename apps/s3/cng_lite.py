@@ -94,15 +94,6 @@ def check_target(s3_client, key, source_name, replace):
     return folder
 
 
-def _staged_geopackage(job):
-    """The GeoPackage the upload staged on local disk, if it's still there."""
-    for kind in ("pmtiles", "cog"):
-        path = job_directory(kind, job.id) / "source.gpkg"
-        if path.exists():
-            return path
-    return None
-
-
 class _HashingReader:
     """A file-like that hashes and counts what is read from `source`."""
 
@@ -128,13 +119,14 @@ def _publish_source(job, s3_client, catalog_folder, source_client=None):
 
     From where it was staged for conversion ("<parent>/sources/<job>/") to
     "<group>/source/<name>", so it's kept once beside the layers it produced
-    and goes with them if the group is deleted. Uploaded from the local copy
-    when there is one (hashed on the way, for file:checksum/size), else
-    copied within S3. A job converting a file where it is (`source_in_place`,
-    in `source_client`'s bucket) streams a copy across, hashing it, and
-    leaves the original alone. Returns each layer's `source` asset (href
-    relative to a layer folder), or None if the move failed - best-effort,
-    like the rest of the catalog metadata.
+    and goes with them if the group is deleted. A job converting a file
+    where it is (`source_in_place`, in `source_client`'s bucket) streams a
+    copy across, hashing it on the way (for file:checksum/size), and leaves
+    the original alone; any other GeoPackage, never staged on CloudBench's
+    own disk, is copied within S3 instead, with no checksum recorded.
+    Returns each layer's `source` asset (href relative to a layer folder),
+    or None if the move failed - best-effort, like the rest of the catalog
+    metadata.
     """
     name = PurePosixPath(job.source_name).name
     dest_key = _source_asset_key(job, catalog_folder)
@@ -155,22 +147,6 @@ def _publish_source(job, s3_client, catalog_folder, source_client=None):
             file = {
                 "checksum": portolan.sha256_multihash(body.digest.digest()),
                 "size": body.size,
-            }
-        elif local := _staged_geopackage(job):
-            digest = hashlib.sha256()
-            with local.open("rb") as source:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            with local.open("rb") as source:
-                s3_client.client.upload_fileobj(
-                    source,
-                    job.bucket,
-                    dest_key,
-                    ExtraArgs={"ContentType": portolan.GEOPACKAGE_MEDIA_TYPE},
-                )
-            file = {
-                "checksum": portolan.sha256_multihash(digest.digest()),
-                "size": local.stat().st_size,
             }
         else:
             s3_client.client.copy(
@@ -1077,6 +1053,22 @@ class CNGProcessingClient:
             raise ValueError("CloudNativeGIS uploaded no results.")
         return layers
 
+    def _inspect_gpkg(self):
+        """Ask CloudNativeGIS what the job's GeoPackage holds (POST api/v1/gpkg/layers).
+
+        {"layers": [{name, geometryType, featureCount}], "rasterTables":
+        [{name}]} - every layer and raster table it holds, regardless of
+        this job's own kind. CloudNativeGIS downloads the whole file before
+        reading it (see its resolve_source), same as push() does for the
+        real conversion - so the presigned URL needs the same size-scaled
+        expiry (conversion_timeout), not a fixed one a large GeoPackage
+        could outlive on a freshly-booted on-demand server.
+        """
+        url = self.source_client.generate_presigned_url(
+            self.job.source_key, expiration=conversion_timeout(self.job.input_size)
+        )
+        return request_json(self.http, "POST", "api/v1/gpkg/layers", json={"source": url})
+
     def _layer_names(self):
         """The layers to convert: [None] for one-layer sources, else the GeoPackage's.
 
@@ -1087,12 +1079,48 @@ class CNGProcessingClient:
         if not is_geopackage(self.job.source_name):
             return [None]
         if self.job.layers is None:
-            url = self.source_client.generate_presigned_url(self.job.source_key, expiration=300)
-            inspection = request_json(self.http, "POST", "api/v1/gpkg/layers", json={"source": url})
-            self.update(layers=self.converter.pick_layers(inspection))
+            self.update(layers=self.converter.pick_layers(self._inspect_gpkg()))
         if not self.job.layers:
             raise ValueError("The GeoPackage has nothing of this kind to convert.")
         return list(self.job.layers)
+
+    def inspect(self):
+        """Ask CloudNativeGIS what the job's GeoPackage holds, for the upload dialog's picker.
+
+        Provisions the job's CloudNativeGIS the same way a real conversion
+        would (INSPECTING rather than PROVISIONING, so a restart or
+        cancellation can't mistake this for a confirmed conversion under
+        way - see resume_interrupted_conversions), then asks it directly,
+        not through this job's own kind's Converter: the picker needs every
+        layer and raster table, not just what this job's own kind converts.
+        Lands back on PENDING with `inspection` set, same state as before
+        this ran (see apps.s3.models.AWAITING_LAYER_SELECTION), for the user
+        to pick from.
+        """
+        close_old_connections()
+        try:
+            self.update(
+                status=CngLiteJobStatus.INSPECTING,
+                progress=5,
+                message="Preparing CloudNativeGIS",
+            )
+            self.job.provision()
+            self.update(
+                status=CngLiteJobStatus.PENDING,
+                inspection=self._inspect_gpkg(),
+                progress=0,
+                message="Waiting for layer selection",
+            )
+        except JobCancelled:
+            logger.info("CloudNativeGIS inspection %s cancelled", self.job.id)
+            self.finish(CngLiteJobStatus.CANCELLED, message="Conversion cancelled")
+        except Exception as exc:
+            logger.exception("CloudNativeGIS inspection %s failed", self.job.id)
+            self.fail(exc)
+        finally:
+            if self._http is not None:
+                self._http.close()
+            close_old_connections()
 
     def _discard_uploads(self):
         """Remove what CloudNativeGIS may have uploaded already, for a cancelled job.
@@ -1113,6 +1141,98 @@ class CNGProcessingClient:
         # Only once the job's finished: until then a resumed job still needs
         # what's in there (staged source, downloaded results).
         shutil.rmtree(self.directory, ignore_errors=True)
+
+
+def inspect_conversion(job_id):
+    """Read GeoPackage job `job_id`'s contents (see CNGProcessingClient.inspect)."""
+    close_old_connections()
+    try:
+        job = CngLiteJob.objects.get(pk=job_id)
+    except CngLiteJob.DoesNotExist:
+        logger.warning("CloudNativeGIS inspection %s no longer exists", job_id)
+        return
+    CNGProcessingClient(job).inspect()
+
+
+def cancel_inspection(job):
+    """Cancel a GeoPackage job still being inspected or awaiting layer selection.
+
+    While INSPECTING, the background thread running inspect() is checking
+    for CANCELLING at every wait (same as a real conversion provisioning):
+    cancel_job works as-is. Awaiting layer selection (PENDING, inspection
+    already done, nothing running to notice CANCELLING), there's nothing to
+    stop - finish it directly instead, deprovisioning in the background if
+    it has a server to delete.
+
+    Raises ValueError if `job` isn't in either state.
+    """
+    if job.status == CngLiteJobStatus.INSPECTING:
+        cancel_job(job)
+        return
+    claimed = (
+        CngLiteJob.objects.filter(pk=job.pk)
+        .filter(AWAITING_LAYER_SELECTION)
+        .update(updated_at=timezone.now())
+    )
+    if not claimed:
+        job.refresh_from_db()
+        raise ValueError(f"A {job.get_status_display().lower()} conversion can't be cancelled.")
+    job.refresh_from_db()
+    _finish_idle_inspection(job, CngLiteJobStatus.CANCELLED, "Conversion cancelled")
+
+
+def expire_stalled_inspection(job):
+    """Give up on a GeoPackage job left awaiting layer selection too long.
+
+    Unlike a running conversion, nothing updates this job once inspection
+    lands on it - old `updated_at` just means a human hasn't decided yet,
+    not that anything stalled. Only past
+    CLOUDNATIVEGIS_LAYER_SELECTION_TIMEOUT (long enough for that) is it
+    given up on: an abandoned upload dialog (closed tab, no cancel) would
+    otherwise leave an on-demand server running - and billed - forever,
+    since there's no reaper for those yet (see GeoHosting's G5). A no-op
+    unless `job` is actually stale.
+    """
+    cutoff = timezone.now() - timedelta(seconds=settings.CLOUDNATIVEGIS_LAYER_SELECTION_TIMEOUT)
+    claimed = (
+        CngLiteJob.objects.filter(pk=job.pk)
+        .filter(AWAITING_LAYER_SELECTION, updated_at__lt=cutoff)
+        .update(updated_at=timezone.now())
+    )
+    if not claimed:
+        return
+    job.refresh_from_db()
+    _finish_idle_inspection(
+        job, CngLiteJobStatus.CANCELLED, "Gave up waiting for layers to be picked"
+    )
+
+
+def _finish_idle_inspection(job, outcome, message):
+    """finish_job(job, outcome, message=message), backgrounded if it deprovisions.
+
+    For a job with nothing actively running it (awaiting layer selection):
+    cancel_inspection and expire_stalled_inspection both land here once
+    they've claimed it.
+    """
+    if job.deprovisions:
+        threading.Thread(
+            target=_finish_idle_inspection_in_background,
+            args=(job.id, outcome, message),
+            daemon=True,
+        ).start()
+    else:
+        finish_job(job, outcome, message=message)
+
+
+def _finish_idle_inspection_in_background(job_id, outcome, message):
+    close_old_connections()
+    try:
+        job = CngLiteJob.objects.get(pk=job_id)
+        finish_job(job, outcome, message=message)
+    except Exception:
+        logger.exception("Job %s: couldn't finish its inspection", job_id)
+    finally:
+        close_old_connections()
 
 
 def run_conversion(job_id):
@@ -1141,11 +1261,13 @@ def resume_interrupted_conversions():
     Only for when nothing else is running conversions - e.g. at startup,
     before the server takes requests (see the resume_conversions command) -
     as any job still active then must have been interrupted. Each carries on
-    from the step its status says it got to. GeoPackages still waiting for
-    their layers to be picked are left alone; a job that depends on another
-    runs after it, from wherever that one moved their source to. A kind that
-    can't be resumed (a mosaic) is failed instead. A job left deprovisioning,
-    any kind, has its server deleted and ends as it was going to.
+    from the step its status says it got to. A GeoPackage still being
+    inspected resumes that (CNGProcessingClient.inspect); one already
+    waiting for its layers to be picked is left alone. A job that depends on
+    another runs after it, from wherever that one moved their source to. A
+    kind that can't be resumed (a mosaic) is failed instead. A job left
+    deprovisioning, any kind, has its server deleted and ends as it was
+    going to.
     """
     jobs = list(
         CngLiteJob.objects.filter(status__in=ACTIVE_CNG_LITE_JOB_STATUSES)
@@ -1153,6 +1275,10 @@ def resume_interrupted_conversions():
         .order_by("created_at")
     )
     for job in jobs:
+        if job.status == CngLiteJobStatus.INSPECTING:
+            logger.info("Resuming inspecting %s %s", job.kind, job.id)
+            CNGProcessingClient(job).inspect()
+            continue
         if job.status == CngLiteJobStatus.DEPROVISIONING:
             # Finished - a mosaic too - but its server is still to be deleted.
             logger.info("Resuming deleting the server of %s %s", job.kind, job.id)

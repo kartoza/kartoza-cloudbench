@@ -10,7 +10,7 @@ from . import portolan
 from .client import get_s3_client
 from .cng_lite import Converter, check_target, job_directory, source_object_key
 from .cng_lite import run_conversion as run_cng_lite_conversion
-from .geopackage import is_geopackage, prepare_geopackage
+from .geopackage import is_geopackage, validate_geopackage
 from .models import CngLiteJob, CngLiteJobStatus
 
 KIND = "cog"
@@ -102,24 +102,30 @@ def start_conversion(
     directory = job_directory(KIND, job.id)
     directory.mkdir(parents=True, mode=0o700)
     try:
-        if geopackage:
-            source_path = directory / "source.gpkg"
-            prepare_geopackage(uploaded_file, source_path, settings.UPLOAD_MAX_FILE_SIZE)
-            content_type = "application/geopackage+sqlite3"
-        else:
-            source_path = directory / "source.tif"
-            prepare_tiff(uploaded_file, source_path)
-            content_type = "image/tiff"
         job.source_key = source_object_key(
             job.output_key, job.id, PurePosixPath(uploaded_file.name).name
         )
-        with source_path.open("rb") as source_file:
+        if geopackage:
+            # Streamed straight to S3, never staged on local disk - a large
+            # GeoPackage shouldn't need CloudBench's own disk space.
+            validate_geopackage(uploaded_file, settings.UPLOAD_MAX_FILE_SIZE)
+            uploaded_file.seek(0)
             s3_client.client.upload_fileobj(
-                source_file,
+                uploaded_file,
                 s3_client.bucket,
                 job.source_key,
-                ExtraArgs={"ContentType": content_type},
+                ExtraArgs={"ContentType": "application/geopackage+sqlite3"},
             )
+        else:
+            source_path = directory / "source.tif"
+            prepare_tiff(uploaded_file, source_path)
+            with source_path.open("rb") as source_file:
+                s3_client.client.upload_fileobj(
+                    source_file,
+                    s3_client.bucket,
+                    job.source_key,
+                    ExtraArgs={"ContentType": "image/tiff"},
+                )
         job.save()
         threading.Thread(target=run_conversion, args=(job.id,), daemon=True).start()
     except Exception:

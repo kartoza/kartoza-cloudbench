@@ -47,6 +47,7 @@ export function skippedLayers(job: ConversionJob): { name: string; error: string
 // Not finished yet - matches ACTIVE_CNG_LITE_JOB_STATUSES on the backend.
 const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'pending',
+  'inspecting',
   'provisioning',
   'pushing',
   'polling',
@@ -60,6 +61,7 @@ const ACTIVE_JOB_STATUSES: readonly ConversionJobStatus[] = [
 // not once it's publishing (the catalog would be half-written) or finishing.
 const CANCELLABLE_JOB_STATUSES: readonly ConversionJobStatus[] = [
   'pending',
+  'inspecting',
   'provisioning',
   'pushing',
   'polling',

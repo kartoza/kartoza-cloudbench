@@ -11,7 +11,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from apps.s3 import cng_lite, direct_upload, portolan
-from apps.s3.models import CngLiteJob, S3Connection
+from apps.s3.models import CngLiteJob, CngLiteJobStatus, S3Connection
 from apps.s3.pmtiles import (
     assets_for,
     cancel_geopackage_inspection,
@@ -294,6 +294,25 @@ def test_start_conversion_stages_a_vector_file_as_it_is(
     # Kept under its own name: cng-lite reads it by its suffix.
     assert job.source_key.endswith(f"/{name}")
     assert staged == {job.source_key: (b"vector-bytes", content_type)}
+
+
+@pytest.mark.django_db
+def test_start_conversion_streams_a_geopackage_straight_to_s3(settings, tmp_path, owner, connection):
+    """A GeoPackage uploaded straight to convert (no layer picker) never
+    touches CloudBench's own disk - streamed straight to S3."""
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}
+        job = start_conversion(gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner)
+    get_client.return_value.client.upload_fileobj.assert_called_once()
+    uploaded = get_client.return_value.client.upload_fileobj.call_args.args[0]
+    assert uploaded.read() == GPKG_MAGIC + b"fixture-bytes"
+    assert list((tmp_path / "pmtiles" / str(job.id)).iterdir()) == []
 
 
 @pytest.mark.django_db
@@ -609,51 +628,117 @@ def test_job_status_is_scoped_to_owner(conversion_job, owner, django_user_model)
 
 @pytest.fixture
 def gpkg_inspect_job(settings, tmp_path, owner, connection):
+    """A GeoPackage job staged in S3, as if CloudNativeGIS had already inspected it."""
     settings.UPLOAD_TEMP_DIR = str(tmp_path)
     settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
-    contents = {
-        "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
-        "rasterTables": [],
-    }
     with (
         patch("apps.s3.pmtiles.get_s3_client") as get_client,
-        patch("apps.s3.pmtiles.read_contents", return_value=contents) as read,
+        patch("apps.s3.pmtiles.threading.Thread"),
     ):
         get_client.return_value.bucket = "bucket"
         get_client.return_value.list_objects.return_value = {"objects": []}  # target folder is new
-        get_client.return_value.generate_presigned_url.return_value = "http://s3/presigned"
-        job, layers, raster_tables = inspect_geopackage(
-            gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner
-        )
-    read.assert_called_once_with(str(tmp_path / "pmtiles" / str(job.id) / "source.gpkg"))
-    return job, layers, raster_tables
+        job = inspect_geopackage(gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner)
+    job.inspection = {
+        "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
+        "rasterTables": [],
+    }
+    job.save(update_fields=["inspection", "updated_at"])
+    return job
 
 
 @pytest.mark.django_db
-def test_cancel_geopackage_inspection_deletes_staged_upload(gpkg_inspect_job, owner):
-    job, _, _ = gpkg_inspect_job
-    with patch("apps.s3.pmtiles.get_s3_client") as get_client:
-        cancel_geopackage_inspection(job.id, owner)
-    get_client.return_value.delete_object.assert_called_once_with(job.source_key)
-    assert not CngLiteJob.objects.filter(pk=job.id).exists()
+def test_inspect_geopackage_streams_straight_to_s3(settings, tmp_path, owner, connection):
+    """Nothing of the upload is staged on CloudBench's own disk."""
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}
+        job = inspect_geopackage(gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner)
+    get_client.return_value.client.upload_fileobj.assert_called_once()
+    uploaded = get_client.return_value.client.upload_fileobj.call_args.args[0]
+    assert uploaded.read() == GPKG_MAGIC + b"fixture-bytes"
+    assert list((tmp_path / "pmtiles" / str(job.id)).iterdir()) == []
+    assert job.status == "pending"
+    assert job.inspection is None
+
+
+@pytest.mark.django_db
+def test_cancel_geopackage_inspection_cancels_the_job(gpkg_inspect_job, owner):
+    cancel_geopackage_inspection(gpkg_inspect_job.id, owner)
+    gpkg_inspect_job.refresh_from_db()
+    assert gpkg_inspect_job.status == "cancelled"
+
+
+@pytest.mark.django_db
+def test_cancel_geopackage_inspection_stops_an_active_inspection(gpkg_inspect_job):
+    gpkg_inspect_job.inspection = None
+    gpkg_inspect_job.status = CngLiteJobStatus.INSPECTING
+    gpkg_inspect_job.save(update_fields=["inspection", "status", "updated_at"])
+    cancel_geopackage_inspection(gpkg_inspect_job.id, gpkg_inspect_job.owner)
+    gpkg_inspect_job.refresh_from_db()
+    # Nothing is actually running in this unit test to carry CANCELLING on
+    # to CANCELLED (see cng_lite.cancel_job) - the transition itself is
+    # what's being checked here.
+    assert gpkg_inspect_job.status == "cancelling"
 
 
 @pytest.mark.django_db
 def test_cancel_geopackage_inspection_rejects_wrong_owner(gpkg_inspect_job, django_user_model):
-    job, _, _ = gpkg_inspect_job
     someone_else = django_user_model.objects.create(username="someone-else")
     with pytest.raises(ValueError, match="Job not found"):
-        cancel_geopackage_inspection(job.id, someone_else)
-    assert CngLiteJob.objects.filter(pk=job.id).exists()
+        cancel_geopackage_inspection(gpkg_inspect_job.id, someone_else)
+    gpkg_inspect_job.refresh_from_db()
+    assert gpkg_inspect_job.status == "pending"
 
 
 @pytest.mark.django_db
 def test_cancel_geopackage_inspection_rejects_already_confirmed_job(gpkg_inspect_job, owner):
-    job, layers, _ = gpkg_inspect_job
+    layers = gpkg_inspect_job.inspection["layers"]
     with patch("apps.s3.pmtiles.threading.Thread"):
-        start_geopackage_conversion(job.id, owner, [layer["name"] for layer in layers])
+        start_geopackage_conversion(gpkg_inspect_job.id, owner, [layer["name"] for layer in layers])
     with pytest.raises(ValueError, match="already started"):
-        cancel_geopackage_inspection(job.id, owner)
+        cancel_geopackage_inspection(gpkg_inspect_job.id, owner)
+
+
+@pytest.mark.django_db
+def test_inspect_conversion_reads_the_geopackage_and_lands_on_pending(
+    settings, tmp_path, owner, connection
+):
+    settings.UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.CLOUDNATIVEGIS_URL = "http://cloudnativegis"
+    with (
+        patch("apps.s3.pmtiles.get_s3_client") as get_client,
+        patch("apps.s3.pmtiles.threading.Thread"),
+    ):
+        get_client.return_value.bucket = "bucket"
+        get_client.return_value.list_objects.return_value = {"objects": []}
+        job = inspect_geopackage(gpkg_file(), "folder/parcels.gpkg", str(connection.id), owner)
+    s3 = FakeS3()
+    s3.objects[job.source_key] = GPKG_MAGIC + b"fixture-bytes"
+    contents = {
+        "layers": [{"name": "parcels", "geometryType": "Polygon", "featureCount": 3}],
+        "rasterTables": [],
+    }
+    client, _submitted = converting_cng(s3, "pmtiles", {}, inspection=contents)
+
+    with (
+        patch("apps.s3.models.cng_lite_job.httpx.get", return_value=httpx.Response(200)),
+        patch("apps.s3.cng_lite.httpx.Client", return_value=client),
+        patch("apps.s3.cng_lite.get_s3_client", return_value=s3),
+        patch("apps.s3.cng_lite.time.sleep"),
+        patch("apps.s3.cng_lite.close_old_connections"),
+    ):
+        cng_lite.inspect_conversion(job.id)
+
+    job.refresh_from_db()
+    assert job.status == "pending"
+    assert job.inspection == contents
+    assert job.message == "Waiting for layer selection"
+    assert job.layers is None  # still unconfirmed
 
 
 def test_conversion_timeout_scales_with_the_upload(settings):

@@ -7,12 +7,9 @@ into the same Portolan sub-catalog folder.
 """
 
 import logging
-import os
-import shutil
 import threading
 
 from . import cog, pmtiles
-from .cng_lite import job_directory
 from .models import CngLiteJob, CngLiteJobStatus
 
 logger = logging.getLogger(__name__)
@@ -68,27 +65,8 @@ def start_geopackage_conversion(job_id, user, layers=None, tables=None):
         depends_on=vector,
         message="Waiting for the vector layers to finish",
     )
-    _share_staged_source(vector, raster)
     threading.Thread(target=_run_in_turn, args=(vector.id, raster.id), daemon=True).start()
     return [vector, raster]
-
-
-def _share_staged_source(vector, raster):
-    """Give the raster job its own link to the GeoPackage staged on disk.
-
-    Each job's directory is removed when it finishes; a hard link keeps the
-    file (so the raster job can still hash it for its source asset) without
-    a second copy of a possibly large file.
-    """
-    staged = job_directory(pmtiles.KIND, vector.id) / "source.gpkg"
-    if not staged.exists():
-        return
-    directory = job_directory(cog.KIND, raster.id)
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    try:
-        os.link(staged, directory / "source.gpkg")
-    except OSError:
-        shutil.copyfile(staged, directory / "source.gpkg")
 
 
 def _run_in_turn(vector_id, raster_id):

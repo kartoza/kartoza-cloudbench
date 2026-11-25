@@ -583,6 +583,9 @@ export type CloudNativeFormat = 'cog' | 'copc' | 'geoparquet' | 'parquet' | 'unk
 // Conversion job status
 export type ConversionJobStatus =
   | 'pending'
+  // A GeoPackage's layers/raster tables are being read on CloudNativeGIS,
+  // for the upload dialog's picker; lands back on 'pending' once done.
+  | 'inspecting'
   | 'provisioning'
   | 'pushing'
   | 'polling'
@@ -607,6 +610,12 @@ export interface ConversionJob {
   // GeoPackage -> pmtiles jobs only: the vector layers being converted, in
   // the order cng-lite processes them.
   layers?: string[] | null
+  // What CloudNativeGIS found in a GeoPackage, once inspected - for the
+  // upload dialog's picker. Null until inspection has finished.
+  inspection?: {
+    layers: { name: string; geometryType: string; featureCount: number }[]
+    rasterTables: { name: string }[]
+  } | null
   // The layers/tables CloudNativeGIS couldn't convert, and why (known once
   // it has finished converting; the job itself still completes).
   skipped?: { name: string; error: string }[]

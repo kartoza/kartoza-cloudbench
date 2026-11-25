@@ -324,9 +324,10 @@ export interface GeoPackageRasterTable {
   name: string
 }
 
-// Stage a GeoPackage upload and get back its contents — vector layers
-// (name/geometry/feature count) and raster tables (name only) — before
-// any conversion starts. A GeoPackage can hold either or both.
+// Stage a GeoPackage upload and start reading its contents — vector layers
+// (name/geometry/feature count) and raster tables (name only) — on
+// CloudNativeGIS. Asynchronous: poll the returned job (getConversionJob)
+// until its `inspection` is set, same as a real conversion's progress.
 export async function inspectGeoPackage(
   connectionId: string,
   file: File,
@@ -337,7 +338,7 @@ export async function inspectGeoPackage(
   serverTypeId?: number,
   autoDestroy?: boolean,
   instanceServerId?: string
-): Promise<{ jobId: string; layers: GeoPackageLayer[]; rasterTables: GeoPackageRasterTable[]; key: string }> {
+): Promise<{ jobId: string; key: string }> {
   const formData = new FormData()
   formData.append('file', file)
   if (key) formData.append('key', key)
